@@ -59,3 +59,4 @@ vercel --prod
 |----------|-------------|
 | VITE_SUPABASE_URL | URL del proyecto Supabase |
 | VITE_SUPABASE_KEY | Publishable key (anon) de Supabase |
+
