@@ -62,7 +62,13 @@ const sb = {
 
   async get(table, order = "created_at") {
     const { data, error } = await _sb.from(table).select("*").eq("negocio_id", this._negocioId).order(order, { ascending: order === "nombre" });
-    if (error) console.error(`get ${table}:`, error);
+    if (error) {
+      console.error(`get ${table} (order=${order}):`, error);
+      // Reintento sin ordenar — nunca perder datos por un problema de orden
+      const retry = await _sb.from(table).select("*").eq("negocio_id", this._negocioId);
+      if (retry.error) { console.error(`get ${table} (retry):`, retry.error); return []; }
+      return retry.data || [];
+    }
     return data || [];
   },
   async getOne(table) {
@@ -3809,12 +3815,12 @@ export default function App() {
         sb._negocioId = negocio.id;
 
         const [prods, ventasData, cajaData, gastosData, remitosData, provData] = await Promise.all([
-          sb.get("productos", "nombre.asc"),
-          sb.get("ventas", "created_at.desc"),
+          sb.get("productos", "nombre"),
+          sb.get("ventas", "created_at"),
           sb.getOne("caja"),
           sb.get("gastos"),
           sb.get("remitos"),
-          sb.get("proveedores", "nombre.asc"),
+          sb.get("proveedores", "nombre"),
         ]);
 
         setConfig(dbToConfig(negocio));
