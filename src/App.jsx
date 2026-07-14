@@ -2563,7 +2563,7 @@ function InventarioPage({ ctx }) {
           <p style={{ fontSize:13, color:"#dc2626", margin:"0 0 20px" }}>Esta acción no se puede deshacer.</p>
           <div style={{ display:"flex", gap:10 }}>
             <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={() => setConfirmClearAll(false)}>Cancelar</button>
-            <button style={{ ...G.btn("red"), flex:2, justifyContent:"center" }} onClick={() => { setProducts([]); setConfirmClearAll(false); }}>Sí, borrar todo</button>
+            <button style={{ ...G.btn("red"), flex:2, justifyContent:"center" }} onClick={async () => { const ids = products.map(p => p.id); setProducts([]); setConfirmClearAll(false); await Promise.all(ids.map(id => ctx.deleteProduct(id))); }}>Sí, borrar todo</button>
           </div>
         </Modal>
       )}
@@ -3852,7 +3852,8 @@ export default function App() {
   };
   const saveProducts = async (arr) => {
     if (!sb._negocioId || !arr.length) return;
-    await _sb.from("productos").upsert(arr.map(p => productToDb(p, sb._negocioId)));
+    const { error } = await _sb.from("productos").upsert(arr.map(p => productToDb(p, sb._negocioId)));
+    if (error) console.error("saveProducts:", error, arr);
   };
   const deleteProduct = async (id) => {
     if (sb._negocioId) await sb.del("productos", id);
