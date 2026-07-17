@@ -524,7 +524,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
     }
   };
 
-  const confirmar = () => {
+  const confirmar = async () => {
     if (devuelve.length === 0 && lleva.length === 0) return;
     const affectedIds = new Set([...devuelve.map(d=>d.id), ...lleva.map(l=>l.id)]);
     const updated = products.map(p => {
@@ -546,8 +546,8 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
       return upd;
     });
     setProducts(updated);
-    if (saveProducts) saveProducts(updated.filter(p => affectedIds.has(p.id)));
     setExito(true);
+    if (saveProducts) await saveProducts(updated.filter(p => affectedIds.has(p.id)));
   };
 
   // Modal de selección de talle (pendiente)
@@ -3655,9 +3655,281 @@ function OnboardingScreen({ onDone }) {
 // ROOT APP
 // ═══════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════
+// LANDING PAGE — estilo violeta+blanco (inspirado en Caibe)
+// ══════════════════════════════════════════════════════════
+const WHATSAPP_NUMERO = "5491100000000"; // ← reemplazar por tu WhatsApp real
+const PRECIO_MENSUAL = "15.000"; // ← precio de la mensualidad en ARS
+
+function LandingPage({ onIngresar }) {
+  const [faqOpen, setFaqOpen] = useState(null);
+
+  const C = {
+    ink: "#0a0a0a", body: "#4b5563", mut: "#9ca3af", line: "#e5e7eb",
+    bg: "#ffffff", bgSoft: "#f9fafb",
+    purple: "#9238FF", purpleDark: "#7a1de6", purpleSoft: "#f4ecff",
+    green: "#16a34a",
+  };
+  const font = "'DM Sans', system-ui, -apple-system, sans-serif";
+  const wrap = { maxWidth: 1160, margin: "0 auto", padding: "0 24px" };
+
+  const rubros = [
+    "Indumentaria", "Calzado", "Kioscos", "Almacenes", "Perfumerías",
+    "Farmacias", "Librerías", "Jugueterías", "Verdulerías", "Carnicerías",
+    "Pañaleras", "Ferreterías", "Electrónica", "Bazar", "Panaderías",
+  ];
+
+  const faqs = [
+    { q: "¿Necesito instalar algo?", a: "No. MiStock funciona 100% en la web. Entrás desde cualquier computadora, tablet o celular con internet, sin descargar ni instalar nada." },
+    { q: "¿Mis datos están seguros?", a: "Sí. Toda tu información se guarda en la nube con respaldo automático. Cada negocio ve únicamente sus propios datos, protegidos con tu usuario y contraseña." },
+    { q: "¿Sirve para mi rubro?", a: "MiStock es multirrubro. Se adapta a indumentaria, calzado, electrónica, kioscos, farmacias y prácticamente cualquier comercio minorista. Al crear tu cuenta elegís tu rubro y el sistema se configura solo." },
+    { q: "¿Puedo emitir facturas?", a: "Sí. El sistema emite comprobantes tipo A, B y C con numeración correlativa, listos para AFIP. También podés dar tickets de venta comunes cuando no hace falta factura." },
+    { q: "¿Puedo usar MiStock desde el celular?", a: "Sí. La app se adapta a cualquier dispositivo. Vendé desde el mostrador con la compu y controlá el negocio desde el celular cuando estás afuera." },
+    { q: "¿Qué pasa si tengo un problema?", a: "Nos escribís por WhatsApp y te ayudamos. Estamos para que puedas vender tranquilo." },
+  ];
+
+  const funciones = [
+    { t: "Control total del stock", d: "Alta y baja de productos, stock por talle y color, y alertas de faltantes automáticas.", ic: <Package size={24}/> },
+    { t: "Ventas y ganancias visibles", d: "Cada venta queda registrada con precio, cantidad y margen. Sabés cuánto ganás por día.", ic: <TrendingUp size={24}/> },
+    { t: "Facturación AFIP lista", d: "Emití Factura A, B y C con CAE. Todo queda registrado y listo para tu contador.", ic: <Receipt size={24}/> },
+    { t: "Ahorro de tiempo real", d: "Vendé en segundos, sin hacer cuentas mentales. Descontá stock y calculá vuelto solo.", ic: <Timer size={24}/> },
+    { t: "Estadísticas que sirven", d: "Qué se vende, qué no, a qué hora y qué día. Decisiones con datos, no a ojo.", ic: <BarChart2 size={24}/> },
+    { t: "Todo en la nube", d: "Acceso desde cualquier dispositivo con internet. Sin instalar, sin perder datos, siempre al día.", ic: <RefreshCw size={24}/> },
+  ];
+
+  return (
+    <div style={{ fontFamily: font, color: C.ink, background: C.bg, minHeight: "100vh" }}>
+      {/* Cargar DM Sans + estilos de animaciones */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+        @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+        .marquee-track { animation: marquee 40s linear infinite; }
+        .btn-primary:hover { background: ${C.purpleDark} !important; }
+        .btn-ghost:hover { background: ${C.purpleSoft} !important; }
+        .faq-btn:hover { background: ${C.bgSoft}; }
+        @media (max-width: 800px) {
+          .hero-grid { grid-template-columns: 1fr !important; }
+          .hero-h1 { font-size: 44px !important; }
+          .funciones-grid { grid-template-columns: 1fr !important; }
+          .steps-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+
+      {/* ── NAV ── */}
+      <nav style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(255,255,255,0.94)", backdropFilter: "blur(8px)", borderBottom: `1px solid ${C.line}` }}>
+        <div style={{ ...wrap, display: "flex", alignItems: "center", justifyContent: "space-between", height: 68 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ background: C.purple, width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}><Store size={19}/></div>
+            <span style={{ fontWeight: 700, fontSize: 22, letterSpacing: "-0.7px" }}>MiStock</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button onClick={onIngresar} className="btn-ghost" style={{ background: "transparent", border: "none", color: C.ink, fontWeight: 500, fontSize: 14.5, cursor: "pointer", padding: "10px 16px", borderRadius: 6, fontFamily: font }}>Iniciar sesión</button>
+            <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 14.5, cursor: "pointer", padding: "11px 20px", fontFamily: font }}>Empezar gratis</button>
+          </div>
+        </div>
+      </nav>
+
+      {/* ── HERO ── */}
+      <section style={{ ...wrap, padding: "80px 24px 60px" }}>
+        <div className="hero-grid" style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 60, alignItems: "center" }}>
+          <div>
+            <h1 className="hero-h1" style={{ fontSize: 68, lineHeight: 1.02, fontWeight: 500, letterSpacing: "-2.5px", margin: "0 0 24px" }}>
+              Menos planillas.<br/>Más ventas.
+            </h1>
+            <p style={{ fontSize: 18, lineHeight: 1.55, color: C.body, margin: "0 0 32px", maxWidth: 520 }}>
+              MiStock reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás, controlás el stock y facturás a AFIP — todo desde un mismo lugar.
+            </p>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "14px 28px", fontFamily: font }}>¡Empezar gratis!</button>
+              <a href={`https://wa.me/${WHATSAPP_NUMERO}`} target="_blank" rel="noreferrer" style={{ background: "transparent", color: C.ink, border: `1.5px solid ${C.ink}`, borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "12.5px 24px", textDecoration: "none", display: "inline-flex", alignItems: "center", fontFamily: font }}>Hablar por WhatsApp</a>
+            </div>
+            <div style={{ display: "flex", gap: 22, marginTop: 34, fontSize: 13.5, color: C.mut, flexWrap: "wrap" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Sin tarjeta de crédito</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Sin instalaciones</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Listo en 2 minutos</span>
+            </div>
+          </div>
+
+          {/* Signature: dashboard mockup */}
+          <div style={{ position: "relative" }}>
+            <div style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 22, boxShadow: "0 20px 60px rgba(146, 56, 255, 0.15), 0 8px 24px rgba(0,0,0,0.06)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18 }}>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#f87171" }}/>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#fbbf24" }}/>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#34d399" }}/>
+                <span style={{ fontSize: 12, color: C.mut, marginLeft: 8 }}>mistock.com.ar</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                <div style={{ background: C.purpleSoft, borderRadius: 8, padding: "14px 16px" }}>
+                  <div style={{ fontSize: 11, color: C.purpleDark, fontWeight: 600, marginBottom: 4 }}>VENTAS HOY</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: C.purple }}>$127.400</div>
+                </div>
+                <div style={{ background: "#f0fdf4", borderRadius: 8, padding: "14px 16px" }}>
+                  <div style={{ fontSize: 11, color: "#15803d", fontWeight: 600, marginBottom: 4 }}>GANANCIA</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: C.green }}>$52.100</div>
+                </div>
+              </div>
+              {[
+                ["Remera oversize · T.M", "$18.900", "3"],
+                ["Jean recto azul · T.42", "$34.500", "2"],
+                ["Buzo canguro · T.L", "$29.900", "1"],
+              ].map(([n, p, q], i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 4px", borderBottom: i < 2 ? `1px solid ${C.line}` : "none" }}>
+                  <span style={{ fontSize: 13, color: C.body }}>{n}</span>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                    <span style={{ fontSize: 11, color: C.mut, background: C.bgSoft, borderRadius: 4, padding: "2px 8px" }}>×{q}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{p}</span>
+                  </div>
+                </div>
+              ))}
+              <div style={{ marginTop: 12, background: C.ink, color: "#fff", borderRadius: 6, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>TOTAL</span>
+                <span style={{ fontSize: 18, fontWeight: 700 }}>$83.300</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── MARQUESINA de rubros ── */}
+      <div style={{ background: C.ink, color: "#fff", padding: "22px 0", overflow: "hidden", marginBottom: 60 }}>
+        <div className="marquee-track" style={{ display: "flex", gap: 48, whiteSpace: "nowrap" }}>
+          {[...rubros, ...rubros].map((r, i) => (
+            <span key={i} style={{ fontSize: 20, fontWeight: 500, letterSpacing: "-0.3px", flexShrink: 0 }}>
+              {r} <span style={{ color: C.purple, margin: "0 0 0 40px" }}>◆</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* ── QUÉ ES / PROPUESTA ── */}
+      <section style={{ ...wrap, padding: "40px 24px 80px" }}>
+        <div style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 60px" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Por qué MiStock</div>
+          <h2 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: "0 0 20px" }}>
+            Diseñado para el mostrador.
+          </h2>
+          <p style={{ fontSize: 17.5, lineHeight: 1.6, color: C.body, margin: 0 }}>
+            Nada de menús interminables ni cursos para aprender a usarlo. Cargás un producto y ya podés venderlo. Tu vendedor se pone al día en 5 minutos. Y si el cliente devuelve algo, el stock se ajusta solo.
+          </p>
+        </div>
+
+        <div className="funciones-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 24 }}>
+          {funciones.map((f, i) => (
+            <div key={i} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 10, padding: "28px 26px" }}>
+              <div style={{ width: 48, height: 48, borderRadius: 10, background: C.purpleSoft, color: C.purple, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>{f.ic}</div>
+              <h3 style={{ fontSize: 19, fontWeight: 600, margin: "0 0 8px", letterSpacing: "-0.3px" }}>{f.t}</h3>
+              <p style={{ fontSize: 14.5, lineHeight: 1.55, color: C.body, margin: 0 }}>{f.d}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── CÓMO FUNCIONA ── */}
+      <section style={{ background: C.bgSoft, padding: "90px 0", borderTop: `1px solid ${C.line}`, borderBottom: `1px solid ${C.line}` }}>
+        <div style={{ ...wrap }}>
+          <div style={{ textAlign: "center", marginBottom: 60 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Cómo se usa</div>
+            <h2 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: 0 }}>
+              Andando en 5 minutos.
+            </h2>
+          </div>
+          <div className="steps-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 30 }}>
+            {[
+              { n: "1", t: "Registrate gratis", d: "Creá tu cuenta rápido, gratis y sin tarjeta. Podés hacerlo desde tu celular o computadora.", nota: "✅ No necesitás descargar nada ni instalar programas. Funciona 100% online." },
+              { n: "2", t: "Cargá tus productos", d: "Elegí tu rubro y cargá tus productos manualmente o importalos desde un Excel/CSV.", nota: "✅ El sistema se adapta a tu rubro con talles, colores, categorías y todo lo que necesites." },
+              { n: "3", t: "Empezá a vender", d: "Buscá productos por nombre, cobrá con cualquier método y emití factura AFIP si hace falta. Cada venta descuenta stock automáticamente.", nota: "✅ Cada venta genera datos útiles: qué se vendió más, alertas de stock bajo y reportes." },
+            ].map((s, i) => (
+              <div key={i} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: "32px 28px", position: "relative" }}>
+                <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.purple, color: "#fff", fontWeight: 700, fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>{s.n}</div>
+                <h3 style={{ fontSize: 22, fontWeight: 600, margin: "0 0 10px", letterSpacing: "-0.4px" }}>{s.t}</h3>
+                <p style={{ fontSize: 15, lineHeight: 1.6, color: C.body, margin: "0 0 14px" }}>{s.d}</p>
+                <p style={{ fontSize: 13.5, lineHeight: 1.5, color: C.body, margin: 0, background: C.bgSoft, padding: "10px 12px", borderRadius: 6 }}>{s.nota}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── PRECIO ── */}
+      <section style={{ ...wrap, padding: "90px 24px" }}>
+        <div style={{ textAlign: "center", marginBottom: 50 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Precio</div>
+          <h2 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: "0 0 14px" }}>Un precio. Todo el sistema.</h2>
+          <p style={{ fontSize: 17, color: C.body, margin: 0 }}>Sin planes básicos que después te cobran los "extra". Con MiStock accedés a todo desde el día uno.</p>
+        </div>
+        <div style={{ maxWidth: 440, margin: "0 auto", background: C.bg, border: `2px solid ${C.purple}`, borderRadius: 14, padding: "40px 36px", position: "relative", boxShadow: "0 20px 60px rgba(146,56,255,0.15)" }}>
+          <div style={{ position: "absolute", top: -13, left: "50%", transform: "translateX(-50%)", background: C.purple, color: "#fff", fontSize: 12, fontWeight: 600, padding: "5px 14px", borderRadius: 20, letterSpacing: "0.5px" }}>PLAN ÚNICO</div>
+          <div style={{ fontSize: 15, fontWeight: 500, color: C.mut, marginBottom: 8, marginTop: 6 }}>MiStock</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 6 }}>
+            <span style={{ fontSize: 24, fontWeight: 600, color: C.ink }}>$</span>
+            <span style={{ fontSize: 60, fontWeight: 700, letterSpacing: "-2.5px" }}>{PRECIO_MENSUAL}</span>
+            <span style={{ fontSize: 17, color: C.mut, fontWeight: 500 }}>/mes</span>
+          </div>
+          <p style={{ fontSize: 14, color: C.mut, margin: "0 0 26px" }}>Sin contratos. Cancelás cuando quieras.</p>
+          <div style={{ marginBottom: 28 }}>
+            {["Ventas y tickets ilimitados", "Productos ilimitados", "Control de stock por talle y color", "Facturación AFIP (A, B y C)", "Estadísticas y reportes", "Remitos, proveedores y caja", "Acceso desde cualquier dispositivo", "Respaldo automático en la nube", "Soporte por WhatsApp"].map((f, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 11, fontSize: 15, color: C.ink }}>
+                <span style={{ color: C.green, display: "flex", flexShrink: 0 }}><CheckCircle2 size={17}/></span> {f}
+              </div>
+            ))}
+          </div>
+          <button onClick={onIngresar} className="btn-primary" style={{ width: "100%", background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "15px", fontFamily: font }}>¡Empezar ahora!</button>
+        </div>
+      </section>
+
+      {/* ── FAQ ── */}
+      <section style={{ background: C.bgSoft, padding: "90px 0", borderTop: `1px solid ${C.line}` }}>
+        <div style={{ maxWidth: 780, margin: "0 auto", padding: "0 24px" }}>
+          <div style={{ textAlign: "center", marginBottom: 50 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Preguntas frecuentes</div>
+            <h2 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: 0 }}>Lo que más nos preguntan</h2>
+          </div>
+          {faqs.map((f, i) => (
+            <div key={i} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 12, overflow: "hidden" }}>
+              <button className="faq-btn" onClick={() => setFaqOpen(faqOpen === i ? null : i)} style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "20px 26px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontSize: 17, fontWeight: 500, color: C.ink, fontFamily: font }}>
+                {f.q}
+                <span style={{ flexShrink: 0, transition: "transform .25s", transform: faqOpen === i ? "rotate(45deg)" : "none", color: C.purple, fontSize: 26, lineHeight: 1, fontWeight: 300 }}>+</span>
+              </button>
+              {faqOpen === i && <div style={{ padding: "0 26px 22px", fontSize: 15.5, lineHeight: 1.65, color: C.body }}>{f.a}</div>}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── CTA FINAL ── */}
+      <section style={{ background: C.ink, color: "#fff", padding: "90px 0" }}>
+        <div style={{ ...wrap, textAlign: "center" }}>
+          <h2 style={{ fontSize: 52, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-2px", margin: "0 0 20px" }}>
+            Dejá de perder plata en detalles.
+          </h2>
+          <p style={{ fontSize: 18, color: "#c9c9c9", maxWidth: 560, margin: "0 auto 40px" }}>
+            Cada venta mal cargada, cada producto que se te pasa. Empezá hoy y no vuelvas a preguntarte "¿cuánto vendí ayer?".
+          </p>
+          <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}>
+            <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 17, cursor: "pointer", padding: "16px 34px", fontFamily: font }}>¡Empezar gratis!</button>
+            <a href={`https://wa.me/${WHATSAPP_NUMERO}`} target="_blank" rel="noreferrer" style={{ background: "transparent", color: "#fff", border: "1.5px solid #fff", borderRadius: 4, fontWeight: 600, fontSize: 17, cursor: "pointer", padding: "14.5px 30px", textDecoration: "none", display: "inline-flex", alignItems: "center", fontFamily: font }}>WhatsApp</a>
+          </div>
+        </div>
+      </section>
+
+      {/* ── FOOTER ── */}
+      <footer style={{ background: "#000", color: C.mut, padding: "40px 0", textAlign: "center" }}>
+        <div style={{ ...wrap }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, marginBottom: 10 }}>
+            <div style={{ background: C.purple, width: 28, height: 28, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}><Store size={15}/></div>
+            <span style={{ fontWeight: 700, fontSize: 16, color: "#fff" }}>MiStock</span>
+          </div>
+          <p style={{ fontSize: 13, margin: 0 }}>Sistema de gestión para comercios · Argentina · © {new Date().getFullYear()}</p>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
 // LOGIN / REGISTER SCREEN
 // ══════════════════════════════════════════════════════════
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin, onVolver }) {
   const [modo, setModo] = useState("login"); // login | register | confirmar
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -3665,6 +3937,14 @@ function LoginScreen({ onLogin }) {
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const C = {
+    ink: "#0a0a0a", body: "#4b5563", mut: "#9ca3af", line: "#e5e7eb",
+    bg: "#ffffff", bgSoft: "#f9fafb",
+    purple: "#9238FF", purpleDark: "#7a1de6", purpleSoft: "#f4ecff",
+    green: "#16a34a",
+  };
+  const font = "'DM Sans', system-ui, -apple-system, sans-serif";
 
   const submit = async () => {
     setError(""); setLoading(true);
@@ -3675,7 +3955,6 @@ function LoginScreen({ onLogin }) {
         if (data.session?.access_token) {
           onLogin(data.session.access_token, data.user?.id);
         } else {
-          // Email confirmation required
           setModo("confirmar");
         }
       } else {
@@ -3688,93 +3967,232 @@ function LoginScreen({ onLogin }) {
     setLoading(false);
   };
 
+  const inputStyle = {
+    width: "100%", padding: "13px 16px", border: `1.5px solid ${C.line}`, borderRadius: 6,
+    fontSize: 14.5, outline: "none", boxSizing: "border-box", fontFamily: font,
+    background: C.bg, transition: "border-color .15s",
+  };
+  const inputWithIconStyle = { ...inputStyle, paddingLeft: 42 };
+  const labelStyle = { fontSize: 13, fontWeight: 500, color: C.ink, display: "block", marginBottom: 8 };
+
+  const submitDisabled = loading || !email || !password;
+
   return (
-    <div style={{ minHeight:"100vh", background:"#f5f5f7", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',system-ui,sans-serif" }}>
-      <div style={{ background:"#fff", borderRadius:20, padding:"40px 44px", width:400, boxShadow:"0 8px 48px rgba(0,0,0,0.10)" }}>
-        {/* Logo */}
-        <div style={{ textAlign:"center", marginBottom:32 }}>
-          <div style={{ background:"#111", borderRadius:16, width:56, height:56, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px" }}>
-            <Store size={28} color="#fff"/>
+    <div style={{ minHeight: "100vh", display: "flex", fontFamily: font, background: C.bg }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+        .login-input:focus { border-color: ${C.purple} !important; }
+        .login-btn:hover:not(:disabled) { background: ${C.purpleDark} !important; }
+        @media (max-width: 900px) {
+          .login-left { display: none !important; }
+          .login-right { flex: 1 !important; }
+        }
+      `}</style>
+
+      {/* ═══ PANEL IZQUIERDO — Branding ═══ */}
+      <div className="login-left" style={{
+        flex: "0 0 46%",
+        background: `linear-gradient(155deg, ${C.ink} 0%, #1a1a2e 100%)`,
+        color: "#fff",
+        padding: "48px 56px",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        position: "relative",
+        overflow: "hidden",
+      }}>
+        {/* Orbe violeta decorativo */}
+        <div style={{ position: "absolute", top: -100, right: -100, width: 400, height: 400, background: `radial-gradient(circle, ${C.purple}44 0%, transparent 70%)`, pointerEvents: "none" }}/>
+        <div style={{ position: "absolute", bottom: -80, left: -80, width: 300, height: 300, background: `radial-gradient(circle, ${C.purple}22 0%, transparent 70%)`, pointerEvents: "none" }}/>
+
+        {/* Logo con back */}
+        <div style={{ position: "relative", zIndex: 1 }}>
+          <button onClick={onVolver} style={{
+            display: "flex", alignItems: "center", gap: 10, background: "transparent", border: "none",
+            color: "#fff", cursor: "pointer", padding: 0, fontFamily: font,
+          }}>
+            <div style={{ background: C.purple, width: 40, height: 40, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Store size={20}/>
+            </div>
+            <span style={{ fontWeight: 700, fontSize: 22, letterSpacing: "-0.7px" }}>MiStock</span>
+          </button>
+        </div>
+
+        {/* Mensaje central */}
+        <div style={{ position: "relative", zIndex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 16 }}>
+            {modo === "register" ? "Bienvenido" : "Hola de nuevo"}
           </div>
-          <div style={{ fontWeight:900, fontSize:26, letterSpacing:"-0.5px" }}>MiStock</div>
-          <div style={{ fontSize:13, color:"#888", marginTop:4 }}>
-            {modo === "login" ? "Iniciá sesión en tu cuenta" : modo === "confirmar" ? "Confirmá tu email" : "Creá tu cuenta gratis"}
+          <h1 style={{ fontSize: 44, fontWeight: 500, lineHeight: 1.1, letterSpacing: "-1.5px", margin: "0 0 20px" }}>
+            {modo === "register" ? "Un negocio ordenado empieza acá." : "Volvamos a lo tuyo."}
+          </h1>
+          <p style={{ fontSize: 16, color: "#c9c9c9", lineHeight: 1.55, margin: 0, maxWidth: 400 }}>
+            {modo === "register"
+              ? "Creá tu cuenta en menos de un minuto y empezá a controlar stock, ventas y facturación desde un solo lugar."
+              : "Ingresá para ver cómo anduvo el día, cargar ventas y controlar tu stock."}
+          </p>
+
+          <div style={{ marginTop: 36, display: "flex", flexDirection: "column", gap: 14 }}>
+            {[
+              "Ventas y stock en tiempo real",
+              "Facturación AFIP incluida",
+              "Acceso desde cualquier dispositivo",
+            ].map((t, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 14.5, color: "#e5e7eb" }}>
+                <div style={{ width: 22, height: 22, borderRadius: "50%", background: C.purple, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <CheckCircle2 size={13} color="#fff"/>
+                </div>
+                {t}
+              </div>
+            ))}
           </div>
         </div>
 
-        {modo === "confirmar" ? (
-          <div style={{ textAlign:"center" }}>
-            <div style={{ fontSize:48, marginBottom:16 }}>📧</div>
-            <p style={{ fontSize:14, color:"#555", marginBottom:20, lineHeight:1.6 }}>
-              Te enviamos un email de confirmación a <b>{email}</b>.<br/>
-              Hacé clic en el link del email y luego iniciá sesión.
+        {/* Footer izquierdo */}
+        <div style={{ position: "relative", zIndex: 1, fontSize: 12.5, color: "#8a97a8" }}>
+          © {new Date().getFullYear()} MiStock · Sistema de gestión para comercios
+        </div>
+      </div>
+
+      {/* ═══ PANEL DERECHO — Formulario ═══ */}
+      <div className="login-right" style={{
+        flex: "1",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "48px 32px",
+        background: C.bg,
+      }}>
+        <div style={{ width: "100%", maxWidth: 400 }}>
+
+          {/* Título */}
+          <div style={{ marginBottom: 32 }}>
+            <h2 style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-1px", margin: "0 0 8px", color: C.ink }}>
+              {modo === "confirmar" ? "Revisá tu email" : modo === "register" ? "Crear cuenta" : "Iniciar sesión"}
+            </h2>
+            <p style={{ fontSize: 15, color: C.body, margin: 0 }}>
+              {modo === "confirmar"
+                ? `Te enviamos un link a ${email}`
+                : modo === "register"
+                  ? "Registrate gratis y arrancá hoy"
+                  : "Ingresá con tus datos para acceder"}
             </p>
-            <button onClick={() => setModo("login")} style={{ ...btnStyle, background:"#111", color:"#fff" }}>
-              Ir al login
+          </div>
+
+          {modo === "confirmar" ? (
+            <>
+              <div style={{ background: C.purpleSoft, borderRadius: 10, padding: "24px 20px", marginBottom: 20, textAlign: "center" }}>
+                <div style={{ color: C.purple, marginBottom: 12, display: "flex", justifyContent: "center" }}>
+                  <Mail size={40}/>
+                </div>
+                <p style={{ fontSize: 14, color: C.ink, margin: "0 0 6px", fontWeight: 600 }}>Un paso más</p>
+                <p style={{ fontSize: 13, color: C.body, margin: 0, lineHeight: 1.5 }}>
+                  Hacé clic en el link que te enviamos por email y volvé acá para iniciar sesión.
+                </p>
+              </div>
+              <button
+                onClick={() => setModo("login")}
+                style={{
+                  width: "100%", padding: "14px", background: C.purple, color: "#fff",
+                  border: "none", borderRadius: 4, fontSize: 15, fontWeight: 600, cursor: "pointer",
+                  fontFamily: font,
+                }}
+                className="login-btn"
+              >
+                Ir al login
+              </button>
+            </>
+          ) : (<>
+
+            {error && (
+              <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 6, padding: "11px 14px", marginBottom: 18, fontSize: 13, color: "#dc2626", display: "flex", alignItems: "center", gap: 8 }}>
+                <AlertCircle size={15}/> {error}
+              </div>
+            )}
+
+            {modo === "register" && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={labelStyle}>Nombre del negocio</label>
+                <input
+                  className="login-input"
+                  style={inputStyle}
+                  placeholder="Ej: Bahamas Store"
+                  value={nombreNegocio}
+                  onChange={e => setNombreNegocio(e.target.value)}
+                />
+              </div>
+            )}
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={labelStyle}>Email</label>
+              <div style={{ position: "relative" }}>
+                <Mail size={17} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.mut }}/>
+                <input
+                  className="login-input"
+                  style={inputWithIconStyle}
+                  type="email"
+                  placeholder="tu@email.com"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && submit()}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 24 }}>
+              <label style={labelStyle}>Contraseña</label>
+              <div style={{ position: "relative" }}>
+                <Lock size={17} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.mut }}/>
+                <input
+                  className="login-input"
+                  style={{ ...inputWithIconStyle, paddingRight: 44 }}
+                  type={showPass ? "text" : "password"}
+                  placeholder={modo === "register" ? "Mínimo 6 caracteres" : "Tu contraseña"}
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && submit()}
+                />
+                <button
+                  onClick={() => setShowPass(!showPass)}
+                  style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.mut, display: "flex", padding: 4 }}
+                  type="button"
+                >
+                  {showPass ? <EyeOff size={17}/> : <Eye size={17}/>}
+                </button>
+              </div>
+            </div>
+
+            <button
+              onClick={submit}
+              disabled={submitDisabled}
+              className="login-btn"
+              style={{
+                width: "100%", padding: "14px", background: submitDisabled ? C.line : C.purple,
+                color: submitDisabled ? C.mut : "#fff", border: "none", borderRadius: 4,
+                fontSize: 15, fontWeight: 600, cursor: submitDisabled ? "not-allowed" : "pointer",
+                transition: "background .15s", fontFamily: font,
+              }}
+            >
+              {loading ? "Un momento..." : modo === "login" ? "Iniciar sesión" : "Crear mi cuenta"}
             </button>
-          </div>
-        ) : (<>
 
-        {error && (
-          <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:10, padding:"10px 14px", marginBottom:16, fontSize:13, color:"#dc2626" }}>
-            {error}
-          </div>
-        )}
+            <div style={{ textAlign: "center", marginTop: 20, fontSize: 14, color: C.body }}>
+              {modo === "login" ? (
+                <>¿Todavía no tenés cuenta? <button onClick={() => { setModo("register"); setError(""); }} style={{ background: "none", border: "none", color: C.purple, fontWeight: 600, cursor: "pointer", fontSize: 14, fontFamily: font, padding: 0 }}>Crear cuenta gratis</button></>
+              ) : (
+                <>¿Ya tenés cuenta? <button onClick={() => { setModo("login"); setError(""); }} style={{ background: "none", border: "none", color: C.purple, fontWeight: 600, cursor: "pointer", fontSize: 14, fontFamily: font, padding: 0 }}>Iniciar sesión</button></>
+              )}
+            </div>
 
-        {modo === "register" && (
-          <div style={{ marginBottom:14 }}>
-            <label style={{ fontSize:12, fontWeight:600, color:"#555", display:"block", marginBottom:6 }}>Nombre de tu negocio</label>
-            <input
-              style={{ width:"100%", padding:"11px 14px", border:"1.5px solid #e5e7eb", borderRadius:10, fontSize:14, outline:"none", boxSizing:"border-box" }}
-              placeholder="Ej: Bahamas Store"
-              value={nombreNegocio} onChange={e => setNombreNegocio(e.target.value)}
-            />
-          </div>
-        )}
+            {/* Volver a la landing (solo móvil visible como texto) */}
+            <div style={{ textAlign: "center", marginTop: 32, fontSize: 13, color: C.mut }}>
+              <button onClick={onVolver} style={{ background: "none", border: "none", color: C.mut, cursor: "pointer", fontSize: 13, fontFamily: font, textDecoration: "underline", padding: 0 }}>
+                ← Volver al inicio
+              </button>
+            </div>
 
-        <div style={{ marginBottom:14 }}>
-          <label style={{ fontSize:12, fontWeight:600, color:"#555", display:"block", marginBottom:6 }}>Email</label>
-          <div style={{ position:"relative" }}>
-            <Mail size={15} style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"#bbb" }}/>
-            <input
-              style={{ width:"100%", padding:"11px 14px 11px 36px", border:"1.5px solid #e5e7eb", borderRadius:10, fontSize:14, outline:"none", boxSizing:"border-box" }}
-              type="email" placeholder="tu@email.com"
-              value={email} onChange={e => setEmail(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && submit()}
-            />
-          </div>
+          </>)}
         </div>
-
-        <div style={{ marginBottom:24 }}>
-          <label style={{ fontSize:12, fontWeight:600, color:"#555", display:"block", marginBottom:6 }}>Contraseña</label>
-          <div style={{ position:"relative" }}>
-            <input
-              style={{ width:"100%", padding:"11px 40px 11px 14px", border:"1.5px solid #e5e7eb", borderRadius:10, fontSize:14, outline:"none", boxSizing:"border-box" }}
-              type={showPass ? "text" : "password"} placeholder="Mínimo 6 caracteres"
-              value={password} onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && submit()}
-            />
-            <button onClick={() => setShowPass(!showPass)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"#bbb", display:"flex" }}>
-              {showPass ? <EyeOff size={16}/> : <Eye size={16}/>}
-            </button>
-          </div>
-        </div>
-
-        <button
-          onClick={submit} disabled={loading || !email || !password}
-          style={{ width:"100%", padding:"13px", background: loading || !email || !password ? "#e5e7eb" : "#111", color: loading || !email || !password ? "#999" : "#fff", border:"none", borderRadius:10, fontSize:15, fontWeight:700, cursor: loading ? "wait" : "pointer", transition:"background .15s" }}
-        >
-          {loading ? "Cargando..." : modo === "login" ? "Iniciar sesión" : "Crear cuenta"}
-        </button>
-
-        <div style={{ textAlign:"center", marginTop:20, fontSize:13, color:"#888" }}>
-          {modo === "login" ? (
-            <>¿No tenés cuenta? <button onClick={() => { setModo("register"); setError(""); }} style={{ background:"none", border:"none", color:"#111", fontWeight:700, cursor:"pointer", fontSize:13 }}>Crear cuenta gratis</button></>
-          ) : (
-            <>¿Ya tenés cuenta? <button onClick={() => { setModo("login"); setError(""); }} style={{ background:"none", border:"none", color:"#111", fontWeight:700, cursor:"pointer", fontSize:13 }}>Iniciar sesión</button></>
-          )}
-        </div>
-        </>)}
       </div>
     </div>
   );
@@ -3785,6 +4203,39 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [token, setToken] = useState(null);
+  // Ruteo por URL: /home (landing), /login (auth), /app (dashboard)
+  const [route, setRoute] = useState(() => {
+    if (typeof window === "undefined") return "home";
+    const p = window.location.pathname;
+    if (p === "/login") return "login";
+    if (p === "/app" || p.startsWith("/app/")) return "app";
+    return "home";
+  });
+
+  // Escuchar cambios de URL (botón back/forward del navegador)
+  useEffect(() => {
+    // Normalizar "/" a "/home" al arrancar
+    if (typeof window !== "undefined" && window.location.pathname === "/") {
+      window.history.replaceState({}, "", "/home");
+    }
+    const onPop = () => {
+      const p = window.location.pathname;
+      if (p === "/login") setRoute("login");
+      else if (p === "/app" || p.startsWith("/app/")) setRoute("app");
+      else setRoute("home");
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // Helper para navegar y actualizar la URL sin recargar
+  const navegar = (dest) => {
+    const url = dest === "home" ? "/home" : dest === "login" ? "/login" : "/app";
+    if (window.location.pathname !== url) {
+      window.history.pushState({}, "", url);
+    }
+    setRoute(dest);
+  };
 
   const [config, setConfig] = useState({ nombre:"Mi Showroom", moneda:"$", dueno:"", rubro:"", telefono:"", instagram:"", logo:"", cuit:"", razonSocial:"", tipoContrib:"monotributista", puntoVenta:"0001", condicionIVA:"Monotributista", facturacionActiva:false });
   const [products, setProducts] = useState([]);
@@ -3854,7 +4305,7 @@ export default function App() {
   }, [token]);
 
   const handleLogin = (access_token, userId) => { setToken({ access_token, userId }); setAuthReady(false); };
-  const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); };
+  const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); navegar("home"); };
 
   // ── Guardar config en Supabase ───────────────────────────
   const saveConfig = async (newConfig) => {
@@ -3928,7 +4379,18 @@ export default function App() {
     </div>
   );
 
-  if (!token) return <LoginScreen onLogin={handleLogin} />;
+  if (!token) {
+    if (route === "login") return <LoginScreen onLogin={handleLogin} onVolver={() => navegar("home")} />;
+    // Cualquier otra ruta sin login → landing
+    return <LandingPage onIngresar={() => navegar("login")} />;
+  }
+  // Con token → asegurar URL /app
+  if (route !== "app") {
+    // Sincronizar URL con estado logueado
+    if (typeof window !== "undefined" && window.location.pathname !== "/app") {
+      window.history.replaceState({}, "", "/app");
+    }
+  }
 
   if (!loaded) return (
     <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", background:"#f5f5f7", fontFamily:"system-ui,sans-serif" }}>
