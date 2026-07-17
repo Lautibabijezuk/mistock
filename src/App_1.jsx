@@ -524,7 +524,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
     }
   };
 
-  const confirmar = () => {
+  const confirmar = async () => {
     if (devuelve.length === 0 && lleva.length === 0) return;
     const affectedIds = new Set([...devuelve.map(d=>d.id), ...lleva.map(l=>l.id)]);
     const updated = products.map(p => {
@@ -546,8 +546,8 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
       return upd;
     });
     setProducts(updated);
-    if (saveProducts) saveProducts(updated.filter(p => affectedIds.has(p.id)));
     setExito(true);
+    if (saveProducts) await saveProducts(updated.filter(p => affectedIds.has(p.id)));
   };
 
   // Modal de selección de talle (pendiente)
@@ -3030,7 +3030,14 @@ function FacturarModal({ venta, config, sales, onFacturar, onSinFactura, onClose
   const [caeVto, setCaeVto] = useState("");
 
   const tipo = tipoFactura(config.tipoContrib, condReceptor);
-  const nroFacturasEmitidas = sales.filter(s => s.factura?.estado === "emitida").length;
+  // Número secuencial: tomar el más alto ya emitido + 1 (AFIP exige correlatividad sin duplicados)
+  const nroFacturasEmitidas = sales.reduce((mx, s) => {
+    if (s.factura?.estado === "emitida" && s.factura?.numero) {
+      const n = parseInt(String(s.factura.numero).split("-").pop(), 10) || 0;
+      return Math.max(mx, n);
+    }
+    return mx;
+  }, 0);
   const nroComprobante = nroComprobante_fn(config.puntoVenta, nroFacturasEmitidas + 1);
 
   function nroComprobante_fn(pv, n) {
@@ -3038,6 +3045,7 @@ function FacturarModal({ venta, config, sales, onFacturar, onSinFactura, onClose
   }
 
   const emitir = () => {
+    if (step === 3) return; // ya procesando: evita doble emisión
     setStep(3);
     // Simula llamada a AFIP (en producción: llamada real a la API)
     setTimeout(() => {
@@ -3647,6 +3655,278 @@ function OnboardingScreen({ onDone }) {
 // ROOT APP
 // ═══════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════
+// LANDING PAGE — estilo violeta+blanco (inspirado en Caibe)
+// ══════════════════════════════════════════════════════════
+const WHATSAPP_NUMERO = "5491100000000"; // ← reemplazar por tu WhatsApp real
+const PRECIO_MENSUAL = "15.000"; // ← precio de la mensualidad en ARS
+
+function LandingPage({ onIngresar }) {
+  const [faqOpen, setFaqOpen] = useState(null);
+
+  const C = {
+    ink: "#0a0a0a", body: "#4b5563", mut: "#9ca3af", line: "#e5e7eb",
+    bg: "#ffffff", bgSoft: "#f9fafb",
+    purple: "#9238FF", purpleDark: "#7a1de6", purpleSoft: "#f4ecff",
+    green: "#16a34a",
+  };
+  const font = "'DM Sans', system-ui, -apple-system, sans-serif";
+  const wrap = { maxWidth: 1160, margin: "0 auto", padding: "0 24px" };
+
+  const rubros = [
+    "Indumentaria", "Calzado", "Kioscos", "Almacenes", "Perfumerías",
+    "Farmacias", "Librerías", "Jugueterías", "Verdulerías", "Carnicerías",
+    "Pañaleras", "Ferreterías", "Electrónica", "Bazar", "Panaderías",
+  ];
+
+  const faqs = [
+    { q: "¿Necesito instalar algo?", a: "No. MiStock funciona 100% en la web. Entrás desde cualquier computadora, tablet o celular con internet, sin descargar ni instalar nada." },
+    { q: "¿Mis datos están seguros?", a: "Sí. Toda tu información se guarda en la nube con respaldo automático. Cada negocio ve únicamente sus propios datos, protegidos con tu usuario y contraseña." },
+    { q: "¿Sirve para mi rubro?", a: "MiStock es multirrubro. Se adapta a indumentaria, calzado, electrónica, kioscos, farmacias y prácticamente cualquier comercio minorista. Al crear tu cuenta elegís tu rubro y el sistema se configura solo." },
+    { q: "¿Puedo emitir facturas?", a: "Sí. El sistema emite comprobantes tipo A, B y C con numeración correlativa, listos para AFIP. También podés dar tickets de venta comunes cuando no hace falta factura." },
+    { q: "¿Puedo usar MiStock desde el celular?", a: "Sí. La app se adapta a cualquier dispositivo. Vendé desde el mostrador con la compu y controlá el negocio desde el celular cuando estás afuera." },
+    { q: "¿Qué pasa si tengo un problema?", a: "Nos escribís por WhatsApp y te ayudamos. Estamos para que puedas vender tranquilo." },
+  ];
+
+  const funciones = [
+    { t: "Control total del stock", d: "Alta y baja de productos, stock por talle y color, y alertas de faltantes automáticas.", ic: <Package size={24}/> },
+    { t: "Ventas y ganancias visibles", d: "Cada venta queda registrada con precio, cantidad y margen. Sabés cuánto ganás por día.", ic: <TrendingUp size={24}/> },
+    { t: "Facturación AFIP lista", d: "Emití Factura A, B y C con CAE. Todo queda registrado y listo para tu contador.", ic: <Receipt size={24}/> },
+    { t: "Ahorro de tiempo real", d: "Vendé en segundos, sin hacer cuentas mentales. Descontá stock y calculá vuelto solo.", ic: <Timer size={24}/> },
+    { t: "Estadísticas que sirven", d: "Qué se vende, qué no, a qué hora y qué día. Decisiones con datos, no a ojo.", ic: <BarChart2 size={24}/> },
+    { t: "Todo en la nube", d: "Acceso desde cualquier dispositivo con internet. Sin instalar, sin perder datos, siempre al día.", ic: <RefreshCw size={24}/> },
+  ];
+
+  return (
+    <div style={{ fontFamily: font, color: C.ink, background: C.bg, minHeight: "100vh" }}>
+      {/* Cargar DM Sans + estilos de animaciones */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+        @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+        .marquee-track { animation: marquee 40s linear infinite; }
+        .btn-primary:hover { background: ${C.purpleDark} !important; }
+        .btn-ghost:hover { background: ${C.purpleSoft} !important; }
+        .faq-btn:hover { background: ${C.bgSoft}; }
+        @media (max-width: 800px) {
+          .hero-grid { grid-template-columns: 1fr !important; }
+          .hero-h1 { font-size: 44px !important; }
+          .funciones-grid { grid-template-columns: 1fr !important; }
+          .steps-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+
+      {/* ── NAV ── */}
+      <nav style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(255,255,255,0.94)", backdropFilter: "blur(8px)", borderBottom: `1px solid ${C.line}` }}>
+        <div style={{ ...wrap, display: "flex", alignItems: "center", justifyContent: "space-between", height: 68 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ background: C.purple, width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}><Store size={19}/></div>
+            <span style={{ fontWeight: 700, fontSize: 22, letterSpacing: "-0.7px" }}>MiStock</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button onClick={onIngresar} className="btn-ghost" style={{ background: "transparent", border: "none", color: C.ink, fontWeight: 500, fontSize: 14.5, cursor: "pointer", padding: "10px 16px", borderRadius: 6, fontFamily: font }}>Iniciar sesión</button>
+            <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 14.5, cursor: "pointer", padding: "11px 20px", fontFamily: font }}>Empezar gratis</button>
+          </div>
+        </div>
+      </nav>
+
+      {/* ── HERO ── */}
+      <section style={{ ...wrap, padding: "80px 24px 60px" }}>
+        <div className="hero-grid" style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 60, alignItems: "center" }}>
+          <div>
+            <h1 className="hero-h1" style={{ fontSize: 68, lineHeight: 1.02, fontWeight: 500, letterSpacing: "-2.5px", margin: "0 0 24px" }}>
+              Menos planillas.<br/>Más ventas.
+            </h1>
+            <p style={{ fontSize: 18, lineHeight: 1.55, color: C.body, margin: "0 0 32px", maxWidth: 520 }}>
+              MiStock reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás, controlás el stock y facturás a AFIP — todo desde un mismo lugar.
+            </p>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "14px 28px", fontFamily: font }}>¡Empezar gratis!</button>
+              <a href={`https://wa.me/${WHATSAPP_NUMERO}`} target="_blank" rel="noreferrer" style={{ background: "transparent", color: C.ink, border: `1.5px solid ${C.ink}`, borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "12.5px 24px", textDecoration: "none", display: "inline-flex", alignItems: "center", fontFamily: font }}>Hablar por WhatsApp</a>
+            </div>
+            <div style={{ display: "flex", gap: 22, marginTop: 34, fontSize: 13.5, color: C.mut, flexWrap: "wrap" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Sin tarjeta de crédito</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Sin instalaciones</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Listo en 2 minutos</span>
+            </div>
+          </div>
+
+          {/* Signature: dashboard mockup */}
+          <div style={{ position: "relative" }}>
+            <div style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 22, boxShadow: "0 20px 60px rgba(146, 56, 255, 0.15), 0 8px 24px rgba(0,0,0,0.06)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18 }}>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#f87171" }}/>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#fbbf24" }}/>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#34d399" }}/>
+                <span style={{ fontSize: 12, color: C.mut, marginLeft: 8 }}>mistock.com.ar</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                <div style={{ background: C.purpleSoft, borderRadius: 8, padding: "14px 16px" }}>
+                  <div style={{ fontSize: 11, color: C.purpleDark, fontWeight: 600, marginBottom: 4 }}>VENTAS HOY</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: C.purple }}>$127.400</div>
+                </div>
+                <div style={{ background: "#f0fdf4", borderRadius: 8, padding: "14px 16px" }}>
+                  <div style={{ fontSize: 11, color: "#15803d", fontWeight: 600, marginBottom: 4 }}>GANANCIA</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: C.green }}>$52.100</div>
+                </div>
+              </div>
+              {[
+                ["Remera oversize · T.M", "$18.900", "3"],
+                ["Jean recto azul · T.42", "$34.500", "2"],
+                ["Buzo canguro · T.L", "$29.900", "1"],
+              ].map(([n, p, q], i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 4px", borderBottom: i < 2 ? `1px solid ${C.line}` : "none" }}>
+                  <span style={{ fontSize: 13, color: C.body }}>{n}</span>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                    <span style={{ fontSize: 11, color: C.mut, background: C.bgSoft, borderRadius: 4, padding: "2px 8px" }}>×{q}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{p}</span>
+                  </div>
+                </div>
+              ))}
+              <div style={{ marginTop: 12, background: C.ink, color: "#fff", borderRadius: 6, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>TOTAL</span>
+                <span style={{ fontSize: 18, fontWeight: 700 }}>$83.300</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── MARQUESINA de rubros ── */}
+      <div style={{ background: C.ink, color: "#fff", padding: "22px 0", overflow: "hidden", marginBottom: 60 }}>
+        <div className="marquee-track" style={{ display: "flex", gap: 48, whiteSpace: "nowrap" }}>
+          {[...rubros, ...rubros].map((r, i) => (
+            <span key={i} style={{ fontSize: 20, fontWeight: 500, letterSpacing: "-0.3px", flexShrink: 0 }}>
+              {r} <span style={{ color: C.purple, margin: "0 0 0 40px" }}>◆</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* ── QUÉ ES / PROPUESTA ── */}
+      <section style={{ ...wrap, padding: "40px 24px 80px" }}>
+        <div style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 60px" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Por qué MiStock</div>
+          <h2 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: "0 0 20px" }}>
+            Diseñado para el mostrador.
+          </h2>
+          <p style={{ fontSize: 17.5, lineHeight: 1.6, color: C.body, margin: 0 }}>
+            Nada de menús interminables ni cursos para aprender a usarlo. Cargás un producto y ya podés venderlo. Tu vendedor se pone al día en 5 minutos. Y si el cliente devuelve algo, el stock se ajusta solo.
+          </p>
+        </div>
+
+        <div className="funciones-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 24 }}>
+          {funciones.map((f, i) => (
+            <div key={i} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 10, padding: "28px 26px" }}>
+              <div style={{ width: 48, height: 48, borderRadius: 10, background: C.purpleSoft, color: C.purple, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>{f.ic}</div>
+              <h3 style={{ fontSize: 19, fontWeight: 600, margin: "0 0 8px", letterSpacing: "-0.3px" }}>{f.t}</h3>
+              <p style={{ fontSize: 14.5, lineHeight: 1.55, color: C.body, margin: 0 }}>{f.d}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── CÓMO FUNCIONA ── */}
+      <section style={{ background: C.bgSoft, padding: "90px 0", borderTop: `1px solid ${C.line}`, borderBottom: `1px solid ${C.line}` }}>
+        <div style={{ ...wrap }}>
+          <div style={{ textAlign: "center", marginBottom: 60 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Cómo se usa</div>
+            <h2 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: 0 }}>
+              Andando en 5 minutos.
+            </h2>
+          </div>
+          <div className="steps-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 30 }}>
+            {[
+              { n: "1", t: "Registrate gratis", d: "Creá tu cuenta rápido, gratis y sin tarjeta. Podés hacerlo desde tu celular o computadora.", nota: "✅ No necesitás descargar nada ni instalar programas. Funciona 100% online." },
+              { n: "2", t: "Cargá tus productos", d: "Elegí tu rubro y cargá tus productos manualmente o importalos desde un Excel/CSV.", nota: "✅ El sistema se adapta a tu rubro con talles, colores, categorías y todo lo que necesites." },
+              { n: "3", t: "Empezá a vender", d: "Buscá productos por nombre, cobrá con cualquier método y emití factura AFIP si hace falta. Cada venta descuenta stock automáticamente.", nota: "✅ Cada venta genera datos útiles: qué se vendió más, alertas de stock bajo y reportes." },
+            ].map((s, i) => (
+              <div key={i} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: "32px 28px", position: "relative" }}>
+                <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.purple, color: "#fff", fontWeight: 700, fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>{s.n}</div>
+                <h3 style={{ fontSize: 22, fontWeight: 600, margin: "0 0 10px", letterSpacing: "-0.4px" }}>{s.t}</h3>
+                <p style={{ fontSize: 15, lineHeight: 1.6, color: C.body, margin: "0 0 14px" }}>{s.d}</p>
+                <p style={{ fontSize: 13.5, lineHeight: 1.5, color: C.body, margin: 0, background: C.bgSoft, padding: "10px 12px", borderRadius: 6 }}>{s.nota}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── PRECIO ── */}
+      <section style={{ ...wrap, padding: "90px 24px" }}>
+        <div style={{ textAlign: "center", marginBottom: 50 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Precio</div>
+          <h2 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: "0 0 14px" }}>Un precio. Todo el sistema.</h2>
+          <p style={{ fontSize: 17, color: C.body, margin: 0 }}>Sin planes básicos que después te cobran los "extra". Con MiStock accedés a todo desde el día uno.</p>
+        </div>
+        <div style={{ maxWidth: 440, margin: "0 auto", background: C.bg, border: `2px solid ${C.purple}`, borderRadius: 14, padding: "40px 36px", position: "relative", boxShadow: "0 20px 60px rgba(146,56,255,0.15)" }}>
+          <div style={{ position: "absolute", top: -13, left: "50%", transform: "translateX(-50%)", background: C.purple, color: "#fff", fontSize: 12, fontWeight: 600, padding: "5px 14px", borderRadius: 20, letterSpacing: "0.5px" }}>PLAN ÚNICO</div>
+          <div style={{ fontSize: 15, fontWeight: 500, color: C.mut, marginBottom: 8, marginTop: 6 }}>MiStock</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 6 }}>
+            <span style={{ fontSize: 24, fontWeight: 600, color: C.ink }}>$</span>
+            <span style={{ fontSize: 60, fontWeight: 700, letterSpacing: "-2.5px" }}>{PRECIO_MENSUAL}</span>
+            <span style={{ fontSize: 17, color: C.mut, fontWeight: 500 }}>/mes</span>
+          </div>
+          <p style={{ fontSize: 14, color: C.mut, margin: "0 0 26px" }}>Sin contratos. Cancelás cuando quieras.</p>
+          <div style={{ marginBottom: 28 }}>
+            {["Ventas y tickets ilimitados", "Productos ilimitados", "Control de stock por talle y color", "Facturación AFIP (A, B y C)", "Estadísticas y reportes", "Remitos, proveedores y caja", "Acceso desde cualquier dispositivo", "Respaldo automático en la nube", "Soporte por WhatsApp"].map((f, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 11, fontSize: 15, color: C.ink }}>
+                <span style={{ color: C.green, display: "flex", flexShrink: 0 }}><CheckCircle2 size={17}/></span> {f}
+              </div>
+            ))}
+          </div>
+          <button onClick={onIngresar} className="btn-primary" style={{ width: "100%", background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "15px", fontFamily: font }}>¡Empezar ahora!</button>
+        </div>
+      </section>
+
+      {/* ── FAQ ── */}
+      <section style={{ background: C.bgSoft, padding: "90px 0", borderTop: `1px solid ${C.line}` }}>
+        <div style={{ maxWidth: 780, margin: "0 auto", padding: "0 24px" }}>
+          <div style={{ textAlign: "center", marginBottom: 50 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Preguntas frecuentes</div>
+            <h2 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: 0 }}>Lo que más nos preguntan</h2>
+          </div>
+          {faqs.map((f, i) => (
+            <div key={i} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 12, overflow: "hidden" }}>
+              <button className="faq-btn" onClick={() => setFaqOpen(faqOpen === i ? null : i)} style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "20px 26px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontSize: 17, fontWeight: 500, color: C.ink, fontFamily: font }}>
+                {f.q}
+                <span style={{ flexShrink: 0, transition: "transform .25s", transform: faqOpen === i ? "rotate(45deg)" : "none", color: C.purple, fontSize: 26, lineHeight: 1, fontWeight: 300 }}>+</span>
+              </button>
+              {faqOpen === i && <div style={{ padding: "0 26px 22px", fontSize: 15.5, lineHeight: 1.65, color: C.body }}>{f.a}</div>}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── CTA FINAL ── */}
+      <section style={{ background: C.ink, color: "#fff", padding: "90px 0" }}>
+        <div style={{ ...wrap, textAlign: "center" }}>
+          <h2 style={{ fontSize: 52, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-2px", margin: "0 0 20px" }}>
+            Dejá de perder plata en detalles.
+          </h2>
+          <p style={{ fontSize: 18, color: "#c9c9c9", maxWidth: 560, margin: "0 auto 40px" }}>
+            Cada venta mal cargada, cada producto que se te pasa. Empezá hoy y no vuelvas a preguntarte "¿cuánto vendí ayer?".
+          </p>
+          <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}>
+            <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 17, cursor: "pointer", padding: "16px 34px", fontFamily: font }}>¡Empezar gratis!</button>
+            <a href={`https://wa.me/${WHATSAPP_NUMERO}`} target="_blank" rel="noreferrer" style={{ background: "transparent", color: "#fff", border: "1.5px solid #fff", borderRadius: 4, fontWeight: 600, fontSize: 17, cursor: "pointer", padding: "14.5px 30px", textDecoration: "none", display: "inline-flex", alignItems: "center", fontFamily: font }}>WhatsApp</a>
+          </div>
+        </div>
+      </section>
+
+      {/* ── FOOTER ── */}
+      <footer style={{ background: "#000", color: C.mut, padding: "40px 0", textAlign: "center" }}>
+        <div style={{ ...wrap }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, marginBottom: 10 }}>
+            <div style={{ background: C.purple, width: 28, height: 28, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}><Store size={15}/></div>
+            <span style={{ fontWeight: 700, fontSize: 16, color: "#fff" }}>MiStock</span>
+          </div>
+          <p style={{ fontSize: 13, margin: 0 }}>Sistema de gestión para comercios · Argentina · © {new Date().getFullYear()}</p>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
 // LOGIN / REGISTER SCREEN
 // ══════════════════════════════════════════════════════════
 function LoginScreen({ onLogin }) {
@@ -3777,6 +4057,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [token, setToken] = useState(null);
+  const [showLanding, setShowLanding] = useState(true); // primero mostramos la landing
 
   const [config, setConfig] = useState({ nombre:"Mi Showroom", moneda:"$", dueno:"", rubro:"", telefono:"", instagram:"", logo:"", cuit:"", razonSocial:"", tipoContrib:"monotributista", puntoVenta:"0001", condicionIVA:"Monotributista", facturacionActiva:false });
   const [products, setProducts] = useState([]);
@@ -3920,7 +4201,10 @@ export default function App() {
     </div>
   );
 
-  if (!token) return <LoginScreen onLogin={handleLogin} />;
+  if (!token) {
+    if (showLanding) return <LandingPage onIngresar={() => setShowLanding(false)} />;
+    return <LoginScreen onLogin={handleLogin} />;
+  }
 
   if (!loaded) return (
     <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", background:"#f5f5f7", fontFamily:"system-ui,sans-serif" }}>
