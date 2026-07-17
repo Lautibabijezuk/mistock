@@ -4305,7 +4305,7 @@ export default function App() {
   }, [token]);
 
   const handleLogin = (access_token, userId) => { setToken({ access_token, userId }); setAuthReady(false); };
-  const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); navegar("home"); };
+  const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); navegar("login"); };
 
   // ── Guardar config en Supabase ───────────────────────────
   const saveConfig = async (newConfig) => {
