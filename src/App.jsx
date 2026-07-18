@@ -4383,7 +4383,12 @@ function getSubscriptionState(config) {
   }
 
   if (status === 'trial') {
-    const msLeft = trialEnd ? trialEnd - now : 0;
+    // Si trialEnd no está seteado aún (cuenta recién creada, config todavía cargando),
+    // asumimos que es válido y NO bloqueamos - la DB tiene el default de 7 días
+    if (!trialEnd) {
+      return { status: 'trial', isActive: true, isTrial: true, isBlocked: false, daysLeft: 7 };
+    }
+    const msLeft = trialEnd - now;
     const daysLeft = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60 * 24)));
     if (daysLeft === 0) {
       return { status: 'trial_expired', isActive: false, isTrial: true, isBlocked: true, daysLeft: 0 };
