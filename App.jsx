@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, Component } from "react";
+import { Html5Qrcode } from "html5-qrcode";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
-import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff } from "lucide-react";
+import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera } from "lucide-react";
 import * as XLSX from "xlsx";
 
 // ═══════════════════════════════════════════════════════════
@@ -109,7 +110,7 @@ const productToDb = (p, negocioId) => ({
   costo: p.costo||0, stock: p.stock||0, stock_minimo: p.stockMinimo||3,
   talles: p.talles||[], colores: p.colores||[], stock_por_talle: p.stockPorTalle||{},
   imagen: p.imagen||'', marca: p.marca||'', temporada: p.temporada||'',
-  vencimiento: p.vencimiento||'',
+  vencimiento: p.vencimiento||'', codigo_barras: p.codigoBarras||null,
 });
 const dbToVenta = r => ({
   id: r.id, numero: r.numero, fecha: r.fecha, cliente: r.cliente,
@@ -287,6 +288,79 @@ function CajaBanner({ caja, onAbrir }) {
       </div>
       <button style={G.btn("green")} onClick={onAbrir}>Abrir Caja</button>
     </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// EscanerModal — usa la cámara del dispositivo para leer códigos de barra
+// ══════════════════════════════════════════════════════════
+function EscanerModal({ onDetectado, onClose, titulo = "Escanear código de barras" }) {
+  const scannerRef = useRef(null);
+  const [error, setError] = useState("");
+  const [iniciando, setIniciando] = useState(true);
+
+  useEffect(() => {
+    const scanner = new Html5Qrcode("escaner-region");
+    scannerRef.current = scanner;
+
+    const config = {
+      fps: 10,
+      qrbox: { width: 260, height: 130 },
+      aspectRatio: 1.5,
+      formatsToSupport: undefined, // acepta todos: EAN-13, EAN-8, UPC-A, Code-128, Code-39, QR...
+    };
+
+    scanner.start(
+      { facingMode: "environment" }, // cámara trasera en celulares
+      config,
+      (decodedText) => {
+        // Detectó un código - cierra y devuelve
+        scanner.stop().then(() => {
+          onDetectado(decodedText.trim());
+        }).catch(() => onDetectado(decodedText.trim()));
+      },
+      () => {} // callback de error de frame - ignoramos
+    ).then(() => {
+      setIniciando(false);
+    }).catch(err => {
+      setIniciando(false);
+      const msg = String(err?.message || err);
+      if (msg.includes("Permission") || msg.includes("permission")) {
+        setError("Necesitás permitir el acceso a la cámara para escanear.");
+      } else if (msg.includes("NotFound") || msg.includes("no camera")) {
+        setError("No se detectó ninguna cámara en este dispositivo.");
+      } else {
+        setError("No se pudo iniciar la cámara: " + msg);
+      }
+    });
+
+    return () => {
+      if (scannerRef.current && scannerRef.current.isScanning) {
+        scannerRef.current.stop().catch(() => {});
+      }
+    };
+  }, [onDetectado]);
+
+  return (
+    <Modal title={titulo} subtitle="Apuntá la cámara al código y esperá a que lo detecte" onClose={onClose} width={480}>
+      <div style={{ background: "#000", borderRadius: 12, overflow: "hidden", position: "relative", minHeight: 320 }}>
+        <div id="escaner-region" style={{ width: "100%", minHeight: 320 }}/>
+        {iniciando && !error && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 14 }}>
+            Iniciando cámara...
+          </div>
+        )}
+      </div>
+      {error && (
+        <div style={{ marginTop: 14, background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 8, padding: "12px 14px", fontSize: 13, color: "#dc2626", display: "flex", alignItems: "flex-start", gap: 8 }}>
+          <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }}/>
+          <div>{error}</div>
+        </div>
+      )}
+      <div style={{ marginTop: 14, fontSize: 12, color: "#666", lineHeight: 1.6 }}>
+        💡 <b>Tip:</b> también podés usar un lector USB — el código va a aparecer en el buscador automáticamente al escanear.
+      </div>
+    </Modal>
   );
 }
 
@@ -743,6 +817,7 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
   const tieneColores = RUBROS_CON_COLORES.includes(rubro);
   const camposExtra = CAMPOS_EXTRA_POR_RUBRO[rubro] || [];
   const [error, setError] = useState("");
+  const [escanerAbierto, setEscanerAbierto] = useState(false);
 
   const [f, setF] = useState(() => {
     const defaults = {
@@ -831,6 +906,23 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
         </FieldRow>
         <FieldRow label="SKU / Código">
           <input style={G.inp()} value={f.sku} onChange={e => u("sku", e.target.value)} placeholder="VES-001" />
+        </FieldRow>
+        <FieldRow label="Código de barras">
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              style={{ ...G.inp(), flex: 1 }}
+              value={f.codigoBarras}
+              onChange={e => u("codigoBarras", e.target.value)}
+              placeholder="7791234567890"
+            />
+            <button
+              type="button"
+              onClick={() => setEscanerAbierto(true)}
+              style={{ background: "#111", color: "#fff", border: "none", borderRadius: 8, padding: "0 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600 }}
+            >
+              <Camera size={16}/> Escanear
+            </button>
+          </div>
         </FieldRow>
         <FieldRow label="Precio de venta *">
           <input style={G.inp()} type="number" min={0} step="0.01" value={f.precio} onChange={e => u("precio", e.target.value)} placeholder="0.00" />
@@ -924,6 +1016,12 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
         <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cancelar</button>
         <button style={{ ...G.btn("dark"), flex:1, justifyContent:"center" }} onClick={save}>Guardar producto</button>
       </div>
+      {escanerAbierto && (
+        <EscanerModal
+          onDetectado={(code) => { u("codigoBarras", code); setEscanerAbierto(false); }}
+          onClose={() => setEscanerAbierto(false)}
+        />
+      )}
     </Modal>
   );
 }
@@ -1742,8 +1840,14 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
       ? Object.values(p.stockPorTalle).some(v => +v > 0)
       : p.stock > 0;
     if (!tieneStock) return false;
+    if (!q) return true;
     const busq = q.toLowerCase();
-    return !q || p.nombre.toLowerCase().includes(busq) || (p.sku||"").toLowerCase().includes(busq) || (p.categoria||"").toLowerCase().includes(busq);
+    const trimmed = q.trim();
+    // Si es código de barras exacto (solo dígitos 8+) → match exacto
+    if (/^\d{8,}$/.test(trimmed)) {
+      return (p.codigoBarras || "").trim() === trimmed;
+    }
+    return p.nombre.toLowerCase().includes(busq) || (p.sku||"").toLowerCase().includes(busq) || (p.categoria||"").toLowerCase().includes(busq) || (p.codigoBarras||"").includes(trimmed);
   });
 
   return (
@@ -1757,7 +1861,7 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
             <input
               ref={inputRef}
               style={{ flex:1, border:"none", background:"transparent", outline:"none", fontSize:15, color:"#111" }}
-              placeholder="Buscar por nombre, categoría o SKU..."
+              placeholder="Buscar por nombre, SKU o código de barras..."
               value={q}
               onChange={e => setQ(e.target.value)}
             />
@@ -1845,13 +1949,41 @@ function VentaPage({ ctx }) {
   const [ventaParaFacturar, setVentaParaFacturar] = useState(null);
   const [comprobanteVer, setComprobanteVer] = useState(null);
   const [prodTalle, setProdTalle] = useState(null);
+  const [escanerAbierto, setEscanerAbierto] = useState(false);
+
+  // Detección inteligente: si el texto de búsqueda es solo dígitos y tiene 8+ caracteres → busca por código de barras exacto
+  const buscarPorCodigo = /^\d{8,}$/.test(search.trim());
 
   const prods = products.filter(p => {
     const tieneStock = esModa && p.stockPorTalle
       ? Object.values(p.stockPorTalle).some(v => +v > 0)
       : p.stock > 0;
-    return tieneStock && p.nombre.toLowerCase().includes(search.toLowerCase());
+    if (!tieneStock) return false;
+    if (buscarPorCodigo) {
+      return (p.codigoBarras || "").trim() === search.trim();
+    }
+    return p.nombre.toLowerCase().includes(search.toLowerCase()) || (p.codigoBarras || "").includes(search);
   });
+
+  // Cuando escanean con la cámara, procesamos el código directamente
+  const procesarCodigoEscaneado = (codigo) => {
+    setEscanerAbierto(false);
+    const encontrado = products.find(p => (p.codigoBarras || "").trim() === codigo.trim());
+    if (!encontrado) {
+      setSearch(codigo);
+      setShowBuscador(true);
+      return;
+    }
+    // Verificar stock
+    const tieneStock = esModa && encontrado.stockPorTalle
+      ? Object.values(encontrado.stockPorTalle).some(v => +v > 0)
+      : encontrado.stock > 0;
+    if (!tieneStock) {
+      alert(`"${encontrado.nombre}" no tiene stock disponible`);
+      return;
+    }
+    handleProdClick(encontrado);
+  };
 
   const subtotal = cart.reduce((a, i) => a + i.precio * i.cantidad, 0);
   const descMonto = descTipo === "pct" ? subtotal * (+descValor / 100) : (+descValor || 0);
@@ -1948,6 +2080,13 @@ function VentaPage({ ctx }) {
       {comprobanteVer && <ComprobanteModal venta={comprobanteVer} config={config} onClose={() => setComprobanteVer(null)} />}
       {showCambio && <CambioProductosModal products={products} setProducts={setProducts} saveProducts={ctx.saveProducts} rubro={config.rubro} onClose={() => setShowCambio(false)} />}
       {prodTalle && <TalleSelectorModal prod={prodTalle} moneda={config.moneda} onSelect={(talle, stock) => addToCart(prodTalle, talle, stock)} onClose={() => setProdTalle(null)} />}
+      {escanerAbierto && (
+        <EscanerModal
+          titulo="Escanear producto"
+          onDetectado={procesarCodigoEscaneado}
+          onClose={() => setEscanerAbierto(false)}
+        />
+      )}
       {showBuscador && (
         <BuscadorProductosModal
           products={products} esModa={esModa} cart={cart} moneda={config.moneda}
@@ -1967,13 +2106,22 @@ function VentaPage({ ctx }) {
       <CajaBanner caja={caja} onAbrir={() => setShowCaja(true)} />
       <div style={{ display:"grid", gridTemplateColumns:"1fr 370px", gap:24, alignItems:"start" }}>
         <div>
-          {/* Barra de búsqueda — abre popup al hacer clic */}
-          <div
-            onClick={() => setShowBuscador(true)}
-            style={{ display:"flex", alignItems:"center", gap:10, background:"#fff", border:"1.5px solid #e5e7eb", borderRadius:10, padding:"11px 16px", cursor:"pointer", marginBottom:20, transition:"border-color .15s" }}
-          >
-            <Search size={16} color="#bbb"/>
-            <span style={{ color:"#bbb", fontSize:14 }}>Buscar producto o escanear SKU...</span>
+          {/* Barra de búsqueda + botón de escanear */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+            <div
+              onClick={() => setShowBuscador(true)}
+              style={{ flex: 1, display:"flex", alignItems:"center", gap:10, background:"#fff", border:"1.5px solid #e5e7eb", borderRadius:10, padding:"11px 16px", cursor:"pointer", transition:"border-color .15s" }}
+            >
+              <Search size={16} color="#bbb"/>
+              <span style={{ color:"#bbb", fontSize:14 }}>Buscar producto o código de barras...</span>
+            </div>
+            <button
+              onClick={() => setEscanerAbierto(true)}
+              style={{ background:"#111", color:"#fff", border:"none", borderRadius:10, padding:"0 18px", cursor:"pointer", display:"flex", alignItems:"center", gap:6, fontSize:13, fontWeight:600 }}
+              title="Escanear código de barras con la cámara"
+            >
+              <ScanLine size={18}/> Escanear
+            </button>
           </div>
 
           {/* Accesos rápidos — últimos 4 productos más vendidos o más recientes */}
@@ -2546,7 +2694,7 @@ function InventarioPage({ ctx }) {
   const [ajusteProd, setAjusteProd] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
-  const filtered = products.filter(p => { const ms = p.nombre.toLowerCase().includes(search.toLowerCase())||(p.sku||"").toLowerCase().includes(search.toLowerCase()); const mc = filterCat==="Todas"||p.categoria===filterCat; const mst = filterStock==="Todos"||(filterStock==="En stock"&&p.stock>0&&p.stock>(p.stockMinimo||3))||(filterStock==="Stock bajo"&&p.stock>0&&p.stock<=(p.stockMinimo||3))||(filterStock==="Sin stock"&&p.stock===0); return ms&&mc&&mst; });
+  const filtered = products.filter(p => { const ms = p.nombre.toLowerCase().includes(search.toLowerCase())||(p.sku||"").toLowerCase().includes(search.toLowerCase())||(p.codigoBarras||"").includes(search.trim()); const mc = filterCat==="Todas"||p.categoria===filterCat; const mst = filterStock==="Todos"||(filterStock==="En stock"&&p.stock>0&&p.stock>(p.stockMinimo||3))||(filterStock==="Stock bajo"&&p.stock>0&&p.stock<=(p.stockMinimo||3))||(filterStock==="Sin stock"&&p.stock===0); return ms&&mc&&mst; });
   const totalStock = products.reduce((a,p) => a+p.stock, 0), stockBajo = products.filter(p => p.stock>0&&p.stock<=(p.stockMinimo||3)).length, sinStock = products.filter(p => p.stock===0).length;
   const onSaveProd = async (p) => {
     setProducts(prev => editProd ? prev.map(x => x.id===p.id ? p : x) : [...prev, p]);
@@ -4305,7 +4453,7 @@ export default function App() {
   }, [token]);
 
   const handleLogin = (access_token, userId) => { setToken({ access_token, userId }); setAuthReady(false); };
-  const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); navegar("home"); };
+  const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); navegar("login"); };
 
   // ── Guardar config en Supabase ───────────────────────────
   const saveConfig = async (newConfig) => {
