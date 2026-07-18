@@ -3806,7 +3806,7 @@ function OnboardingScreen({ onDone }) {
 // LANDING PAGE — estilo violeta+blanco (inspirado en Caibe)
 // ══════════════════════════════════════════════════════════
 const WHATSAPP_NUMERO = "5491100000000"; // ← reemplazar por tu WhatsApp real
-const PRECIO_MENSUAL = "15.000"; // ← precio de la mensualidad en ARS
+const PRECIO_MENSUAL = "30.000"; // ← precio de la mensualidad en ARS
 
 function LandingPage({ onIngresar }) {
   const [faqOpen, setFaqOpen] = useState(null);
@@ -4013,7 +4013,14 @@ function LandingPage({ onIngresar }) {
             <span style={{ fontSize: 60, fontWeight: 700, letterSpacing: "-2.5px" }}>{PRECIO_MENSUAL}</span>
             <span style={{ fontSize: 17, color: C.mut, fontWeight: 500 }}>/mes</span>
           </div>
-          <p style={{ fontSize: 14, color: C.mut, margin: "0 0 26px" }}>Sin contratos. Cancelás cuando quieras.</p>
+          <p style={{ fontSize: 14, color: C.mut, margin: "0 0 18px" }}>Sin contratos. Cancelás cuando quieras.</p>
+          <div style={{ background: C.green + "15", border: `1.5px solid ${C.green}`, borderRadius: 10, padding: "12px 14px", marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ color: C.green, display: "flex", flexShrink: 0 }}><CheckCircle2 size={20}/></span>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.green, letterSpacing: "-0.2px" }}>7 días de prueba gratis</div>
+              <div style={{ fontSize: 12, color: C.body }}>Sin tarjeta. Sin compromisos.</div>
+            </div>
+          </div>
           <div style={{ marginBottom: 28 }}>
             {["Ventas y tickets ilimitados", "Productos ilimitados", "Control de stock por talle y color", "Facturación AFIP (A, B y C)", "Estadísticas y reportes", "Remitos, proveedores y caja", "Acceso desde cualquier dispositivo", "Respaldo automático en la nube", "Soporte por WhatsApp"].map((f, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 11, fontSize: 15, color: C.ink }}>
