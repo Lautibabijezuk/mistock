@@ -132,6 +132,13 @@ const dbToConfig = n => ({
   cuit: n.cuit||'', razonSocial: n.razon_social||'', tipoContrib: n.tipo_contrib||'monotributista',
   puntoVenta: n.punto_venta||'0001', condicionIVA: n.condicion_iva||'Monotributista',
   facturacionActiva: n.facturacion_activa||false,
+  // Suscripción
+  subscriptionStatus: n.subscription_status || 'trial',
+  trialEndsAt: n.trial_ends_at || null,
+  nextBillingDate: n.next_billing_date || null,
+  mpPreapprovalId: n.mp_preapproval_id || null,
+  paymentFailedAt: n.payment_failed_at || null,
+  subscriptionStartedAt: n.subscription_started_at || null,
 });
 const configToDb = c => ({
   nombre: c.nombre, moneda: c.moneda, dueno: c.dueno, rubro: c.rubro,
@@ -3679,121 +3686,245 @@ function OnboardingScreen({ onDone }) {
 
   const catsPreview = CATS_POR_RUBRO[rubro] || [];
 
+  const C = {
+    ink: "#0a0a0a", body: "#4b5563", mut: "#9ca3af", line: "#e5e7eb",
+    bg: "#ffffff", bgSoft: "#f9fafb",
+    purple: "#9238FF", purpleDark: "#7a1de6", purpleSoft: "#f4ecff",
+    green: "#16a34a",
+  };
+  const font = "'DM Sans', system-ui, -apple-system, sans-serif";
+
   const handleDone = () => {
     if (!nombre.trim() || !rubro) return;
     onDone({ nombre: nombre || "Mi Negocio", moneda, dueno, rubro, telefono:"", instagram:"", logo:"" });
   };
 
+  // Estilos comunes
+  const inputStyle = {
+    width: "100%", padding: "13px 16px", border: `1.5px solid ${C.line}`, borderRadius: 6,
+    fontSize: 14.5, outline: "none", boxSizing: "border-box", fontFamily: font,
+    background: C.bg, transition: "border-color .15s",
+  };
+  const labelStyle = { fontSize: 13, fontWeight: 500, color: C.ink, display: "block", marginBottom: 8 };
+  const primaryBtn = {
+    padding: "14px 32px", background: C.purple, color: "#fff", border: "none", borderRadius: 4,
+    fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: font, transition: "background .15s",
+  };
+  const outlineBtn = {
+    padding: "13px 24px", background: "transparent", color: C.ink, border: `1.5px solid ${C.line}`, borderRadius: 4,
+    fontSize: 14.5, fontWeight: 500, cursor: "pointer", fontFamily: font,
+  };
+  const disabledBtn = { ...primaryBtn, background: C.line, color: C.mut, cursor: "not-allowed" };
+
   return (
-    <div style={{ minHeight:"100vh", background:"#f5f5f4", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',system-ui,sans-serif", padding:20 }}>
-      <div style={{ width:"100%", maxWidth:680 }}>
+    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font, color: C.ink, display: "flex", flexDirection: "column" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+        .onb-input:focus { border-color: ${C.purple} !important; }
+        .onb-btn-primary:hover:not(:disabled) { background: ${C.purpleDark} !important; }
+        .onb-rubro:hover { border-color: ${C.purple} !important; }
+      `}</style>
 
-        {/* Step 1 — Bienvenida */}
-        {step === 1 && (
-          <div style={{ textAlign:"center" }}>
-            <div style={{ marginBottom:16, color:"#111" }}><Store size={56}/></div>
-            <h1 style={{ fontSize:32, fontWeight:800, margin:"0 0 12px" }}>Bienvenido a MiStock</h1>
-            <p style={{ fontSize:16, color:"#888", margin:"0 0 40px", lineHeight:1.6 }}>
-              Tu sistema de gestión de ventas e inventario.<br/>
-              Configuremos tu negocio en 2 pasos rápidos.
-            </p>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:16, marginBottom:40, textAlign:"left" }}>
-              {[["pkg","Inventario inteligente","Cargá tus productos con categorías específicas para tu rubro"],["cart","Punto de venta","Registrá ventas, aplicá descuentos y controlá tu caja"],["chart","Estadísticas reales","Analizá tus ventas, gastos y ganancia neta del negocio"]].map(([icon,title,desc]) => (
-                <div key={title} style={{ background:"#fff", border:"1px solid #f0f0f0", borderRadius:12, padding:20 }}>
-                  <div style={{ marginBottom:10, color:"#111" }}>{icon==="pkg"?<Package size={28}/>:icon==="cart"?<ShoppingCart size={28}/>:<BarChart2 size={28}/>}</div>
-                  <div style={{ fontWeight:700, fontSize:14, marginBottom:6 }}>{title}</div>
-                  <div style={{ fontSize:12, color:"#888", lineHeight:1.5 }}>{desc}</div>
-                </div>
-              ))}
-            </div>
-            <button style={{ ...G.btn("dark"), padding:"14px 48px", fontSize:16 }} onClick={() => setStep(2)}>
-              Empezar configuración →
-            </button>
+      {/* Header */}
+      <div style={{ borderBottom: `1px solid ${C.line}`, padding: "18px 32px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ background: C.purple, width: 34, height: 34, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}>
+            <Store size={18}/>
           </div>
-        )}
+          <span style={{ fontWeight: 700, fontSize: 19, letterSpacing: "-0.5px" }}>MiStock</span>
+        </div>
+        <div style={{ fontSize: 13, color: C.mut }}>Configuración inicial</div>
+      </div>
 
-        {/* Step 2 — Rubro */}
-        {step === 2 && (
-          <div>
-            <div style={{ textAlign:"center", marginBottom:32 }}>
-              <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"#f3f4f6", borderRadius:20, padding:"4px 16px", marginBottom:16, fontSize:12, color:"#888" }}>Paso 1 de 2</div>
-              <h2 style={{ fontSize:26, fontWeight:800, margin:"0 0 8px" }}>¿Qué tipo de negocio tenés?</h2>
-              <p style={{ fontSize:14, color:"#888", margin:0 }}>Esto define las categorías de productos disponibles en tu sistema.</p>
+      {/* Progress bar */}
+      {step > 1 && (
+        <div style={{ background: C.bgSoft, borderBottom: `1px solid ${C.line}`, padding: "16px 32px" }}>
+          <div style={{ maxWidth: 680, margin: "0 auto", display: "flex", alignItems: "center", gap: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, minWidth: 76 }}>Paso {step - 1} de 2</div>
+            <div style={{ flex: 1, height: 4, background: C.line, borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${((step - 1) / 2) * 100}%`, background: C.purple, borderRadius: 2, transition: "width .3s ease" }}/>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:20 }}>
-              {RUBROS.map(r => (
-                <button key={r} onClick={() => setRubro(r)} style={{
-                  padding:"14px 14px", borderRadius:11,
-                  border:`2px solid ${rubro===r?"#111":"#e5e7eb"}`,
-                  cursor:"pointer", fontSize:13, textAlign:"left",
-                  background:rubro===r?"#111":"#fff",
-                  color:rubro===r?"#fff":"#333",
-                  fontWeight:rubro===r?700:400,
-                  transition:"all .15s", lineHeight:1.4
-                }}>{r}</button>
-              ))}
-            </div>
+          </div>
+        </div>
+      )}
 
-            {/* Preview categorías */}
-            {rubro && (
-              <div style={{ background:"#fff", border:"1px solid #f0f0f0", borderRadius:12, padding:"16px 20px", marginBottom:20 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
-                  <span style={{ fontSize:13, fontWeight:700 }}>Categorías disponibles para {rubro}</span>
-                  <span style={{ background:"#f3f4f6", color:"#666", fontSize:11, padding:"2px 8px", borderRadius:20, fontWeight:600 }}>{catsPreview.length}</span>
-                </div>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
-                  {catsPreview.map(c => (
-                    <span key={c} style={{ background:"#f9fafb", border:"1px solid #e5e7eb", borderRadius:20, padding:"4px 12px", fontSize:12, color:"#555" }}>{c}</span>
-                  ))}
-                </div>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 24px" }}>
+        <div style={{ width: "100%", maxWidth: 680 }}>
+
+          {/* Step 1 — Bienvenida */}
+          {step === 1 && (
+            <div style={{ textAlign: "center" }}>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: C.purpleSoft, color: C.purple, borderRadius: 30, padding: "6px 14px", fontSize: 13, fontWeight: 600, marginBottom: 24 }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.purple }}/> ¡Cuenta creada!
               </div>
-            )}
-
-            <div style={{ display:"flex", gap:12 }}>
-              <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center", padding:"12px" }} onClick={() => setStep(1)}>← Atrás</button>
-              <button style={{ ...G.btn(rubro?"dark":"light"), flex:2, justifyContent:"center", padding:"12px", fontSize:15 }} onClick={() => { if (rubro) setStep(3); }} disabled={!rubro}>
-                Continuar →
+              <h1 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: "0 0 18px" }}>
+                Bienvenido a MiStock
+              </h1>
+              <p style={{ fontSize: 17, color: C.body, margin: "0 0 40px", lineHeight: 1.55, maxWidth: 520, marginLeft: "auto", marginRight: "auto" }}>
+                Configuremos tu negocio en 2 pasos rápidos. Después ya podés empezar a vender.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, marginBottom: 44, textAlign: "left" }}>
+                {[
+                  { ic: <Package size={20}/>, t: "Inventario", d: "Cargá productos con categorías de tu rubro" },
+                  { ic: <ShoppingCart size={20}/>, t: "Ventas", d: "Cobrás rápido, el stock se descuenta solo" },
+                  { ic: <BarChart2 size={20}/>, t: "Estadísticas", d: "Sabés qué se vende y qué te deja plata" },
+                ].map((f, i) => (
+                  <div key={i} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 10, padding: "22px 20px" }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 10, background: C.purpleSoft, color: C.purple, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>{f.ic}</div>
+                    <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 6, letterSpacing: "-0.2px" }}>{f.t}</div>
+                    <div style={{ fontSize: 13, color: C.body, lineHeight: 1.5 }}>{f.d}</div>
+                  </div>
+                ))}
+              </div>
+              <button
+                className="onb-btn-primary"
+                onClick={() => setStep(2)}
+                style={{ ...primaryBtn, padding: "15px 40px", fontSize: 16 }}
+              >
+                Empezar configuración →
               </button>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Step 3 — Datos del negocio */}
-        {step === 3 && (
-          <div>
-            <div style={{ textAlign:"center", marginBottom:32 }}>
-              <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"#f3f4f6", borderRadius:20, padding:"4px 16px", marginBottom:16, fontSize:12, color:"#888" }}>Paso 2 de 2</div>
-              <h2 style={{ fontSize:26, fontWeight:800, margin:"0 0 8px" }}>Datos de tu negocio</h2>
-              <p style={{ fontSize:14, color:"#888", margin:0 }}>Solo lo básico para empezar. Podés cambiar todo desde Configuración.</p>
-            </div>
-            <div style={{ background:"#fff", border:"1px solid #f0f0f0", borderRadius:12, padding:"24px 28px", marginBottom:20 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:10, background:"#f9fafb", borderRadius:9, padding:"10px 14px", marginBottom:20 }}>
-                <CheckCircle2 size={20} color="#16a34a"/>
-                <div><div style={{ fontSize:12, color:"#888" }}>Rubro seleccionado</div><div style={{ fontWeight:700, fontSize:14 }}>{rubro}</div></div>
+          {/* Step 2 — Rubro */}
+          {step === 2 && (
+            <div>
+              <div style={{ textAlign: "center", marginBottom: 36 }}>
+                <h2 style={{ fontSize: 36, lineHeight: 1.1, fontWeight: 500, letterSpacing: "-1px", margin: "0 0 12px" }}>
+                  ¿Qué tipo de negocio tenés?
+                </h2>
+                <p style={{ fontSize: 15.5, color: C.body, margin: 0, lineHeight: 1.5 }}>
+                  Elegí tu rubro y MiStock se configura solo con las categorías y campos que necesitás.
+                </p>
               </div>
-              <FieldRow label="Nombre del negocio *">
-                <input style={G.inp()} value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: Mi Showroom, La Ferretería del Sur..." autoFocus />
-              </FieldRow>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
-                <FieldRow label="Tu nombre (dueño/a)">
-                  <input style={G.inp()} value={dueno} onChange={e => setDueno(e.target.value)} placeholder="Tu nombre" />
-                </FieldRow>
-                <FieldRow label="Moneda">
-                  <select style={G.inp()} value={moneda} onChange={e => setMoneda(e.target.value)}>
-                    {[["$","$ (Pesos ARS)"],["USD","USD (Dólar)"],["€","€ (Euro)"],["R$","R$ (Real BRL)"]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
-                  </select>
-                </FieldRow>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 22 }}>
+                {RUBROS.map(r => (
+                  <button
+                    key={r}
+                    className="onb-rubro"
+                    onClick={() => setRubro(r)}
+                    style={{
+                      padding: "14px 14px", borderRadius: 8,
+                      border: `2px solid ${rubro === r ? C.purple : C.line}`,
+                      cursor: "pointer", fontSize: 14, textAlign: "left",
+                      background: rubro === r ? C.purpleSoft : C.bg,
+                      color: rubro === r ? C.purple : C.ink,
+                      fontWeight: rubro === r ? 600 : 500,
+                      transition: "all .15s", lineHeight: 1.4,
+                      fontFamily: font,
+                    }}
+                  >
+                    {r}
+                  </button>
+                ))}
               </div>
-            </div>
-            <div style={{ display:"flex", gap:12 }}>
-              <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center", padding:"12px" }} onClick={() => setStep(2)}>← Atrás</button>
-              <button style={{ ...G.btn(nombre.trim()?"green":"light"), flex:2, justifyContent:"center", padding:"13px", fontSize:15, fontWeight:700 }} onClick={handleDone} disabled={!nombre.trim()}>
-                ¡Comenzar a usar MiStock! 🚀
-              </button>
-            </div>
-          </div>
-        )}
 
+              {/* Preview categorías */}
+              {rubro && (
+                <div style={{ background: C.bgSoft, border: `1px solid ${C.line}`, borderRadius: 10, padding: "16px 20px", marginBottom: 24 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <CheckCircle2 size={16} color={C.green}/>
+                    <span style={{ fontSize: 13.5, fontWeight: 600 }}>Categorías para {rubro}</span>
+                    <span style={{ background: C.purple, color: "#fff", fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>{catsPreview.length}</span>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                    {catsPreview.map(c => (
+                      <span key={c} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 20, padding: "4px 12px", fontSize: 12, color: C.body }}>{c}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 12, justifyContent: "space-between" }}>
+                <button style={outlineBtn} onClick={() => setStep(1)}>← Atrás</button>
+                <button
+                  className="onb-btn-primary"
+                  onClick={() => { if (rubro) setStep(3); }}
+                  disabled={!rubro}
+                  style={rubro ? primaryBtn : disabledBtn}
+                >
+                  Continuar →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3 — Datos del negocio */}
+          {step === 3 && (
+            <div>
+              <div style={{ textAlign: "center", marginBottom: 36 }}>
+                <h2 style={{ fontSize: 36, lineHeight: 1.1, fontWeight: 500, letterSpacing: "-1px", margin: "0 0 12px" }}>
+                  Datos de tu negocio
+                </h2>
+                <p style={{ fontSize: 15.5, color: C.body, margin: 0, lineHeight: 1.5 }}>
+                  Solo lo básico para empezar. Después podés ajustar todo desde Configuración.
+                </p>
+              </div>
+
+              <div style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: "28px 30px", marginBottom: 24 }}>
+                {/* Rubro elegido */}
+                <div style={{ display: "flex", alignItems: "center", gap: 12, background: C.purpleSoft, borderRadius: 8, padding: "12px 16px", marginBottom: 24 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: C.purple, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <CheckCircle2 size={17}/>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: C.body, fontWeight: 500 }}>RUBRO SELECCIONADO</div>
+                    <div style={{ fontWeight: 600, fontSize: 15, color: C.ink }}>{rubro}</div>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 18 }}>
+                  <label style={labelStyle}>Nombre del negocio *</label>
+                  <input
+                    className="onb-input"
+                    style={inputStyle}
+                    value={nombre}
+                    onChange={e => setNombre(e.target.value)}
+                    placeholder="Ej: Mi Showroom, La Ferretería del Sur..."
+                    autoFocus
+                  />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <div>
+                    <label style={labelStyle}>Tu nombre (dueño/a)</label>
+                    <input
+                      className="onb-input"
+                      style={inputStyle}
+                      value={dueno}
+                      onChange={e => setDueno(e.target.value)}
+                      placeholder="Opcional"
+                    />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Moneda</label>
+                    <select
+                      className="onb-input"
+                      style={inputStyle}
+                      value={moneda}
+                      onChange={e => setMoneda(e.target.value)}
+                    >
+                      {[["$","$ (Pesos ARS)"],["USD","USD (Dólar)"],["€","€ (Euro)"],["R$","R$ (Real BRL)"]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 12, justifyContent: "space-between" }}>
+                <button style={outlineBtn} onClick={() => setStep(2)}>← Atrás</button>
+                <button
+                  className="onb-btn-primary"
+                  onClick={handleDone}
+                  disabled={!nombre.trim()}
+                  style={nombre.trim() ? primaryBtn : disabledBtn}
+                >
+                  ¡Comenzar a usar MiStock!
+                </button>
+              </div>
+            </div>
+          )}
+
+        </div>
       </div>
     </div>
   );
@@ -3806,7 +3937,7 @@ function OnboardingScreen({ onDone }) {
 // LANDING PAGE — estilo violeta+blanco (inspirado en Caibe)
 // ══════════════════════════════════════════════════════════
 const WHATSAPP_NUMERO = "5491100000000"; // ← reemplazar por tu WhatsApp real
-const PRECIO_MENSUAL = "15.000"; // ← precio de la mensualidad en ARS
+const PRECIO_MENSUAL = "30.000"; // ← precio de la mensualidad en ARS
 
 function LandingPage({ onIngresar }) {
   const [faqOpen, setFaqOpen] = useState(null);
@@ -4013,7 +4144,14 @@ function LandingPage({ onIngresar }) {
             <span style={{ fontSize: 60, fontWeight: 700, letterSpacing: "-2.5px" }}>{PRECIO_MENSUAL}</span>
             <span style={{ fontSize: 17, color: C.mut, fontWeight: 500 }}>/mes</span>
           </div>
-          <p style={{ fontSize: 14, color: C.mut, margin: "0 0 26px" }}>Sin contratos. Cancelás cuando quieras.</p>
+          <p style={{ fontSize: 14, color: C.mut, margin: "0 0 18px" }}>Sin contratos. Cancelás cuando quieras.</p>
+          <div style={{ background: C.green + "15", border: `1.5px solid ${C.green}`, borderRadius: 10, padding: "12px 14px", marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ color: C.green, display: "flex", flexShrink: 0 }}><CheckCircle2 size={20}/></span>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.green, letterSpacing: "-0.2px" }}>7 días de prueba gratis</div>
+              <div style={{ fontSize: 12, color: C.body }}>Sin tarjeta. Sin compromisos.</div>
+            </div>
+          </div>
           <div style={{ marginBottom: 28 }}>
             {["Ventas y tickets ilimitados", "Productos ilimitados", "Control de stock por talle y color", "Facturación AFIP (A, B y C)", "Estadísticas y reportes", "Remitos, proveedores y caja", "Acceso desde cualquier dispositivo", "Respaldo automático en la nube", "Soporte por WhatsApp"].map((f, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 11, fontSize: 15, color: C.ink }}>
@@ -4346,6 +4484,338 @@ function LoginScreen({ onLogin, onVolver }) {
   );
 }
 
+// ══════════════════════════════════════════════════════════
+// SUBSCRIPTION — helpers + UI components
+// ══════════════════════════════════════════════════════════
+const WHATSAPP_SOPORTE = "5491100000000"; // ← número de MiStock para cancelar/soporte
+const PRECIO_SUSCRIPCION = 30000;
+const SUPABASE_FUNC_URL = "https://sdizrjbeasubjkpixmro.supabase.co/functions/v1";
+
+// Devuelve el estado computado de la suscripción
+function getSubscriptionState(config) {
+  const status = config?.subscriptionStatus || 'trial';
+  const trialEnd = config?.trialEndsAt ? new Date(config.trialEndsAt) : null;
+  const now = new Date();
+
+  // Los negocios activos "permanentes" (los pre-existentes) no tienen trialEndsAt
+  if (status === 'active' && !trialEnd) {
+    return { status: 'active', isActive: true, isTrial: false, isBlocked: false, daysLeft: Infinity };
+  }
+
+  if (status === 'active') {
+    return { status: 'active', isActive: true, isTrial: false, isBlocked: false, daysLeft: Infinity };
+  }
+
+  if (status === 'trial') {
+    // Si trialEnd no está seteado aún (cuenta recién creada, config todavía cargando),
+    // asumimos que es válido y NO bloqueamos - la DB tiene el default de 7 días
+    if (!trialEnd) {
+      return { status: 'trial', isActive: true, isTrial: true, isBlocked: false, daysLeft: 7 };
+    }
+    const msLeft = trialEnd - now;
+    const daysLeft = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60 * 24)));
+    if (daysLeft === 0) {
+      return { status: 'trial_expired', isActive: false, isTrial: true, isBlocked: true, daysLeft: 0 };
+    }
+    return { status: 'trial', isActive: true, isTrial: true, isBlocked: false, daysLeft };
+  }
+
+  if (status === 'past_due') {
+    // 3 días de gracia desde payment_failed_at
+    const failedAt = config?.paymentFailedAt ? new Date(config.paymentFailedAt) : now;
+    const graceEnd = new Date(failedAt.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const isBlocked = now >= graceEnd;
+    const daysLeft = Math.max(0, Math.ceil((graceEnd - now) / (1000 * 60 * 60 * 24)));
+    return { status: 'past_due', isActive: !isBlocked, isTrial: false, isBlocked, daysLeft };
+  }
+
+  if (status === 'cancelled') {
+    return { status: 'cancelled', isActive: false, isTrial: false, isBlocked: true, daysLeft: 0 };
+  }
+
+  return { status, isActive: false, isTrial: false, isBlocked: true, daysLeft: 0 };
+}
+
+// Llamar a la Edge Function para crear suscripción y redirigir a MP
+async function iniciarSuscripcion() {
+  const session = await sb.getSession();
+  if (!session?.access_token) throw new Error("Sesión inválida");
+  const resp = await fetch(SUPABASE_FUNC_URL + "/subscription-create", {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + session.access_token,
+      "Content-Type": "application/json",
+    },
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data?.error || "Error creando suscripción");
+  // Redirigir al usuario a MP para cargar la tarjeta
+  window.location.href = data.init_point;
+}
+
+// Abrir WhatsApp con mensaje pre-armado para cancelar
+function abrirCancelacionWhatsApp(nombreNegocio) {
+  const msg = encodeURIComponent(
+    `Hola, soy ${nombreNegocio} y quiero cancelar mi suscripción de MiStock.`
+  );
+  window.open(`https://wa.me/${WHATSAPP_SOPORTE}?text=${msg}`, "_blank");
+}
+
+// ─── Banner de trial (arriba de todas las páginas) ─────────
+function TrialBanner({ daysLeft, onSuscribir }) {
+  const isCritical = daysLeft <= 1;
+  return (
+    <div style={{
+      background: isCritical ? "#fef3c7" : "#fef9c3",
+      border: `1px solid ${isCritical ? "#fbbf24" : "#facc15"}`,
+      padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
+      gap: 16, fontSize: 13.5
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#92400e", flex: 1 }}>
+        <Clock size={16}/>
+        <span>
+          <b>Tu prueba gratis termina en {daysLeft} {daysLeft === 1 ? "día" : "días"}.</b>
+          {" "}Suscribite para no perder acceso a tus datos.
+        </span>
+      </div>
+      <button onClick={onSuscribir} style={{
+        background: "#111", color: "#fff", border: "none", borderRadius: 6, padding: "7px 14px",
+        cursor: "pointer", fontWeight: 600, fontSize: 13, whiteSpace: "nowrap"
+      }}>
+        Suscribirme por $30.000
+      </button>
+    </div>
+  );
+}
+
+// ─── Banner de past_due (pago falló) ────────────────────────
+function PastDueBanner({ daysLeft, onSuscribir }) {
+  return (
+    <div style={{
+      background: "#fee2e2", border: "1px solid #fca5a5",
+      padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
+      gap: 16, fontSize: 13.5
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#991b1b", flex: 1 }}>
+        <AlertCircle size={16}/>
+        <span>
+          <b>El último cobro falló.</b>
+          {" "}Actualizá tu método de pago en los próximos {daysLeft} {daysLeft === 1 ? "día" : "días"} o se cortará el acceso.
+        </span>
+      </div>
+      <button onClick={onSuscribir} style={{
+        background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "7px 14px",
+        cursor: "pointer", fontWeight: 600, fontSize: 13, whiteSpace: "nowrap"
+      }}>
+        Actualizar tarjeta
+      </button>
+    </div>
+  );
+}
+
+// ─── Pantalla de bloqueo cuando trial/pago venció ──────────
+function AccesoBloqueadoScreen({ config, onSuscribir, onLogout }) {
+  const state = getSubscriptionState(config);
+  const isTrial = state.status === 'trial_expired';
+  const isCancelled = state.status === 'cancelled';
+
+  const [loading, setLoading] = useState(false);
+  const handleSuscribir = async () => {
+    setLoading(true);
+    try { await onSuscribir(); }
+    catch (e) { alert("Error: " + e.message); setLoading(false); }
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: "#f9fafb", display: "flex",
+      alignItems: "center", justifyContent: "center", padding: 20,
+      fontFamily: "'Segoe UI', system-ui, sans-serif"
+    }}>
+      <div style={{
+        background: "#fff", borderRadius: 16, padding: "48px 44px", maxWidth: 480, width: "100%",
+        boxShadow: "0 20px 60px rgba(0,0,0,0.08)", textAlign: "center"
+      }}>
+        <div style={{
+          width: 64, height: 64, borderRadius: 16, background: "#fef3c7", color: "#d97706",
+          display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px"
+        }}>
+          <Lock size={32}/>
+        </div>
+        <h1 style={{ fontSize: 24, fontWeight: 800, margin: "0 0 12px", color: "#111", letterSpacing: "-0.5px" }}>
+          {isTrial ? "Tu prueba gratis terminó" :
+           isCancelled ? "Tu suscripción está cancelada" :
+           "Acceso bloqueado"}
+        </h1>
+        <p style={{ fontSize: 15, color: "#4b5563", lineHeight: 1.6, margin: "0 0 28px" }}>
+          {isTrial ? "Suscribite ahora para seguir usando MiStock. Tus datos y productos están intactos, los recuperás al reactivar." :
+           isCancelled ? "Reactivá tu suscripción cuando quieras y volvés a tener acceso a todos tus datos." :
+           "El último cobro no se pudo procesar y ya pasó el período de gracia. Actualizá tu método de pago para volver."}
+        </p>
+
+        <div style={{
+          background: "#f9fafb", borderRadius: 10, padding: "18px 20px", marginBottom: 24, textAlign: "left"
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ fontSize: 13, color: "#6b7280" }}>Plan</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>MiStock — Completo</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 13, color: "#6b7280" }}>Precio</span>
+            <span style={{ fontSize: 15, fontWeight: 800 }}>$30.000<span style={{ fontWeight: 400, fontSize: 12, color: "#6b7280" }}>/mes</span></span>
+          </div>
+        </div>
+
+        <button onClick={handleSuscribir} disabled={loading} style={{
+          width: "100%", background: "#111", color: "#fff", border: "none", borderRadius: 10,
+          padding: "14px", fontSize: 15, fontWeight: 700, cursor: loading ? "wait" : "pointer",
+          marginBottom: 12
+        }}>
+          {loading ? "Un momento..." : "Suscribirme por $30.000/mes"}
+        </button>
+        <button onClick={onLogout} style={{
+          width: "100%", background: "transparent", color: "#6b7280", border: "none",
+          padding: "10px", fontSize: 13, cursor: "pointer"
+        }}>
+          Cerrar sesión
+        </button>
+
+        <p style={{ fontSize: 12, color: "#9ca3af", marginTop: 20, lineHeight: 1.5 }}>
+          Con tu suscripción tenés acceso completo al sistema. Podés cancelar cuando quieras.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Página de gestión de suscripción ───────────────────────
+function SuscripcionPage({ config, onSuscribir, onCancelar }) {
+  const state = getSubscriptionState(config);
+  const [loading, setLoading] = useState(false);
+
+  const statusLabel = {
+    trial: "Prueba gratis",
+    trial_expired: "Prueba expirada",
+    active: "Activa",
+    past_due: "Con pago pendiente",
+    cancelled: "Cancelada",
+  }[state.status] || state.status;
+
+  const statusColor = {
+    trial: { bg: "#fef9c3", color: "#a16207", border: "#facc15" },
+    trial_expired: { bg: "#fee2e2", color: "#991b1b", border: "#fca5a5" },
+    active: { bg: "#dcfce7", color: "#15803d", border: "#86efac" },
+    past_due: { bg: "#fee2e2", color: "#991b1b", border: "#fca5a5" },
+    cancelled: { bg: "#f3f4f6", color: "#6b7280", border: "#d1d5db" },
+  }[state.status] || { bg: "#f3f4f6", color: "#6b7280", border: "#d1d5db" };
+
+  const handleSuscribir = async () => {
+    setLoading(true);
+    try { await onSuscribir(); }
+    catch (e) { alert("Error: " + e.message); setLoading(false); }
+  };
+
+  return (
+    <div style={G.page}>
+      <div style={{ maxWidth: 640 }}>
+        <div style={{ marginBottom: 28 }}>
+          <h1 style={{ margin: "0 0 4px", fontSize: 28, fontWeight: 800 }}>Suscripción</h1>
+          <p style={{ margin: 0, color: "#888", fontSize: 14 }}>Gestioná tu plan y tu método de pago</p>
+        </div>
+
+        {/* Card principal — estado de suscripción */}
+        <div style={{ ...G.card(), marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+            <div>
+              <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 4 }}>Plan actual</div>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>MiStock — Completo</div>
+            </div>
+            <span style={{
+              background: statusColor.bg, color: statusColor.color, border: `1px solid ${statusColor.border}`,
+              padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700
+            }}>
+              {statusLabel}
+            </span>
+          </div>
+
+          {state.status === 'trial' && (
+            <div style={{ background: "#fef9c3", border: "1px solid #facc15", borderRadius: 8, padding: "12px 14px", marginBottom: 16, fontSize: 13, color: "#92400e" }}>
+              <b>Tenés {state.daysLeft} {state.daysLeft === 1 ? "día" : "días"}</b> de prueba gratis.
+              {" "}Suscribite para no perder acceso cuando termine.
+            </div>
+          )}
+
+          {state.status === 'active' && config.nextBillingDate && (
+            <div style={{ background: "#f9fafb", borderRadius: 8, padding: "12px 14px", marginBottom: 16, fontSize: 13, color: "#4b5563" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <span>Próximo cobro</span>
+                <span style={{ fontWeight: 600, color: "#111" }}>{fmtDate(config.nextBillingDate.split("T")[0])}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>Monto</span>
+                <span style={{ fontWeight: 600, color: "#111" }}>{fmtMoney(PRECIO_SUSCRIPCION, "$")}</span>
+              </div>
+            </div>
+          )}
+
+          {state.status === 'past_due' && (
+            <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 8, padding: "12px 14px", marginBottom: 16, fontSize: 13, color: "#991b1b" }}>
+              <b>El último cobro falló.</b>
+              {" "}Tenés {state.daysLeft} {state.daysLeft === 1 ? "día" : "días"} para actualizar tu tarjeta antes de que se corte el acceso.
+            </div>
+          )}
+
+          {(state.status === 'trial' || state.status === 'trial_expired' || state.status === 'past_due' || state.status === 'cancelled') && (
+            <button onClick={handleSuscribir} disabled={loading} style={{
+              width: "100%", background: "#111", color: "#fff", border: "none", borderRadius: 8,
+              padding: "12px", fontSize: 14, fontWeight: 700, cursor: loading ? "wait" : "pointer"
+            }}>
+              {loading ? "Un momento..." :
+               state.status === 'past_due' ? "Actualizar método de pago" : "Suscribirme por $30.000/mes"}
+            </button>
+          )}
+
+          {state.status === 'active' && (
+            <button onClick={onCancelar} style={{
+              width: "100%", background: "transparent", color: "#dc2626", border: "1px solid #fca5a5", borderRadius: 8,
+              padding: "12px", fontSize: 14, fontWeight: 600, cursor: "pointer"
+            }}>
+              Cancelar suscripción
+            </button>
+          )}
+        </div>
+
+        {/* Card informativa — qué incluye */}
+        <div style={{ ...G.card() }}>
+          <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700 }}>Qué incluye tu plan</h3>
+          <div style={{ display: "grid", gap: 10 }}>
+            {[
+              "Ventas y tickets ilimitados",
+              "Productos ilimitados",
+              "Control de stock por talle y color",
+              "Estadísticas y reportes",
+              "Escáner de códigos de barra",
+              "Remitos, proveedores y caja",
+              "Acceso desde cualquier dispositivo",
+              "Respaldo automático en la nube",
+              "Soporte por WhatsApp",
+            ].map((f, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "#374151" }}>
+                <CheckCircle2 size={16} color="#16a34a"/>
+                {f}
+              </div>
+            ))}
+          </div>
+          <p style={{ fontSize: 13, color: "#9ca3af", marginTop: 20, marginBottom: 0, lineHeight: 1.6 }}>
+            Los pagos se procesan de forma segura por Mercado Pago. Podés cancelar cuando quieras y seguirás teniendo acceso hasta el final del período pagado.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 export default function App() {
   const [page, setPage] = useState("dashboard");
   const [loaded, setLoaded] = useState(false);
@@ -4392,6 +4862,19 @@ export default function App() {
   const [gastos, setGastos] = useState([]);
   const [remitos, setRemitos] = useState([]);
   const [proveedores, setProveedores] = useState([]);
+  const [showSubscriptionSuccess, setShowSubscriptionSuccess] = useState(false);
+
+  // ── Detectar retorno desde Mercado Pago (?subscription=success) ──
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("subscription") === "success") {
+      setShowSubscriptionSuccess(true);
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, "", cleanUrl);
+      setTimeout(() => setShowSubscriptionSuccess(false), 8000);
+    }
+  }, []);
 
   // ── Auth: restaurar sesión guardada ────────────────────
   useEffect(() => {
@@ -4564,15 +5047,44 @@ export default function App() {
     { id:"estadisticas", label:"Estadísticas", icon:<TrendingUp size={16}/> },
     { id:"finanzas", label:"Finanzas", icon:<DollarSign size={16}/> },
     { id:"remitos", label:"Remitos", icon:<FileText size={16}/> },
+    { id:"suscripcion", label:"Suscripción", icon:<DollarSign size={16}/> },
     { id:"config", label:"Configuración", icon:<Settings size={16}/> },
   ];
 
-  const PAGES = { dashboard:<DashboardPage ctx={ctx}/>, venta:<VentaPage ctx={ctx}/>, inventario:<InventarioPage ctx={ctx}/>, historial:<HistorialPage ctx={ctx}/>, estadisticas:<EstadisticasPage ctx={ctx}/>, finanzas:<FinanzasPage ctx={ctx}/>, remitos:<RemitosPage ctx={ctx}/>, config:<ConfigPage ctx={ctx}/> };
+  // ── Handlers de suscripción ──
+  const handleSuscribir = async () => {
+    try { await iniciarSuscripcion(); }
+    catch (e) { alert("Error al crear suscripción: " + e.message); }
+  };
+  const handleCancelar = () => {
+    if (!confirm("¿Cancelar tu suscripción? Vamos a coordinar por WhatsApp.")) return;
+    abrirCancelacionWhatsApp(config.nombre);
+  };
+
+  const PAGES = {
+    dashboard:<DashboardPage ctx={ctx}/>,
+    venta:<VentaPage ctx={ctx}/>,
+    inventario:<InventarioPage ctx={ctx}/>,
+    historial:<HistorialPage ctx={ctx}/>,
+    estadisticas:<EstadisticasPage ctx={ctx}/>,
+    finanzas:<FinanzasPage ctx={ctx}/>,
+    remitos:<RemitosPage ctx={ctx}/>,
+    suscripcion:<SuscripcionPage config={config} onSuscribir={handleSuscribir} onCancelar={handleCancelar}/>,
+    config:<ConfigPage ctx={ctx}/>
+  };
   const stockAlert = products.filter(p => p.stock <= (p.stockMinimo||3)).length;
+
+  // ── Estado de suscripción (los hooks ya se llamaron arriba) ──
+  const subState = getSubscriptionState(config);
 
   // ── Onboarding: primer uso sin rubro configurado ──
   if (!config.rubro) {
     return <OnboardingScreen onDone={async (cfg) => { await saveConfig(cfg); setPage("inventario"); }} />;
+  }
+
+  // ── Bloqueo por suscripción vencida ──
+  if (subState.isBlocked) {
+    return <AccesoBloqueadoScreen config={config} onSuscribir={handleSuscribir} onLogout={handleLogout} />;
   }
 
   return (
@@ -4616,6 +5128,19 @@ export default function App() {
           </div>
         </aside>
         <main style={{ marginLeft:215, flex:1, overflow:"auto", minHeight:"100vh" }}>
+          {showSubscriptionSuccess && (
+            <div style={{ background:"#dcfce7", borderBottom:"1px solid #86efac", padding:"14px 24px", display:"flex", alignItems:"center", gap:10, color:"#15803d", fontSize:14, fontWeight:600 }}>
+              <CheckCircle2 size={18}/>
+              ¡Suscripción activada con éxito! Ya podés seguir usando MiStock sin límites.
+              <button onClick={() => setShowSubscriptionSuccess(false)} style={{ marginLeft:"auto", background:"none", border:"none", cursor:"pointer", color:"#15803d", display:"flex" }}><X size={16}/></button>
+            </div>
+          )}
+          {subState.isTrial && subState.daysLeft <= 3 && page !== "suscripcion" && (
+            <TrialBanner daysLeft={subState.daysLeft} onSuscribir={() => setPage("suscripcion")} />
+          )}
+          {subState.status === "past_due" && !subState.isBlocked && page !== "suscripcion" && (
+            <PastDueBanner daysLeft={subState.daysLeft} onSuscribir={() => setPage("suscripcion")} />
+          )}
           <ErrorBoundary>
             {PAGES[page] ?? PAGES.dashboard}
           </ErrorBoundary>
