@@ -3683,124 +3683,320 @@ function OnboardingScreen({ onDone }) {
   const [nombre, setNombre] = useState("");
   const [dueno, setDueno] = useState("");
   const [moneda, setMoneda] = useState("$");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [direccion, setDireccion] = useState("");
+  const [instagram, setInstagram] = useState("");
+  const [whatsappError, setWhatsappError] = useState("");
 
   const catsPreview = CATS_POR_RUBRO[rubro] || [];
 
+  const C = {
+    ink: "#0a0a0a", body: "#4b5563", mut: "#9ca3af", line: "#e5e7eb",
+    bg: "#ffffff", bgSoft: "#f9fafb",
+    purple: "#9238FF", purpleDark: "#7a1de6", purpleSoft: "#f4ecff",
+    green: "#16a34a",
+  };
+  const font = "'DM Sans', system-ui, -apple-system, sans-serif";
+
   const handleDone = () => {
     if (!nombre.trim() || !rubro) return;
-    onDone({ nombre: nombre || "Mi Negocio", moneda, dueno, rubro, telefono:"", instagram:"", logo:"" });
+    // Validar WhatsApp: mínimo 8 dígitos (número corto sin código de país o completo con)
+    const wpDigits = whatsapp.replace(/\D/g, "");
+    if (!wpDigits || wpDigits.length < 8) {
+      setWhatsappError("Ingresá un número de WhatsApp válido (ej: 11 3456-7890)");
+      return;
+    }
+    setWhatsappError("");
+    onDone({
+      nombre: nombre || "Mi Negocio",
+      moneda, dueno, rubro,
+      telefono: whatsapp,
+      direccion,
+      instagram,
+      logo: ""
+    });
   };
 
+  // Estilos comunes
+  const inputStyle = {
+    width: "100%", padding: "13px 16px", border: `1.5px solid ${C.line}`, borderRadius: 6,
+    fontSize: 14.5, outline: "none", boxSizing: "border-box", fontFamily: font,
+    background: C.bg, transition: "border-color .15s",
+  };
+  const labelStyle = { fontSize: 13, fontWeight: 500, color: C.ink, display: "block", marginBottom: 8 };
+  const primaryBtn = {
+    padding: "14px 32px", background: C.purple, color: "#fff", border: "none", borderRadius: 4,
+    fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: font, transition: "background .15s",
+  };
+  const outlineBtn = {
+    padding: "13px 24px", background: "transparent", color: C.ink, border: `1.5px solid ${C.line}`, borderRadius: 4,
+    fontSize: 14.5, fontWeight: 500, cursor: "pointer", fontFamily: font,
+  };
+  const disabledBtn = { ...primaryBtn, background: C.line, color: C.mut, cursor: "not-allowed" };
+
   return (
-    <div style={{ minHeight:"100vh", background:"#f5f5f4", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',system-ui,sans-serif", padding:20 }}>
-      <div style={{ width:"100%", maxWidth:680 }}>
+    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font, color: C.ink, display: "flex", flexDirection: "column" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+        .onb-input:focus { border-color: ${C.purple} !important; }
+        .onb-btn-primary:hover:not(:disabled) { background: ${C.purpleDark} !important; }
+        .onb-rubro:hover { border-color: ${C.purple} !important; }
+      `}</style>
 
-        {/* Step 1 — Bienvenida */}
-        {step === 1 && (
-          <div style={{ textAlign:"center" }}>
-            <div style={{ marginBottom:16, color:"#111" }}><Store size={56}/></div>
-            <h1 style={{ fontSize:32, fontWeight:800, margin:"0 0 12px" }}>Bienvenido a MiStock</h1>
-            <p style={{ fontSize:16, color:"#888", margin:"0 0 40px", lineHeight:1.6 }}>
-              Tu sistema de gestión de ventas e inventario.<br/>
-              Configuremos tu negocio en 2 pasos rápidos.
-            </p>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:16, marginBottom:40, textAlign:"left" }}>
-              {[["pkg","Inventario inteligente","Cargá tus productos con categorías específicas para tu rubro"],["cart","Punto de venta","Registrá ventas, aplicá descuentos y controlá tu caja"],["chart","Estadísticas reales","Analizá tus ventas, gastos y ganancia neta del negocio"]].map(([icon,title,desc]) => (
-                <div key={title} style={{ background:"#fff", border:"1px solid #f0f0f0", borderRadius:12, padding:20 }}>
-                  <div style={{ marginBottom:10, color:"#111" }}>{icon==="pkg"?<Package size={28}/>:icon==="cart"?<ShoppingCart size={28}/>:<BarChart2 size={28}/>}</div>
-                  <div style={{ fontWeight:700, fontSize:14, marginBottom:6 }}>{title}</div>
-                  <div style={{ fontSize:12, color:"#888", lineHeight:1.5 }}>{desc}</div>
-                </div>
-              ))}
-            </div>
-            <button style={{ ...G.btn("dark"), padding:"14px 48px", fontSize:16 }} onClick={() => setStep(2)}>
-              Empezar configuración →
-            </button>
+      {/* Header */}
+      <div style={{ borderBottom: `1px solid ${C.line}`, padding: "18px 32px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ background: C.purple, width: 34, height: 34, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}>
+            <Store size={18}/>
           </div>
-        )}
+          <span style={{ fontWeight: 700, fontSize: 19, letterSpacing: "-0.5px" }}>MiStock</span>
+        </div>
+        <div style={{ fontSize: 13, color: C.mut }}>Configuración inicial</div>
+      </div>
 
-        {/* Step 2 — Rubro */}
-        {step === 2 && (
-          <div>
-            <div style={{ textAlign:"center", marginBottom:32 }}>
-              <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"#f3f4f6", borderRadius:20, padding:"4px 16px", marginBottom:16, fontSize:12, color:"#888" }}>Paso 1 de 2</div>
-              <h2 style={{ fontSize:26, fontWeight:800, margin:"0 0 8px" }}>¿Qué tipo de negocio tenés?</h2>
-              <p style={{ fontSize:14, color:"#888", margin:0 }}>Esto define las categorías de productos disponibles en tu sistema.</p>
+      {/* Progress bar */}
+      {step > 1 && (
+        <div style={{ background: C.bgSoft, borderBottom: `1px solid ${C.line}`, padding: "16px 32px" }}>
+          <div style={{ maxWidth: 680, margin: "0 auto", display: "flex", alignItems: "center", gap: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, minWidth: 76 }}>Paso {step - 1} de 2</div>
+            <div style={{ flex: 1, height: 4, background: C.line, borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${((step - 1) / 2) * 100}%`, background: C.purple, borderRadius: 2, transition: "width .3s ease" }}/>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:20 }}>
-              {RUBROS.map(r => (
-                <button key={r} onClick={() => setRubro(r)} style={{
-                  padding:"14px 14px", borderRadius:11,
-                  border:`2px solid ${rubro===r?"#111":"#e5e7eb"}`,
-                  cursor:"pointer", fontSize:13, textAlign:"left",
-                  background:rubro===r?"#111":"#fff",
-                  color:rubro===r?"#fff":"#333",
-                  fontWeight:rubro===r?700:400,
-                  transition:"all .15s", lineHeight:1.4
-                }}>{r}</button>
-              ))}
-            </div>
+          </div>
+        </div>
+      )}
 
-            {/* Preview categorías */}
-            {rubro && (
-              <div style={{ background:"#fff", border:"1px solid #f0f0f0", borderRadius:12, padding:"16px 20px", marginBottom:20 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
-                  <span style={{ fontSize:13, fontWeight:700 }}>Categorías disponibles para {rubro}</span>
-                  <span style={{ background:"#f3f4f6", color:"#666", fontSize:11, padding:"2px 8px", borderRadius:20, fontWeight:600 }}>{catsPreview.length}</span>
-                </div>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
-                  {catsPreview.map(c => (
-                    <span key={c} style={{ background:"#f9fafb", border:"1px solid #e5e7eb", borderRadius:20, padding:"4px 12px", fontSize:12, color:"#555" }}>{c}</span>
-                  ))}
-                </div>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 24px" }}>
+        <div style={{ width: "100%", maxWidth: 680 }}>
+
+          {/* Step 1 — Bienvenida */}
+          {step === 1 && (
+            <div style={{ textAlign: "center" }}>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: C.purpleSoft, color: C.purple, borderRadius: 30, padding: "6px 14px", fontSize: 13, fontWeight: 600, marginBottom: 24 }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.purple }}/> ¡Cuenta creada!
               </div>
-            )}
-
-            <div style={{ display:"flex", gap:12 }}>
-              <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center", padding:"12px" }} onClick={() => setStep(1)}>← Atrás</button>
-              <button style={{ ...G.btn(rubro?"dark":"light"), flex:2, justifyContent:"center", padding:"12px", fontSize:15 }} onClick={() => { if (rubro) setStep(3); }} disabled={!rubro}>
-                Continuar →
+              <h1 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: "0 0 18px" }}>
+                Bienvenido a MiStock
+              </h1>
+              <p style={{ fontSize: 17, color: C.body, margin: "0 0 40px", lineHeight: 1.55, maxWidth: 520, marginLeft: "auto", marginRight: "auto" }}>
+                Configuremos tu negocio en 2 pasos rápidos. Después ya podés empezar a vender.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, marginBottom: 44, textAlign: "left" }}>
+                {[
+                  { ic: <Package size={20}/>, t: "Inventario", d: "Cargá productos con categorías de tu rubro" },
+                  { ic: <ShoppingCart size={20}/>, t: "Ventas", d: "Cobrás rápido, el stock se descuenta solo" },
+                  { ic: <BarChart2 size={20}/>, t: "Estadísticas", d: "Sabés qué se vende y qué te deja plata" },
+                ].map((f, i) => (
+                  <div key={i} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 10, padding: "22px 20px" }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 10, background: C.purpleSoft, color: C.purple, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>{f.ic}</div>
+                    <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 6, letterSpacing: "-0.2px" }}>{f.t}</div>
+                    <div style={{ fontSize: 13, color: C.body, lineHeight: 1.5 }}>{f.d}</div>
+                  </div>
+                ))}
+              </div>
+              <button
+                className="onb-btn-primary"
+                onClick={() => setStep(2)}
+                style={{ ...primaryBtn, padding: "15px 40px", fontSize: 16 }}
+              >
+                Empezar configuración →
               </button>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Step 3 — Datos del negocio */}
-        {step === 3 && (
-          <div>
-            <div style={{ textAlign:"center", marginBottom:32 }}>
-              <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"#f3f4f6", borderRadius:20, padding:"4px 16px", marginBottom:16, fontSize:12, color:"#888" }}>Paso 2 de 2</div>
-              <h2 style={{ fontSize:26, fontWeight:800, margin:"0 0 8px" }}>Datos de tu negocio</h2>
-              <p style={{ fontSize:14, color:"#888", margin:0 }}>Solo lo básico para empezar. Podés cambiar todo desde Configuración.</p>
-            </div>
-            <div style={{ background:"#fff", border:"1px solid #f0f0f0", borderRadius:12, padding:"24px 28px", marginBottom:20 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:10, background:"#f9fafb", borderRadius:9, padding:"10px 14px", marginBottom:20 }}>
-                <CheckCircle2 size={20} color="#16a34a"/>
-                <div><div style={{ fontSize:12, color:"#888" }}>Rubro seleccionado</div><div style={{ fontWeight:700, fontSize:14 }}>{rubro}</div></div>
+          {/* Step 2 — Rubro */}
+          {step === 2 && (
+            <div>
+              <div style={{ textAlign: "center", marginBottom: 36 }}>
+                <h2 style={{ fontSize: 36, lineHeight: 1.1, fontWeight: 500, letterSpacing: "-1px", margin: "0 0 12px" }}>
+                  ¿Qué tipo de negocio tenés?
+                </h2>
+                <p style={{ fontSize: 15.5, color: C.body, margin: 0, lineHeight: 1.5 }}>
+                  Elegí tu rubro y MiStock se configura solo con las categorías y campos que necesitás.
+                </p>
               </div>
-              <FieldRow label="Nombre del negocio *">
-                <input style={G.inp()} value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: Mi Showroom, La Ferretería del Sur..." autoFocus />
-              </FieldRow>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
-                <FieldRow label="Tu nombre (dueño/a)">
-                  <input style={G.inp()} value={dueno} onChange={e => setDueno(e.target.value)} placeholder="Tu nombre" />
-                </FieldRow>
-                <FieldRow label="Moneda">
-                  <select style={G.inp()} value={moneda} onChange={e => setMoneda(e.target.value)}>
-                    {[["$","$ (Pesos ARS)"],["USD","USD (Dólar)"],["€","€ (Euro)"],["R$","R$ (Real BRL)"]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
-                  </select>
-                </FieldRow>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 22 }}>
+                {RUBROS.map(r => (
+                  <button
+                    key={r}
+                    className="onb-rubro"
+                    onClick={() => setRubro(r)}
+                    style={{
+                      padding: "14px 14px", borderRadius: 8,
+                      border: `2px solid ${rubro === r ? C.purple : C.line}`,
+                      cursor: "pointer", fontSize: 14, textAlign: "left",
+                      background: rubro === r ? C.purpleSoft : C.bg,
+                      color: rubro === r ? C.purple : C.ink,
+                      fontWeight: rubro === r ? 600 : 500,
+                      transition: "all .15s", lineHeight: 1.4,
+                      fontFamily: font,
+                    }}
+                  >
+                    {r}
+                  </button>
+                ))}
               </div>
-            </div>
-            <div style={{ display:"flex", gap:12 }}>
-              <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center", padding:"12px" }} onClick={() => setStep(2)}>← Atrás</button>
-              <button style={{ ...G.btn(nombre.trim()?"green":"light"), flex:2, justifyContent:"center", padding:"13px", fontSize:15, fontWeight:700 }} onClick={handleDone} disabled={!nombre.trim()}>
-                ¡Comenzar a usar MiStock! 🚀
-              </button>
-            </div>
-          </div>
-        )}
 
+              {/* Preview categorías */}
+              {rubro && (
+                <div style={{ background: C.bgSoft, border: `1px solid ${C.line}`, borderRadius: 10, padding: "16px 20px", marginBottom: 24 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <CheckCircle2 size={16} color={C.green}/>
+                    <span style={{ fontSize: 13.5, fontWeight: 600 }}>Categorías para {rubro}</span>
+                    <span style={{ background: C.purple, color: "#fff", fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>{catsPreview.length}</span>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                    {catsPreview.map(c => (
+                      <span key={c} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 20, padding: "4px 12px", fontSize: 12, color: C.body }}>{c}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 12, justifyContent: "space-between" }}>
+                <button style={outlineBtn} onClick={() => setStep(1)}>← Atrás</button>
+                <button
+                  className="onb-btn-primary"
+                  onClick={() => { if (rubro) setStep(3); }}
+                  disabled={!rubro}
+                  style={rubro ? primaryBtn : disabledBtn}
+                >
+                  Continuar →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3 — Datos del negocio */}
+          {step === 3 && (
+            <div>
+              <div style={{ textAlign: "center", marginBottom: 36 }}>
+                <h2 style={{ fontSize: 36, lineHeight: 1.1, fontWeight: 500, letterSpacing: "-1px", margin: "0 0 12px" }}>
+                  Datos de tu negocio
+                </h2>
+                <p style={{ fontSize: 15.5, color: C.body, margin: 0, lineHeight: 1.5 }}>
+                  Solo lo básico para empezar. Después podés ajustar todo desde Configuración.
+                </p>
+              </div>
+
+              <div style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: "28px 30px", marginBottom: 24 }}>
+                {/* Rubro elegido */}
+                <div style={{ display: "flex", alignItems: "center", gap: 12, background: C.purpleSoft, borderRadius: 8, padding: "12px 16px", marginBottom: 24 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: C.purple, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <CheckCircle2 size={17}/>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: C.body, fontWeight: 500 }}>RUBRO SELECCIONADO</div>
+                    <div style={{ fontWeight: 600, fontSize: 15, color: C.ink }}>{rubro}</div>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 18 }}>
+                  <label style={labelStyle}>Nombre del negocio *</label>
+                  <input
+                    className="onb-input"
+                    style={inputStyle}
+                    value={nombre}
+                    onChange={e => setNombre(e.target.value)}
+                    placeholder="Ej: Mi Showroom, La Ferretería del Sur..."
+                    autoFocus
+                  />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <div>
+                    <label style={labelStyle}>Tu nombre (dueño/a)</label>
+                    <input
+                      className="onb-input"
+                      style={inputStyle}
+                      value={dueno}
+                      onChange={e => setDueno(e.target.value)}
+                      placeholder="Opcional"
+                    />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Moneda</label>
+                    <select
+                      className="onb-input"
+                      style={inputStyle}
+                      value={moneda}
+                      onChange={e => setMoneda(e.target.value)}
+                    >
+                      {[["$","$ (Pesos ARS)"],["USD","USD (Dólar)"],["€","€ (Euro)"],["R$","R$ (Real BRL)"]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Separador visual */}
+                <div style={{ borderTop: `1px solid ${C.line}`, margin: "24px 0 22px" }}/>
+
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.body, marginBottom: 14, letterSpacing: "-0.2px" }}>
+                  Datos de contacto
+                </div>
+
+                <div style={{ marginBottom: 18 }}>
+                  <label style={labelStyle}>WhatsApp de contacto *</label>
+                  <input
+                    className="onb-input"
+                    style={{
+                      ...inputStyle,
+                      borderColor: whatsappError ? "#dc2626" : C.line,
+                    }}
+                    value={whatsapp}
+                    onChange={e => { setWhatsapp(e.target.value); if (whatsappError) setWhatsappError(""); }}
+                    placeholder="Ej: 11 3456-7890"
+                    type="tel"
+                  />
+                  {whatsappError && (
+                    <div style={{ fontSize: 12, color: "#dc2626", marginTop: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                      <AlertCircle size={13}/> {whatsappError}
+                    </div>
+                  )}
+                  {!whatsappError && (
+                    <div style={{ fontSize: 12, color: C.mut, marginTop: 6 }}>
+                      Va a aparecer en los tickets de venta para que tus clientes te contacten.
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ marginBottom: 18 }}>
+                  <label style={labelStyle}>Dirección del local <span style={{ color: C.mut, fontWeight: 400 }}>(opcional)</span></label>
+                  <input
+                    className="onb-input"
+                    style={inputStyle}
+                    value={direccion}
+                    onChange={e => setDireccion(e.target.value)}
+                    placeholder="Ej: Av. Rivadavia 1234, CABA"
+                  />
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Instagram del negocio <span style={{ color: C.mut, fontWeight: 400 }}>(opcional)</span></label>
+                  <input
+                    className="onb-input"
+                    style={inputStyle}
+                    value={instagram}
+                    onChange={e => setInstagram(e.target.value.replace(/^@/, ""))}
+                    placeholder="@tunegocio"
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 12, justifyContent: "space-between" }}>
+                <button style={outlineBtn} onClick={() => setStep(2)}>← Atrás</button>
+                <button
+                  className="onb-btn-primary"
+                  onClick={handleDone}
+                  disabled={!nombre.trim() || !whatsapp.trim()}
+                  style={(nombre.trim() && whatsapp.trim()) ? primaryBtn : disabledBtn}
+                >
+                  ¡Comenzar a usar MiStock!
+                </button>
+              </div>
+            </div>
+          )}
+
+        </div>
       </div>
     </div>
   );
