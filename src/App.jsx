@@ -249,11 +249,13 @@ const PIE_COLORS = ["#111","#16a34a","#2563eb","#d97706","#dc2626","#7c3aed","#0
 // THEME — CSS variables para dark/light mode
 // ═══════════════════════════════════════════════════════════
 const THEME_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
   :root {
-    --bg-page:#f5f5f7;--bg-sidebar:#ffffff;--bg-card:#ffffff;--bg-card2:#f9fafb;
-    --bg-input:#ffffff;--border:#f0f0f0;--border-mid:#e5e7eb;--border-strong:#d1d5db;
-    --text:#111111;--text2:#555555;--text-muted:#888888;--text-light:#cccccc;
-    --btn-dark-bg:#111111;--btn-dark-text:#ffffff;
+    --bg-page:#ffffff;--bg-sidebar:#ffffff;--bg-card:#ffffff;--bg-card2:#f9fafb;
+    --bg-input:#ffffff;--border:#eef0f4;--border-mid:#e5e7eb;--border-strong:#d1d5db;
+    --text:#0a0a0a;--text2:#4b5563;--text-muted:#6b7280;--text-light:#9ca3af;
+    --btn-dark-bg:#0a0a0a;--btn-dark-text:#ffffff;
+    --accent:#9238FF;--accent-dark:#7a1de6;--accent-soft:#f4ecff;
   }
 `;
 
@@ -5162,41 +5164,54 @@ export default function App() {
   return (
     <>
       <style>{THEME_CSS}</style>
-      <div style={{ display:"flex", fontFamily:"'Segoe UI',system-ui,-apple-system,sans-serif", minHeight:"100vh", background:"var(--bg-page)" }}>
+      <div style={{ display:"flex", fontFamily:"'DM Sans', system-ui, -apple-system, sans-serif", minHeight:"100vh", background:"var(--bg-page)" }}>
         {/* ── Sidebar ── */}
         <aside style={{ width:215, background:"var(--bg-sidebar)", borderRight:"1px solid var(--border)", display:"flex", flexDirection:"column", position:"fixed", top:0, left:0, height:"100vh", zIndex:500 }}>
-          <div style={{ padding:"18px 16px 16px", borderBottom:"1px solid var(--border)" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ padding:"20px 18px 18px", borderBottom:"1px solid var(--border)" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:11 }}>
               {config.logo
-                ? <img src={config.logo} alt="logo" style={{ width:36, height:36, borderRadius:9, objectFit:"cover" }} onError={e => e.target.style.display="none"} />
-                : <div style={{ background:"var(--btn-dark-bg)", borderRadius:9, width:36, height:36, display:"flex", alignItems:"center", justifyContent:"center", color:"var(--btn-dark-text)" }}><Store size={18}/></div>
+                ? <img src={config.logo} alt="logo" style={{ width:38, height:38, borderRadius:9, objectFit:"cover" }} onError={e => e.target.style.display="none"} />
+                : <div style={{ background:"var(--accent)", borderRadius:9, width:38, height:38, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff" }}><Store size={19}/></div>
               }
               <div style={{ minWidth:0 }}>
-                <div style={{ color:"var(--text)", fontWeight:700, fontSize:13, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{config.nombre}</div>
-                <div style={{ color:"var(--text-light)", fontSize:10, marginTop:2 }}>MiStock gestión de ventas</div>
+                <div style={{ color:"var(--text)", fontWeight:700, fontSize:14, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", letterSpacing:"-0.3px" }}>{config.nombre}</div>
+                <div style={{ color:"var(--text-light)", fontSize:11, marginTop:2 }}>MiStock gestión de ventas</div>
               </div>
             </div>
           </div>
-          <nav style={{ flex:1, padding:"10px 8px", display:"flex", flexDirection:"column", gap:1, overflowY:"auto" }}>
-            {NAV.map(n => (
-              <button key={n.id} onClick={() => setPage(n.id)} style={{ display:"flex", alignItems:"center", gap:9, padding:"9px 10px", borderRadius:8, border:"none", cursor:"pointer", fontSize:13, textAlign:"left", width:"100%", background:page===n.id?"var(--btn-dark-bg)":"transparent", color:page===n.id?"var(--btn-dark-text)":"var(--text2)", fontWeight:page===n.id?600:400, position:"relative" }}>
-                <span style={{ display:"flex", flexShrink:0 }}>{n.icon}</span>
-                <span style={{ flex:1 }}>{n.label}</span>
-                {n.id==="inventario" && stockAlert>0 && (
-                  <span style={{ background:"#dc2626", color:"#fff", fontSize:9, fontWeight:700, minWidth:16, height:16, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, padding:"0 3px" }}>
-                    {stockAlert>9?"9+":stockAlert}
-                  </span>
-                )}
-              </button>
-            ))}
+          <nav style={{ flex:1, padding:"12px 10px", display:"flex", flexDirection:"column", gap:2, overflowY:"auto" }}>
+            {NAV.map(n => {
+              const isActive = page === n.id;
+              return (
+                <button key={n.id} onClick={() => setPage(n.id)} style={{
+                  display:"flex", alignItems:"center", gap:11,
+                  padding:"11px 12px", borderRadius:8, border:"none", cursor:"pointer",
+                  fontSize:14, textAlign:"left", width:"100%",
+                  background: isActive ? "var(--accent-soft)" : "transparent",
+                  color: isActive ? "var(--accent)" : "var(--text2)",
+                  fontWeight: isActive ? 600 : 500,
+                  fontFamily:"inherit",
+                  position:"relative",
+                  transition:"background .15s, color .15s"
+                }}>
+                  <span style={{ display:"flex", flexShrink:0 }}>{n.icon}</span>
+                  <span style={{ flex:1 }}>{n.label}</span>
+                  {n.id==="inventario" && stockAlert>0 && (
+                    <span style={{ background:"#dc2626", color:"#fff", fontSize:10, fontWeight:700, minWidth:17, height:17, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, padding:"0 4px" }}>
+                      {stockAlert>9?"9+":stockAlert}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </nav>
-          <div style={{ padding:"12px 16px", borderTop:"1px solid var(--border)" }}>
-            {caja.abierta && <div style={{ background:"#f0fdf4", borderRadius:7, padding:"4px 10px", marginBottom:8, fontSize:11, color:"#16a34a", fontWeight:600, display:"flex", alignItems:"center", gap:5 }}><Unlock size={11}/>Caja abierta</div>}
-            <button onClick={handleLogout} style={{ display:"flex", alignItems:"center", gap:6, width:"100%", background:"none", border:"1px solid var(--border)", borderRadius:7, padding:"6px 10px", cursor:"pointer", fontSize:11, color:"var(--text-muted)", marginBottom:6 }}>
-              <LogOut size={11}/> Cerrar sesión
+          <div style={{ padding:"14px 18px", borderTop:"1px solid var(--border)" }}>
+            {caja.abierta && <div style={{ background:"#f0fdf4", borderRadius:7, padding:"5px 11px", marginBottom:9, fontSize:12, color:"#16a34a", fontWeight:600, display:"flex", alignItems:"center", gap:6 }}><Unlock size={12}/>Caja abierta</div>}
+            <button onClick={handleLogout} style={{ display:"flex", alignItems:"center", gap:7, width:"100%", background:"none", border:"1px solid var(--border)", borderRadius:7, padding:"8px 11px", cursor:"pointer", fontSize:12.5, color:"var(--text-muted)", marginBottom:8, fontFamily:"inherit" }}>
+              <LogOut size={12}/> Cerrar sesión
             </button>
-            <div style={{ color:"var(--text-light)", fontSize:10 }}>Versión</div>
-            <div style={{ color:"var(--text-muted)", fontSize:11, fontWeight:600 }}>1.0 Beta</div>
+            <div style={{ color:"var(--text-light)", fontSize:10.5 }}>Versión</div>
+            <div style={{ color:"var(--text-muted)", fontSize:11.5, fontWeight:600 }}>1.0 Beta</div>
           </div>
         </aside>
         <main style={{ marginLeft:215, flex:1, overflow:"auto", minHeight:"100vh" }}>
