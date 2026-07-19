@@ -3683,6 +3683,10 @@ function OnboardingScreen({ onDone }) {
   const [nombre, setNombre] = useState("");
   const [dueno, setDueno] = useState("");
   const [moneda, setMoneda] = useState("$");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [direccion, setDireccion] = useState("");
+  const [instagram, setInstagram] = useState("");
+  const [whatsappError, setWhatsappError] = useState("");
 
   const catsPreview = CATS_POR_RUBRO[rubro] || [];
 
@@ -3696,7 +3700,21 @@ function OnboardingScreen({ onDone }) {
 
   const handleDone = () => {
     if (!nombre.trim() || !rubro) return;
-    onDone({ nombre: nombre || "Mi Negocio", moneda, dueno, rubro, telefono:"", instagram:"", logo:"" });
+    // Validar WhatsApp: mínimo 8 dígitos (número corto sin código de país o completo con)
+    const wpDigits = whatsapp.replace(/\D/g, "");
+    if (!wpDigits || wpDigits.length < 8) {
+      setWhatsappError("Ingresá un número de WhatsApp válido (ej: 11 3456-7890)");
+      return;
+    }
+    setWhatsappError("");
+    onDone({
+      nombre: nombre || "Mi Negocio",
+      moneda, dueno, rubro,
+      telefono: whatsapp,
+      direccion,
+      instagram,
+      logo: ""
+    });
   };
 
   // Estilos comunes
@@ -3908,6 +3926,60 @@ function OnboardingScreen({ onDone }) {
                     </select>
                   </div>
                 </div>
+
+                {/* Separador visual */}
+                <div style={{ borderTop: `1px solid ${C.line}`, margin: "24px 0 22px" }}/>
+
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.body, marginBottom: 14, letterSpacing: "-0.2px" }}>
+                  Datos de contacto
+                </div>
+
+                <div style={{ marginBottom: 18 }}>
+                  <label style={labelStyle}>WhatsApp de contacto *</label>
+                  <input
+                    className="onb-input"
+                    style={{
+                      ...inputStyle,
+                      borderColor: whatsappError ? "#dc2626" : C.line,
+                    }}
+                    value={whatsapp}
+                    onChange={e => { setWhatsapp(e.target.value); if (whatsappError) setWhatsappError(""); }}
+                    placeholder="Ej: 11 3456-7890"
+                    type="tel"
+                  />
+                  {whatsappError && (
+                    <div style={{ fontSize: 12, color: "#dc2626", marginTop: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                      <AlertCircle size={13}/> {whatsappError}
+                    </div>
+                  )}
+                  {!whatsappError && (
+                    <div style={{ fontSize: 12, color: C.mut, marginTop: 6 }}>
+                      Va a aparecer en los tickets de venta para que tus clientes te contacten.
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ marginBottom: 18 }}>
+                  <label style={labelStyle}>Dirección del local <span style={{ color: C.mut, fontWeight: 400 }}>(opcional)</span></label>
+                  <input
+                    className="onb-input"
+                    style={inputStyle}
+                    value={direccion}
+                    onChange={e => setDireccion(e.target.value)}
+                    placeholder="Ej: Av. Rivadavia 1234, CABA"
+                  />
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Instagram del negocio <span style={{ color: C.mut, fontWeight: 400 }}>(opcional)</span></label>
+                  <input
+                    className="onb-input"
+                    style={inputStyle}
+                    value={instagram}
+                    onChange={e => setInstagram(e.target.value.replace(/^@/, ""))}
+                    placeholder="@tunegocio"
+                  />
+                </div>
               </div>
 
               <div style={{ display: "flex", gap: 12, justifyContent: "space-between" }}>
@@ -3915,8 +3987,8 @@ function OnboardingScreen({ onDone }) {
                 <button
                   className="onb-btn-primary"
                   onClick={handleDone}
-                  disabled={!nombre.trim()}
-                  style={nombre.trim() ? primaryBtn : disabledBtn}
+                  disabled={!nombre.trim() || !whatsapp.trim()}
+                  style={(nombre.trim() && whatsapp.trim()) ? primaryBtn : disabledBtn}
                 >
                   ¡Comenzar a usar MiStock!
                 </button>
