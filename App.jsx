@@ -434,27 +434,44 @@ function StatCard({ icon, bg, label, value, badge, textColor }) {
 // MODALS
 // ═══════════════════════════════════════════════════════════
 
-function AbrirCajaModal({ setCaja, onClose }) {
+function AbrirCajaModal({ setCaja, saveCaja, onClose }) {
   const [monto, setMonto] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleAbrir = async () => {
+    if (loading) return;
+    setLoading(true);
+    const c = { abierta:true, monto:Number(monto)||0, fecha:todayStr() };
+    try {
+      setCaja(c);
+      if (saveCaja) await saveCaja(c);
+    } catch (e) {
+      console.error("Error abriendo caja:", e);
+    } finally {
+      onClose();
+    }
+  };
+
   return (
     <Modal title="Abrir Caja" subtitle="Ingresá el monto inicial en caja para comenzar el día." onClose={onClose} width={400}>
       <FieldRow label="Monto de apertura">
-        <input style={G.inp()} type="number" placeholder="0" value={monto} onChange={e => setMonto(e.target.value)} autoFocus />
+        <input style={G.inp()} type="number" placeholder="0" value={monto} onChange={e => setMonto(e.target.value)} autoFocus disabled={loading} />
       </FieldRow>
-      <button style={{ ...G.btn("green"), width:"100%", justifyContent:"center", padding:"11px" }}
-        onClick={() => { const c = { abierta:true, monto:Number(monto)||0, fecha:todayStr() }; setCaja(c); if(saveCaja) saveCaja(c); onClose(); }}>
-        Abrir Caja
+      <button style={{ ...G.btn("green"), width:"100%", justifyContent:"center", padding:"11px", opacity: loading ? 0.7 : 1 }}
+        onClick={handleAbrir} disabled={loading}>
+        {loading ? "Abriendo..." : "Abrir Caja"}
       </button>
     </Modal>
   );
 }
 
-function CerrarCajaModal({ caja, sales, config, setCaja, onClose }) {
+function CerrarCajaModal({ caja, sales, config, setCaja, saveCaja, onClose }) {
   const { moneda } = config;
   const hoy = todayStr();
   const ahora = new Date().toLocaleTimeString("es-AR", { hour:"2-digit", minute:"2-digit" });
   const ventasHoy = sales.filter(s => !s.anulada && s.fecha === hoy);
   const totalGen  = ventasHoy.reduce((a, s) => a + s.total, 0);
+  const [cerrando, setCerrando] = useState(false);
 
   // Por método de pago
   const porMetodo = {};
@@ -479,7 +496,19 @@ function CerrarCajaModal({ caja, sales, config, setCaja, onClose }) {
     setTimeout(() => { w.focus(); w.print(); }, 400);
   };
 
-  const cerrar = () => { const c = { abierta:false, monto:0, fecha:null }; setCaja(c); if(saveCaja) saveCaja(c); onClose(); };
+  const cerrar = async () => {
+    if (cerrando) return;
+    setCerrando(true);
+    const c = { abierta:false, monto:0, fecha:null };
+    try {
+      setCaja(c);
+      if (saveCaja) await saveCaja(c);
+    } catch (e) {
+      console.error("Error cerrando caja:", e);
+    } finally {
+      onClose();
+    }
+  };
 
   return (
     <Modal title="Cierre de Caja" subtitle={`${fmtDate(hoy)} · Cierre a las ${ahora}`} onClose={onClose} width={480}>
@@ -553,11 +582,11 @@ function CerrarCajaModal({ caja, sales, config, setCaja, onClose }) {
       </div>
 
       <div style={{ display:"flex", gap:10, marginTop:20 }}>
-        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={handlePrint}>
+        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={handlePrint} disabled={cerrando}>
           <Download size={14}/> Imprimir cierre
         </button>
-        <button style={{ ...G.btn("red"), flex:1, justifyContent:"center" }} onClick={cerrar}>
-          <Lock size={14}/> Cerrar Caja
+        <button style={{ ...G.btn("red"), flex:1, justifyContent:"center", opacity: cerrando ? 0.7 : 1 }} onClick={cerrar} disabled={cerrando}>
+          <Lock size={14}/> {cerrando ? "Cerrando..." : "Cerrar Caja"}
         </button>
       </div>
     </Modal>
