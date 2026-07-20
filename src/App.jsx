@@ -5028,7 +5028,17 @@ export default function App() {
         setConfig(dbToConfig(negocio));
         setProducts((prods || []).map(dbToProduct));
         setSales((ventasData || []).map(dbToVenta));
-        setCaja(cajaData ? { abierta: cajaData.abierta, monto: parseFloat(cajaData.monto)||0, fecha: cajaData.fecha } : { abierta:false, monto:0, fecha:null });
+        // Cierre automático: si la caja quedó abierta de un día anterior, se cierra sola
+        if (cajaData?.abierta && cajaData?.fecha && cajaData.fecha !== todayStr()) {
+          const cerrada = { abierta: false, monto: 0, fecha: null };
+          setCaja(cerrada);
+          _sb.from("caja").update(cerrada).eq("negocio_id", negocio.id).then(({ error }) => {
+            if (error) console.error("Auto-cierre caja:", error);
+            else console.log("Caja auto-cerrada: quedó abierta desde " + cajaData.fecha);
+          });
+        } else {
+          setCaja(cajaData ? { abierta: cajaData.abierta, monto: parseFloat(cajaData.monto)||0, fecha: cajaData.fecha } : { abierta:false, monto:0, fecha:null });
+        }
         setGastos((gastosData || []).map(g => ({ id:g.id, tipo:g.tipo, descripcion:g.descripcion, monto:parseFloat(g.monto)||0, categoria:g.categoria, fecha:g.fecha, mes:g.mes })));
         setRemitos((remitosData || []).map(r => ({ id:r.id, numero:r.numero, fecha:r.fecha, proveedor:r.proveedor, items:r.items||[], total:parseFloat(r.total)||0, metodoPago:r.metodo_pago, notas:r.notas })));
         setProveedores((provData || []).map(p => ({ id:p.id, nombre:p.nombre, contacto:p.contacto, telefono:p.telefono, email:p.email, direccion:p.direccion, notas:p.notas })));
@@ -5068,9 +5078,16 @@ export default function App() {
   };
 
   // ── Guardar caja en Supabase ─────────────────────────────
+  // La fila siempre existe (se crea al registrarse el negocio),
+  // así que solo actualizamos por negocio_id
   const saveCaja = async (c) => {
     if (!sb._negocioId) return;
-    await sb.upsert("caja", { negocio_id: sb._negocioId, abierta: c.abierta, monto: c.monto||0, fecha: c.fecha||null });
+    const { error } = await _sb.from("caja").update({
+      abierta: c.abierta,
+      monto: c.monto || 0,
+      fecha: c.fecha || null,
+    }).eq("negocio_id", sb._negocioId);
+    if (error) console.error("saveCaja:", error);
   };
 
   // ── Guardar gasto en Supabase ────────────────────────────
