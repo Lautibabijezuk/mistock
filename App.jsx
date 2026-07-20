@@ -993,9 +993,72 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
       </FieldRow>
       <FieldRow label="Imagen">
         <div style={{ display:"flex", gap:8 }}>
-          <input style={G.inp()} value={f.imagen} onChange={e => u("imagen", e.target.value)} placeholder="URL de la imagen" />
-          <button style={G.btn("outline", { padding:"9px 12px", flexShrink:0 })}><Upload size={14}/></button>
+          <input style={G.inp()} value={f.imagen} onChange={e => u("imagen", e.target.value)} placeholder="URL de la imagen o subí desde tu dispositivo" />
+          <button
+            type="button"
+            style={G.btn("outline", { padding:"9px 12px", flexShrink:0 })}
+            onClick={() => document.getElementById("prod-imagen-input")?.click()}
+            title="Subir imagen desde tu dispositivo"
+          >
+            <Upload size={14}/>
+          </button>
+          <input
+            id="prod-imagen-input"
+            type="file"
+            accept="image/*"
+            style={{ display:"none" }}
+            onChange={e => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              // Validar tamaño (max 5MB antes de comprimir)
+              if (file.size > 5 * 1024 * 1024) {
+                alert("La imagen es muy grande. Máximo 5MB.");
+                e.target.value = "";
+                return;
+              }
+              // Leer, redimensionar (max 800px) y comprimir a JPEG 85%
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                const img = new Image();
+                img.onload = () => {
+                  const MAX_W = 800;
+                  const scale = img.width > MAX_W ? MAX_W / img.width : 1;
+                  const w = Math.round(img.width * scale);
+                  const h = Math.round(img.height * scale);
+                  const canvas = document.createElement("canvas");
+                  canvas.width = w;
+                  canvas.height = h;
+                  const ctx = canvas.getContext("2d");
+                  ctx.drawImage(img, 0, 0, w, h);
+                  const compressed = canvas.toDataURL("image/jpeg", 0.85);
+                  u("imagen", compressed);
+                };
+                img.src = ev.target.result;
+              };
+              reader.readAsDataURL(file);
+              e.target.value = "";
+            }}
+          />
         </div>
+        {/* Preview */}
+        {f.imagen && (
+          <div style={{ marginTop:10, position:"relative", display:"inline-block" }}>
+            <img
+              src={f.imagen}
+              alt="preview"
+              style={{ maxWidth:120, maxHeight:120, borderRadius:8, border:"1px solid var(--border-mid)", objectFit:"cover" }}
+              onError={e => e.target.style.display="none"}
+            />
+            <button
+              type="button"
+              onClick={() => u("imagen", "")}
+              title="Quitar imagen"
+              style={{ position:"absolute", top:-6, right:-6, background:"#dc2626", color:"#fff", border:"none", borderRadius:"50%", width:22, height:22, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", padding:0 }}
+            >
+              <X size={12}/>
+            </button>
+          </div>
+        )}
       </FieldRow>
 
       {/* Talles + stock por talle — solo Ropa/Indumentaria */}
@@ -2773,7 +2836,6 @@ function InventarioPage({ ctx }) {
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
         <div><h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Productos e Inventario</h1><p style={{ margin:0, color:"#888", fontSize:14 }}>{products.length} productos registrados</p></div>
         <div style={{ display:"flex", gap:10 }}>
-          {products.length > 0 && <button style={G.btn("outline", { color:"#dc2626", borderColor:"#fca5a5" })} onClick={() => setConfirmClearAll(true)}><Trash2 size={14}/> Borrar todos</button>}
           <button style={G.btn("outline")} onClick={() => setShowImport(true)}><Download size={14}/> Importar Excel</button>
           {products.length > 0 && <button style={G.btn("outline")} onClick={() => exportarInventario(products)}><Download size={14}/> Exportar Excel</button>}
           <button style={G.btn("dark")} onClick={() => setShowModal(true)}><Plus size={14}/> Nuevo producto</button>
@@ -3549,11 +3611,30 @@ function ComprobanteModal({ venta, config, onClose }) {
 }
 
 function ConfigPage({ ctx }) {
-  const { config, setConfig, setPage } = ctx;
+  const { config, setConfig, setPage, products, deleteProduct } = ctx;
   const [f, setF] = useState({ ...config });
   const [saved, setSaved] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState("");
+  const [resetting, setResetting] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]:v }));
   const save = async () => { await ctx.setConfig(f); setSaved(true); setTimeout(() => setSaved(false), 2500); };
+
+  // ── Borrar todos los productos ──
+  const handleResetProducts = async () => {
+    if (resetConfirmText !== config.nombre) return;
+    setResetting(true);
+    try {
+      const ids = products.map(p => p.id);
+      ctx.setProducts([]);
+      await Promise.all(ids.map(id => deleteProduct(id)));
+      setShowResetModal(false);
+      setResetConfirmText("");
+    } catch (e) {
+      alert("Error al borrar: " + e.message);
+    }
+    setResetting(false);
+  };
 
   const catsPreview = CATS_POR_RUBRO[f.rubro] || [];
 
@@ -3701,6 +3782,91 @@ function ConfigPage({ ctx }) {
           </button>
         )}
       </div>
+
+      {/* ── Zona de peligro ── */}
+      <div style={{ marginTop:48, marginBottom:24, background:"#fef2f2", border:"1.5px solid #fecaca", borderRadius:12, padding:"20px 24px" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:6 }}>
+          <AlertTriangle size={17} color="#dc2626"/>
+          <h3 style={{ margin:0, fontSize:16, fontWeight:700, color:"#dc2626" }}>Zona de peligro</h3>
+        </div>
+        <p style={{ margin:"0 0 18px", fontSize:13.5, color:"#7f1d1d", lineHeight:1.5 }}>
+          Las acciones de esta sección son <b>irreversibles</b>. Actuá con cuidado.
+        </p>
+
+        <div style={{ background:"#fff", border:"1px solid #fecaca", borderRadius:10, padding:"16px 18px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:16 }}>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontWeight:700, fontSize:14, color:"#111", marginBottom:3 }}>Borrar todos los productos</div>
+            <div style={{ fontSize:12.5, color:"#666", lineHeight:1.5 }}>
+              Elimina permanentemente los {products.length} producto{products.length!==1?"s":""} del inventario. Las ventas, remitos, gastos y proveedores <b>no se tocan</b>.
+            </div>
+          </div>
+          <button
+            onClick={() => setShowResetModal(true)}
+            disabled={products.length === 0}
+            style={{
+              background: products.length === 0 ? "#f3f4f6" : "#dc2626",
+              color: products.length === 0 ? "#9ca3af" : "#fff",
+              border:"none", borderRadius:8, padding:"10px 18px",
+              fontSize:13.5, fontWeight:600,
+              cursor: products.length === 0 ? "not-allowed" : "pointer",
+              flexShrink:0, fontFamily:"inherit",
+              display:"flex", alignItems:"center", gap:7,
+            }}
+          >
+            <Trash2 size={14}/> Borrar
+          </button>
+        </div>
+      </div>
+
+      {/* Modal de confirmación */}
+      {showResetModal && (
+        <Modal title="¿Borrar todos los productos?" subtitle="Esta acción es irreversible" onClose={() => { setShowResetModal(false); setResetConfirmText(""); }} width={440}>
+          <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:8, padding:"12px 14px", marginBottom:18, display:"flex", gap:10, alignItems:"flex-start" }}>
+            <AlertTriangle size={16} color="#dc2626" style={{ flexShrink:0, marginTop:2 }}/>
+            <div style={{ fontSize:13, color:"#7f1d1d", lineHeight:1.55 }}>
+              Vas a eliminar <b>{products.length} producto{products.length!==1?"s":""}</b> permanentemente. No hay forma de recuperarlos.
+            </div>
+          </div>
+
+          <p style={{ fontSize:14, color:"#333", margin:"0 0 10px" }}>
+            Para confirmar, escribí el nombre de tu negocio: <b>{config.nombre}</b>
+          </p>
+          <input
+            style={G.inp()}
+            value={resetConfirmText}
+            onChange={e => setResetConfirmText(e.target.value)}
+            placeholder={config.nombre}
+            autoFocus
+            disabled={resetting}
+          />
+
+          <div style={{ display:"flex", gap:10, marginTop:22 }}>
+            <button
+              style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }}
+              onClick={() => { setShowResetModal(false); setResetConfirmText(""); }}
+              disabled={resetting}
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleResetProducts}
+              disabled={resetConfirmText !== config.nombre || resetting}
+              style={{
+                flex:1, justifyContent:"center",
+                background: (resetConfirmText === config.nombre && !resetting) ? "#dc2626" : "#f3f4f6",
+                color: (resetConfirmText === config.nombre && !resetting) ? "#fff" : "#9ca3af",
+                border:"none", borderRadius:8, padding:"10px 18px",
+                fontSize:14, fontWeight:600,
+                cursor: (resetConfirmText === config.nombre && !resetting) ? "pointer" : "not-allowed",
+                display:"flex", alignItems:"center", gap:6,
+                fontFamily:"inherit",
+              }}
+            >
+              {resetting ? "Borrando..." : "Sí, borrar todo"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -5028,7 +5194,17 @@ export default function App() {
         setConfig(dbToConfig(negocio));
         setProducts((prods || []).map(dbToProduct));
         setSales((ventasData || []).map(dbToVenta));
-        setCaja(cajaData ? { abierta: cajaData.abierta, monto: parseFloat(cajaData.monto)||0, fecha: cajaData.fecha } : { abierta:false, monto:0, fecha:null });
+        // Cierre automático: si la caja quedó abierta de un día anterior, se cierra sola
+        if (cajaData?.abierta && cajaData?.fecha && cajaData.fecha !== todayStr()) {
+          const cerrada = { abierta: false, monto: 0, fecha: null };
+          setCaja(cerrada);
+          _sb.from("caja").update(cerrada).eq("negocio_id", negocio.id).then(({ error }) => {
+            if (error) console.error("Auto-cierre caja:", error);
+            else console.log("Caja auto-cerrada: quedó abierta desde " + cajaData.fecha);
+          });
+        } else {
+          setCaja(cajaData ? { abierta: cajaData.abierta, monto: parseFloat(cajaData.monto)||0, fecha: cajaData.fecha } : { abierta:false, monto:0, fecha:null });
+        }
         setGastos((gastosData || []).map(g => ({ id:g.id, tipo:g.tipo, descripcion:g.descripcion, monto:parseFloat(g.monto)||0, categoria:g.categoria, fecha:g.fecha, mes:g.mes })));
         setRemitos((remitosData || []).map(r => ({ id:r.id, numero:r.numero, fecha:r.fecha, proveedor:r.proveedor, items:r.items||[], total:parseFloat(r.total)||0, metodoPago:r.metodo_pago, notas:r.notas })));
         setProveedores((provData || []).map(p => ({ id:p.id, nombre:p.nombre, contacto:p.contacto, telefono:p.telefono, email:p.email, direccion:p.direccion, notas:p.notas })));
@@ -5068,9 +5244,16 @@ export default function App() {
   };
 
   // ── Guardar caja en Supabase ─────────────────────────────
+  // La fila siempre existe (se crea al registrarse el negocio),
+  // así que solo actualizamos por negocio_id
   const saveCaja = async (c) => {
     if (!sb._negocioId) return;
-    await sb.upsert("caja", { negocio_id: sb._negocioId, abierta: c.abierta, monto: c.monto||0, fecha: c.fecha||null });
+    const { error } = await _sb.from("caja").update({
+      abierta: c.abierta,
+      monto: c.monto || 0,
+      fecha: c.fecha || null,
+    }).eq("negocio_id", sb._negocioId);
+    if (error) console.error("saveCaja:", error);
   };
 
   // ── Guardar gasto en Supabase ────────────────────────────
