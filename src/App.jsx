@@ -993,9 +993,72 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
       </FieldRow>
       <FieldRow label="Imagen">
         <div style={{ display:"flex", gap:8 }}>
-          <input style={G.inp()} value={f.imagen} onChange={e => u("imagen", e.target.value)} placeholder="URL de la imagen" />
-          <button style={G.btn("outline", { padding:"9px 12px", flexShrink:0 })}><Upload size={14}/></button>
+          <input style={G.inp()} value={f.imagen} onChange={e => u("imagen", e.target.value)} placeholder="URL de la imagen o subí desde tu dispositivo" />
+          <button
+            type="button"
+            style={G.btn("outline", { padding:"9px 12px", flexShrink:0 })}
+            onClick={() => document.getElementById("prod-imagen-input")?.click()}
+            title="Subir imagen desde tu dispositivo"
+          >
+            <Upload size={14}/>
+          </button>
+          <input
+            id="prod-imagen-input"
+            type="file"
+            accept="image/*"
+            style={{ display:"none" }}
+            onChange={e => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              // Validar tamaño (max 5MB antes de comprimir)
+              if (file.size > 5 * 1024 * 1024) {
+                alert("La imagen es muy grande. Máximo 5MB.");
+                e.target.value = "";
+                return;
+              }
+              // Leer, redimensionar (max 800px) y comprimir a JPEG 85%
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                const img = new Image();
+                img.onload = () => {
+                  const MAX_W = 800;
+                  const scale = img.width > MAX_W ? MAX_W / img.width : 1;
+                  const w = Math.round(img.width * scale);
+                  const h = Math.round(img.height * scale);
+                  const canvas = document.createElement("canvas");
+                  canvas.width = w;
+                  canvas.height = h;
+                  const ctx = canvas.getContext("2d");
+                  ctx.drawImage(img, 0, 0, w, h);
+                  const compressed = canvas.toDataURL("image/jpeg", 0.85);
+                  u("imagen", compressed);
+                };
+                img.src = ev.target.result;
+              };
+              reader.readAsDataURL(file);
+              e.target.value = "";
+            }}
+          />
         </div>
+        {/* Preview */}
+        {f.imagen && (
+          <div style={{ marginTop:10, position:"relative", display:"inline-block" }}>
+            <img
+              src={f.imagen}
+              alt="preview"
+              style={{ maxWidth:120, maxHeight:120, borderRadius:8, border:"1px solid var(--border-mid)", objectFit:"cover" }}
+              onError={e => e.target.style.display="none"}
+            />
+            <button
+              type="button"
+              onClick={() => u("imagen", "")}
+              title="Quitar imagen"
+              style={{ position:"absolute", top:-6, right:-6, background:"#dc2626", color:"#fff", border:"none", borderRadius:"50%", width:22, height:22, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", padding:0 }}
+            >
+              <X size={12}/>
+            </button>
+          </div>
+        )}
       </FieldRow>
 
       {/* Talles + stock por talle — solo Ropa/Indumentaria */}
