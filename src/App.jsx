@@ -251,7 +251,7 @@ const PIE_COLORS = ["#111","#16a34a","#2563eb","#d97706","#dc2626","#7c3aed","#0
 const THEME_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
   :root {
-    --bg-page:#ffffff;--bg-sidebar:#ffffff;--bg-card:#ffffff;--bg-card2:#f9fafb;
+    --bg-page:#ffffff;--bg-sidebar:#fafbfc;--bg-card:#ffffff;--bg-card2:#f9fafb;
     --bg-input:#ffffff;--border:#eef0f4;--border-mid:#e5e7eb;--border-strong:#d1d5db;
     --text:#0a0a0a;--text2:#4b5563;--text-muted:#6b7280;--text-light:#9ca3af;
     --btn-dark-bg:#0a0a0a;--btn-dark-text:#ffffff;
@@ -434,27 +434,44 @@ function StatCard({ icon, bg, label, value, badge, textColor }) {
 // MODALS
 // ═══════════════════════════════════════════════════════════
 
-function AbrirCajaModal({ setCaja, onClose }) {
+function AbrirCajaModal({ setCaja, saveCaja, onClose }) {
   const [monto, setMonto] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleAbrir = async () => {
+    if (loading) return;
+    setLoading(true);
+    const c = { abierta:true, monto:Number(monto)||0, fecha:todayStr() };
+    try {
+      setCaja(c);
+      if (saveCaja) await saveCaja(c);
+    } catch (e) {
+      console.error("Error abriendo caja:", e);
+    } finally {
+      onClose();
+    }
+  };
+
   return (
     <Modal title="Abrir Caja" subtitle="Ingresá el monto inicial en caja para comenzar el día." onClose={onClose} width={400}>
       <FieldRow label="Monto de apertura">
-        <input style={G.inp()} type="number" placeholder="0" value={monto} onChange={e => setMonto(e.target.value)} autoFocus />
+        <input style={G.inp()} type="number" placeholder="0" value={monto} onChange={e => setMonto(e.target.value)} autoFocus disabled={loading} />
       </FieldRow>
-      <button style={{ ...G.btn("green"), width:"100%", justifyContent:"center", padding:"11px" }}
-        onClick={() => { const c = { abierta:true, monto:Number(monto)||0, fecha:todayStr() }; setCaja(c); if(saveCaja) saveCaja(c); onClose(); }}>
-        Abrir Caja
+      <button style={{ ...G.btn("green"), width:"100%", justifyContent:"center", padding:"11px", opacity: loading ? 0.7 : 1 }}
+        onClick={handleAbrir} disabled={loading}>
+        {loading ? "Abriendo..." : "Abrir Caja"}
       </button>
     </Modal>
   );
 }
 
-function CerrarCajaModal({ caja, sales, config, setCaja, onClose }) {
+function CerrarCajaModal({ caja, sales, config, setCaja, saveCaja, onClose }) {
   const { moneda } = config;
   const hoy = todayStr();
   const ahora = new Date().toLocaleTimeString("es-AR", { hour:"2-digit", minute:"2-digit" });
   const ventasHoy = sales.filter(s => !s.anulada && s.fecha === hoy);
   const totalGen  = ventasHoy.reduce((a, s) => a + s.total, 0);
+  const [cerrando, setCerrando] = useState(false);
 
   // Por método de pago
   const porMetodo = {};
@@ -479,7 +496,19 @@ function CerrarCajaModal({ caja, sales, config, setCaja, onClose }) {
     setTimeout(() => { w.focus(); w.print(); }, 400);
   };
 
-  const cerrar = () => { const c = { abierta:false, monto:0, fecha:null }; setCaja(c); if(saveCaja) saveCaja(c); onClose(); };
+  const cerrar = async () => {
+    if (cerrando) return;
+    setCerrando(true);
+    const c = { abierta:false, monto:0, fecha:null };
+    try {
+      setCaja(c);
+      if (saveCaja) await saveCaja(c);
+    } catch (e) {
+      console.error("Error cerrando caja:", e);
+    } finally {
+      onClose();
+    }
+  };
 
   return (
     <Modal title="Cierre de Caja" subtitle={`${fmtDate(hoy)} · Cierre a las ${ahora}`} onClose={onClose} width={480}>
@@ -553,11 +582,11 @@ function CerrarCajaModal({ caja, sales, config, setCaja, onClose }) {
       </div>
 
       <div style={{ display:"flex", gap:10, marginTop:20 }}>
-        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={handlePrint}>
+        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={handlePrint} disabled={cerrando}>
           <Download size={14}/> Imprimir cierre
         </button>
-        <button style={{ ...G.btn("red"), flex:1, justifyContent:"center" }} onClick={cerrar}>
-          <Lock size={14}/> Cerrar Caja
+        <button style={{ ...G.btn("red"), flex:1, justifyContent:"center", opacity: cerrando ? 0.7 : 1 }} onClick={cerrar} disabled={cerrando}>
+          <Lock size={14}/> {cerrando ? "Cerrando..." : "Cerrar Caja"}
         </button>
       </div>
     </Modal>
@@ -3679,10 +3708,10 @@ function ConfigPage({ ctx }) {
 // ═══════════════════════════════════════════════════════════
 // ONBOARDING — primer uso
 // ═══════════════════════════════════════════════════════════
-function OnboardingScreen({ onDone }) {
+function OnboardingScreen({ onDone, initialNombre = "" }) {
   const [step, setStep] = useState(1); // 1: bienvenida, 2: rubro, 3: datos
   const [rubro, setRubro] = useState("");
-  const [nombre, setNombre] = useState("");
+  const [nombre, setNombre] = useState(initialNombre);
   const [dueno, setDueno] = useState("");
   const [moneda, setMoneda] = useState("$");
   const [whatsapp, setWhatsapp] = useState("");
@@ -5153,7 +5182,7 @@ export default function App() {
 
   // ── Onboarding: primer uso sin rubro configurado ──
   if (!config.rubro) {
-    return <OnboardingScreen onDone={async (cfg) => { await saveConfig(cfg); setPage("inventario"); }} />;
+    return <OnboardingScreen initialNombre={config.nombre} onDone={async (cfg) => { await saveConfig(cfg); setPage("inventario"); }} />;
   }
 
   // ── Bloqueo por suscripción vencida ──
@@ -5166,27 +5195,27 @@ export default function App() {
       <style>{THEME_CSS}</style>
       <div style={{ display:"flex", fontFamily:"'DM Sans', system-ui, -apple-system, sans-serif", minHeight:"100vh", background:"var(--bg-page)" }}>
         {/* ── Sidebar ── */}
-        <aside style={{ width:215, background:"var(--bg-sidebar)", borderRight:"1px solid var(--border)", display:"flex", flexDirection:"column", position:"fixed", top:0, left:0, height:"100vh", zIndex:500 }}>
-          <div style={{ padding:"20px 18px 18px", borderBottom:"1px solid var(--border)" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:11 }}>
+        <aside style={{ width:230, background:"var(--bg-sidebar)", borderRight:"1px solid var(--border-mid)", display:"flex", flexDirection:"column", position:"fixed", top:0, left:0, height:"100vh", zIndex:500 }}>
+          <div style={{ padding:"22px 20px 20px", borderBottom:"1px solid var(--border)" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
               {config.logo
-                ? <img src={config.logo} alt="logo" style={{ width:38, height:38, borderRadius:9, objectFit:"cover" }} onError={e => e.target.style.display="none"} />
-                : <div style={{ background:"var(--accent)", borderRadius:9, width:38, height:38, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff" }}><Store size={19}/></div>
+                ? <img src={config.logo} alt="logo" style={{ width:42, height:42, borderRadius:10, objectFit:"cover" }} onError={e => e.target.style.display="none"} />
+                : <div style={{ background:"var(--accent)", borderRadius:10, width:42, height:42, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff" }}><Store size={21}/></div>
               }
               <div style={{ minWidth:0 }}>
-                <div style={{ color:"var(--text)", fontWeight:700, fontSize:14, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", letterSpacing:"-0.3px" }}>{config.nombre}</div>
-                <div style={{ color:"var(--text-light)", fontSize:11, marginTop:2 }}>MiStock gestión de ventas</div>
+                <div style={{ color:"var(--text)", fontWeight:700, fontSize:16, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", letterSpacing:"-0.4px" }}>{config.nombre}</div>
+                <div style={{ color:"var(--text-light)", fontSize:11.5, marginTop:3 }}>MiStock gestión de ventas</div>
               </div>
             </div>
           </div>
-          <nav style={{ flex:1, padding:"12px 10px", display:"flex", flexDirection:"column", gap:2, overflowY:"auto" }}>
+          <nav style={{ flex:1, padding:"14px 12px", display:"flex", flexDirection:"column", gap:3, overflowY:"auto" }}>
             {NAV.map(n => {
               const isActive = page === n.id;
               return (
                 <button key={n.id} onClick={() => setPage(n.id)} style={{
-                  display:"flex", alignItems:"center", gap:11,
-                  padding:"11px 12px", borderRadius:8, border:"none", cursor:"pointer",
-                  fontSize:14, textAlign:"left", width:"100%",
+                  display:"flex", alignItems:"center", gap:12,
+                  padding:"12px 14px", borderRadius:8, border:"none", cursor:"pointer",
+                  fontSize:15, textAlign:"left", width:"100%",
                   background: isActive ? "var(--accent-soft)" : "transparent",
                   color: isActive ? "var(--accent)" : "var(--text2)",
                   fontWeight: isActive ? 600 : 500,
@@ -5194,10 +5223,10 @@ export default function App() {
                   position:"relative",
                   transition:"background .15s, color .15s"
                 }}>
-                  <span style={{ display:"flex", flexShrink:0 }}>{n.icon}</span>
+                  <span style={{ display:"flex", flexShrink:0 }}>{React.cloneElement(n.icon, { size: 18 })}</span>
                   <span style={{ flex:1 }}>{n.label}</span>
                   {n.id==="inventario" && stockAlert>0 && (
-                    <span style={{ background:"#dc2626", color:"#fff", fontSize:10, fontWeight:700, minWidth:17, height:17, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, padding:"0 4px" }}>
+                    <span style={{ background:"#dc2626", color:"#fff", fontSize:10, fontWeight:700, minWidth:18, height:18, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, padding:"0 4px" }}>
                       {stockAlert>9?"9+":stockAlert}
                     </span>
                   )}
@@ -5205,16 +5234,16 @@ export default function App() {
               );
             })}
           </nav>
-          <div style={{ padding:"14px 18px", borderTop:"1px solid var(--border)" }}>
-            {caja.abierta && <div style={{ background:"#f0fdf4", borderRadius:7, padding:"5px 11px", marginBottom:9, fontSize:12, color:"#16a34a", fontWeight:600, display:"flex", alignItems:"center", gap:6 }}><Unlock size={12}/>Caja abierta</div>}
-            <button onClick={handleLogout} style={{ display:"flex", alignItems:"center", gap:7, width:"100%", background:"none", border:"1px solid var(--border)", borderRadius:7, padding:"8px 11px", cursor:"pointer", fontSize:12.5, color:"var(--text-muted)", marginBottom:8, fontFamily:"inherit" }}>
-              <LogOut size={12}/> Cerrar sesión
+          <div style={{ padding:"16px 20px", borderTop:"1px solid var(--border)" }}>
+            {caja.abierta && <div style={{ background:"#f0fdf4", borderRadius:7, padding:"6px 12px", marginBottom:10, fontSize:13, color:"#16a34a", fontWeight:600, display:"flex", alignItems:"center", gap:6 }}><Unlock size={13}/>Caja abierta</div>}
+            <button onClick={handleLogout} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", background:"none", border:"1px solid var(--border-mid)", borderRadius:7, padding:"9px 12px", cursor:"pointer", fontSize:13.5, color:"var(--text-muted)", marginBottom:10, fontFamily:"inherit" }}>
+              <LogOut size={13}/> Cerrar sesión
             </button>
-            <div style={{ color:"var(--text-light)", fontSize:10.5 }}>Versión</div>
-            <div style={{ color:"var(--text-muted)", fontSize:11.5, fontWeight:600 }}>1.0 Beta</div>
+            <div style={{ color:"var(--text-light)", fontSize:11 }}>Versión</div>
+            <div style={{ color:"var(--text-muted)", fontSize:12, fontWeight:600 }}>1.0 Beta</div>
           </div>
         </aside>
-        <main style={{ marginLeft:215, flex:1, overflow:"auto", minHeight:"100vh" }}>
+        <main style={{ marginLeft:230, flex:1, overflow:"auto", minHeight:"100vh" }}>
           {showSubscriptionSuccess && (
             <div style={{ background:"#dcfce7", borderBottom:"1px solid #86efac", padding:"14px 24px", display:"flex", alignItems:"center", gap:10, color:"#15803d", fontSize:14, fontWeight:600 }}>
               <CheckCircle2 size={18}/>
