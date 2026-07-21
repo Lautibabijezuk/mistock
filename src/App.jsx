@@ -4205,7 +4205,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
 // ══════════════════════════════════════════════════════════
 // LANDING PAGE — estilo violeta+blanco (inspirado en Caibe)
 // ══════════════════════════════════════════════════════════
-const WHATSAPP_NUMERO = "5491100000000"; // ← reemplazar por tu WhatsApp real
+const WHATSAPP_NUMERO = "5492954587394"; // ← WhatsApp real de MiLocal
 const PRECIO_MENSUAL = "30.000"; // ← precio de la mensualidad en ARS
 
 function LandingPage({ onIngresar }) {
@@ -4750,7 +4750,7 @@ function LoginScreen({ onLogin, onVolver }) {
 // ══════════════════════════════════════════════════════════
 // SUBSCRIPTION — helpers + UI components
 // ══════════════════════════════════════════════════════════
-const WHATSAPP_SOPORTE = "5491100000000"; // ← número de MiLocal para cancelar/soporte
+const WHATSAPP_SOPORTE = "5492954587394"; // ← número de MiLocal para cancelar/soporte
 const PRECIO_SUSCRIPCION = 30000;
 const SUPABASE_FUNC_URL = "https://sdizrjbeasubjkpixmro.supabase.co/functions/v1";
 
