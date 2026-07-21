@@ -577,7 +577,7 @@ function CerrarCajaModal({ caja, sales, config, setCaja, saveCaja, onClose }) {
         })()}
 
         <div style={{ textAlign:"center", paddingTop:12, borderTop:"1px solid #f0f0f0", fontSize:11, color:"#bbb" }}>
-          Cierre generado a las {ahora} · MiStock
+          Cierre generado a las {ahora} · MiLocal
         </div>
       </div>
 
@@ -2836,7 +2836,6 @@ function InventarioPage({ ctx }) {
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
         <div><h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Productos e Inventario</h1><p style={{ margin:0, color:"#888", fontSize:14 }}>{products.length} productos registrados</p></div>
         <div style={{ display:"flex", gap:10 }}>
-          {products.length > 0 && <button style={G.btn("outline", { color:"#dc2626", borderColor:"#fca5a5" })} onClick={() => setConfirmClearAll(true)}><Trash2 size={14}/> Borrar todos</button>}
           <button style={G.btn("outline")} onClick={() => setShowImport(true)}><Download size={14}/> Importar Excel</button>
           {products.length > 0 && <button style={G.btn("outline")} onClick={() => exportarInventario(products)}><Download size={14}/> Exportar Excel</button>}
           <button style={G.btn("dark")} onClick={() => setShowModal(true)}><Plus size={14}/> Nuevo producto</button>
@@ -3612,11 +3611,30 @@ function ComprobanteModal({ venta, config, onClose }) {
 }
 
 function ConfigPage({ ctx }) {
-  const { config, setConfig, setPage } = ctx;
+  const { config, setConfig, setPage, products, deleteProduct } = ctx;
   const [f, setF] = useState({ ...config });
   const [saved, setSaved] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState("");
+  const [resetting, setResetting] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]:v }));
   const save = async () => { await ctx.setConfig(f); setSaved(true); setTimeout(() => setSaved(false), 2500); };
+
+  // ── Borrar todos los productos ──
+  const handleResetProducts = async () => {
+    if (resetConfirmText !== config.nombre) return;
+    setResetting(true);
+    try {
+      const ids = products.map(p => p.id);
+      ctx.setProducts([]);
+      await Promise.all(ids.map(id => deleteProduct(id)));
+      setShowResetModal(false);
+      setResetConfirmText("");
+    } catch (e) {
+      alert("Error al borrar: " + e.message);
+    }
+    setResetting(false);
+  };
 
   const catsPreview = CATS_POR_RUBRO[f.rubro] || [];
 
@@ -3764,6 +3782,91 @@ function ConfigPage({ ctx }) {
           </button>
         )}
       </div>
+
+      {/* ── Zona de peligro ── */}
+      <div style={{ marginTop:48, marginBottom:24, background:"#fef2f2", border:"1.5px solid #fecaca", borderRadius:12, padding:"20px 24px" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:6 }}>
+          <AlertTriangle size={17} color="#dc2626"/>
+          <h3 style={{ margin:0, fontSize:16, fontWeight:700, color:"#dc2626" }}>Zona de peligro</h3>
+        </div>
+        <p style={{ margin:"0 0 18px", fontSize:13.5, color:"#7f1d1d", lineHeight:1.5 }}>
+          Las acciones de esta sección son <b>irreversibles</b>. Actuá con cuidado.
+        </p>
+
+        <div style={{ background:"#fff", border:"1px solid #fecaca", borderRadius:10, padding:"16px 18px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:16 }}>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontWeight:700, fontSize:14, color:"#111", marginBottom:3 }}>Borrar todos los productos</div>
+            <div style={{ fontSize:12.5, color:"#666", lineHeight:1.5 }}>
+              Elimina permanentemente los {products.length} producto{products.length!==1?"s":""} del inventario. Las ventas, remitos, gastos y proveedores <b>no se tocan</b>.
+            </div>
+          </div>
+          <button
+            onClick={() => setShowResetModal(true)}
+            disabled={products.length === 0}
+            style={{
+              background: products.length === 0 ? "#f3f4f6" : "#dc2626",
+              color: products.length === 0 ? "#9ca3af" : "#fff",
+              border:"none", borderRadius:8, padding:"10px 18px",
+              fontSize:13.5, fontWeight:600,
+              cursor: products.length === 0 ? "not-allowed" : "pointer",
+              flexShrink:0, fontFamily:"inherit",
+              display:"flex", alignItems:"center", gap:7,
+            }}
+          >
+            <Trash2 size={14}/> Borrar
+          </button>
+        </div>
+      </div>
+
+      {/* Modal de confirmación */}
+      {showResetModal && (
+        <Modal title="¿Borrar todos los productos?" subtitle="Esta acción es irreversible" onClose={() => { setShowResetModal(false); setResetConfirmText(""); }} width={440}>
+          <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:8, padding:"12px 14px", marginBottom:18, display:"flex", gap:10, alignItems:"flex-start" }}>
+            <AlertTriangle size={16} color="#dc2626" style={{ flexShrink:0, marginTop:2 }}/>
+            <div style={{ fontSize:13, color:"#7f1d1d", lineHeight:1.55 }}>
+              Vas a eliminar <b>{products.length} producto{products.length!==1?"s":""}</b> permanentemente. No hay forma de recuperarlos.
+            </div>
+          </div>
+
+          <p style={{ fontSize:14, color:"#333", margin:"0 0 10px" }}>
+            Para confirmar, escribí el nombre de tu negocio: <b>{config.nombre}</b>
+          </p>
+          <input
+            style={G.inp()}
+            value={resetConfirmText}
+            onChange={e => setResetConfirmText(e.target.value)}
+            placeholder={config.nombre}
+            autoFocus
+            disabled={resetting}
+          />
+
+          <div style={{ display:"flex", gap:10, marginTop:22 }}>
+            <button
+              style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }}
+              onClick={() => { setShowResetModal(false); setResetConfirmText(""); }}
+              disabled={resetting}
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleResetProducts}
+              disabled={resetConfirmText !== config.nombre || resetting}
+              style={{
+                flex:1, justifyContent:"center",
+                background: (resetConfirmText === config.nombre && !resetting) ? "#dc2626" : "#f3f4f6",
+                color: (resetConfirmText === config.nombre && !resetting) ? "#fff" : "#9ca3af",
+                border:"none", borderRadius:8, padding:"10px 18px",
+                fontSize:14, fontWeight:600,
+                cursor: (resetConfirmText === config.nombre && !resetting) ? "pointer" : "not-allowed",
+                display:"flex", alignItems:"center", gap:6,
+                fontFamily:"inherit",
+              }}
+            >
+              {resetting ? "Borrando..." : "Sí, borrar todo"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -3843,7 +3946,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
           <div style={{ background: C.purple, width: 34, height: 34, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}>
             <Store size={18}/>
           </div>
-          <span style={{ fontWeight: 700, fontSize: 19, letterSpacing: "-0.5px" }}>MiStock</span>
+          <span style={{ fontWeight: 700, fontSize: 19, letterSpacing: "-0.5px" }}>MiLocal</span>
         </div>
         <div style={{ fontSize: 13, color: C.mut }}>Configuración inicial</div>
       </div>
@@ -3870,7 +3973,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
                 <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.purple }}/> ¡Cuenta creada!
               </div>
               <h1 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: "0 0 18px" }}>
-                Bienvenido a MiStock
+                Bienvenido a MiLocal
               </h1>
               <p style={{ fontSize: 17, color: C.body, margin: "0 0 40px", lineHeight: 1.55, maxWidth: 520, marginLeft: "auto", marginRight: "auto" }}>
                 Configuremos tu negocio en 2 pasos rápidos. Después ya podés empezar a vender.
@@ -3906,7 +4009,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
                   ¿Qué tipo de negocio tenés?
                 </h2>
                 <p style={{ fontSize: 15.5, color: C.body, margin: 0, lineHeight: 1.5 }}>
-                  Elegí tu rubro y MiStock se configura solo con las categorías y campos que necesitás.
+                  Elegí tu rubro y MiLocal se configura solo con las categorías y campos que necesitás.
                 </p>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 22 }}>
@@ -4084,7 +4187,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
                   disabled={!nombre.trim() || !whatsapp.trim()}
                   style={(nombre.trim() && whatsapp.trim()) ? primaryBtn : disabledBtn}
                 >
-                  ¡Comenzar a usar MiStock!
+                  ¡Comenzar a usar MiLocal!
                 </button>
               </div>
             </div>
@@ -4124,11 +4227,11 @@ function LandingPage({ onIngresar }) {
   ];
 
   const faqs = [
-    { q: "¿Necesito instalar algo?", a: "No. MiStock funciona 100% en la web. Entrás desde cualquier computadora, tablet o celular con internet, sin descargar ni instalar nada." },
+    { q: "¿Necesito instalar algo?", a: "No. MiLocal funciona 100% en la web. Entrás desde cualquier computadora, tablet o celular con internet, sin descargar ni instalar nada." },
     { q: "¿Mis datos están seguros?", a: "Sí. Toda tu información se guarda en la nube con respaldo automático. Cada negocio ve únicamente sus propios datos, protegidos con tu usuario y contraseña." },
-    { q: "¿Sirve para mi rubro?", a: "MiStock es multirrubro. Se adapta a indumentaria, calzado, electrónica, kioscos, farmacias y prácticamente cualquier comercio minorista. Al crear tu cuenta elegís tu rubro y el sistema se configura solo." },
+    { q: "¿Sirve para mi rubro?", a: "MiLocal es multirrubro. Se adapta a indumentaria, calzado, electrónica, kioscos, farmacias y prácticamente cualquier comercio minorista. Al crear tu cuenta elegís tu rubro y el sistema se configura solo." },
     { q: "¿Puedo emitir facturas?", a: "Sí. El sistema emite comprobantes tipo A, B y C con numeración correlativa, listos para AFIP. También podés dar tickets de venta comunes cuando no hace falta factura." },
-    { q: "¿Puedo usar MiStock desde el celular?", a: "Sí. La app se adapta a cualquier dispositivo. Vendé desde el mostrador con la compu y controlá el negocio desde el celular cuando estás afuera." },
+    { q: "¿Puedo usar MiLocal desde el celular?", a: "Sí. La app se adapta a cualquier dispositivo. Vendé desde el mostrador con la compu y controlá el negocio desde el celular cuando estás afuera." },
     { q: "¿Qué pasa si tengo un problema?", a: "Nos escribís por WhatsApp y te ayudamos. Estamos para que puedas vender tranquilo." },
   ];
 
@@ -4162,10 +4265,7 @@ function LandingPage({ onIngresar }) {
       {/* ── NAV ── */}
       <nav style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(255,255,255,0.94)", backdropFilter: "blur(8px)", borderBottom: `1px solid ${C.line}` }}>
         <div style={{ ...wrap, display: "flex", alignItems: "center", justifyContent: "space-between", height: 68 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ background: C.purple, width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}><Store size={19}/></div>
-            <span style={{ fontWeight: 700, fontSize: 22, letterSpacing: "-0.7px" }}>MiStock</span>
-          </div>
+          <img src="/milocal-logo.png" alt="MiLocal" style={{ height: 30, width: "auto" }}/>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <button onClick={onIngresar} className="btn-ghost" style={{ background: "transparent", border: "none", color: C.ink, fontWeight: 500, fontSize: 14.5, cursor: "pointer", padding: "10px 16px", borderRadius: 6, fontFamily: font }}>Iniciar sesión</button>
             <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 14.5, cursor: "pointer", padding: "11px 20px", fontFamily: font }}>Empezar gratis</button>
@@ -4181,7 +4281,7 @@ function LandingPage({ onIngresar }) {
               Menos planillas.<br/>Más ventas.
             </h1>
             <p style={{ fontSize: 18, lineHeight: 1.55, color: C.body, margin: "0 0 32px", maxWidth: 520 }}>
-              MiStock reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás, controlás el stock y facturás a AFIP — todo desde un mismo lugar.
+              MiLocal reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás, controlás el stock y facturás a AFIP — todo desde un mismo lugar.
             </p>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "14px 28px", fontFamily: font }}>¡Empezar gratis!</button>
@@ -4201,7 +4301,7 @@ function LandingPage({ onIngresar }) {
                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#f87171" }}/>
                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#fbbf24" }}/>
                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#34d399" }}/>
-                <span style={{ fontSize: 12, color: C.mut, marginLeft: 8 }}>mistock.com.ar</span>
+                <span style={{ fontSize: 12, color: C.mut, marginLeft: 8 }}>milocal.com.ar</span>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
                 <div style={{ background: C.purpleSoft, borderRadius: 8, padding: "14px 16px" }}>
@@ -4249,7 +4349,7 @@ function LandingPage({ onIngresar }) {
       {/* ── QUÉ ES / PROPUESTA ── */}
       <section style={{ ...wrap, padding: "40px 24px 80px" }}>
         <div style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 60px" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Por qué MiStock</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Por qué MiLocal</div>
           <h2 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: "0 0 20px" }}>
             Diseñado para el mostrador.
           </h2>
@@ -4300,11 +4400,11 @@ function LandingPage({ onIngresar }) {
         <div style={{ textAlign: "center", marginBottom: 50 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Precio</div>
           <h2 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: "0 0 14px" }}>Un precio. Todo el sistema.</h2>
-          <p style={{ fontSize: 17, color: C.body, margin: 0 }}>Sin planes básicos que después te cobran los "extra". Con MiStock accedés a todo desde el día uno.</p>
+          <p style={{ fontSize: 17, color: C.body, margin: 0 }}>Sin planes básicos que después te cobran los "extra". Con MiLocal accedés a todo desde el día uno.</p>
         </div>
         <div style={{ maxWidth: 440, margin: "0 auto", background: C.bg, border: `2px solid ${C.purple}`, borderRadius: 14, padding: "40px 36px", position: "relative", boxShadow: "0 20px 60px rgba(146,56,255,0.15)" }}>
           <div style={{ position: "absolute", top: -13, left: "50%", transform: "translateX(-50%)", background: C.purple, color: "#fff", fontSize: 12, fontWeight: 600, padding: "5px 14px", borderRadius: 20, letterSpacing: "0.5px" }}>PLAN ÚNICO</div>
-          <div style={{ fontSize: 15, fontWeight: 500, color: C.mut, marginBottom: 8, marginTop: 6 }}>MiStock</div>
+          <div style={{ fontSize: 15, fontWeight: 500, color: C.mut, marginBottom: 8, marginTop: 6 }}>MiLocal</div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 6 }}>
             <span style={{ fontSize: 24, fontWeight: 600, color: C.ink }}>$</span>
             <span style={{ fontSize: 60, fontWeight: 700, letterSpacing: "-2.5px" }}>{PRECIO_MENSUAL}</span>
@@ -4367,9 +4467,8 @@ function LandingPage({ onIngresar }) {
       {/* ── FOOTER ── */}
       <footer style={{ background: "#000", color: C.mut, padding: "40px 0", textAlign: "center" }}>
         <div style={{ ...wrap }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, marginBottom: 10 }}>
-            <div style={{ background: C.purple, width: 28, height: 28, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}><Store size={15}/></div>
-            <span style={{ fontWeight: 700, fontSize: 16, color: "#fff" }}>MiStock</span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+            <img src="/milocal-logo.png" alt="MiLocal" style={{ height: 22, width: "auto", filter: "brightness(0) invert(1)" }}/>
           </div>
           <p style={{ fontSize: 13, margin: 0 }}>Sistema de gestión para comercios · Argentina · © {new Date().getFullYear()}</p>
         </div>
@@ -4463,10 +4562,8 @@ function LoginScreen({ onLogin, onVolver }) {
             display: "flex", alignItems: "center", gap: 10, background: "transparent", border: "none",
             color: "#fff", cursor: "pointer", padding: 0, fontFamily: font,
           }}>
-            <div style={{ background: C.purple, width: 40, height: 40, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Store size={20}/>
-            </div>
-            <span style={{ fontWeight: 700, fontSize: 22, letterSpacing: "-0.7px" }}>MiStock</span>
+            <img src="/milocal-icon.png" alt="MiLocal" style={{ width: 40, height: 40, borderRadius: 8 }}/>
+            <span style={{ fontWeight: 700, fontSize: 22, letterSpacing: "-0.7px" }}>MiLocal</span>
           </button>
         </div>
 
@@ -4502,7 +4599,7 @@ function LoginScreen({ onLogin, onVolver }) {
 
         {/* Footer izquierdo */}
         <div style={{ position: "relative", zIndex: 1, fontSize: 12.5, color: "#8a97a8" }}>
-          © {new Date().getFullYear()} MiStock · Sistema de gestión para comercios
+          © {new Date().getFullYear()} MiLocal · Sistema de gestión para comercios
         </div>
       </div>
 
@@ -4653,7 +4750,7 @@ function LoginScreen({ onLogin, onVolver }) {
 // ══════════════════════════════════════════════════════════
 // SUBSCRIPTION — helpers + UI components
 // ══════════════════════════════════════════════════════════
-const WHATSAPP_SOPORTE = "5491100000000"; // ← número de MiStock para cancelar/soporte
+const WHATSAPP_SOPORTE = "5491100000000"; // ← número de MiLocal para cancelar/soporte
 const PRECIO_SUSCRIPCION = 30000;
 const SUPABASE_FUNC_URL = "https://sdizrjbeasubjkpixmro.supabase.co/functions/v1";
 
@@ -4722,7 +4819,7 @@ async function iniciarSuscripcion() {
 // Abrir WhatsApp con mensaje pre-armado para cancelar
 function abrirCancelacionWhatsApp(nombreNegocio) {
   const msg = encodeURIComponent(
-    `Hola, soy ${nombreNegocio} y quiero cancelar mi suscripción de MiStock.`
+    `Hola, soy ${nombreNegocio} y quiero cancelar mi suscripción de MiLocal.`
   );
   window.open(`https://wa.me/${WHATSAPP_SOPORTE}?text=${msg}`, "_blank");
 }
@@ -4814,7 +4911,7 @@ function AccesoBloqueadoScreen({ config, onSuscribir, onLogout }) {
            "Acceso bloqueado"}
         </h1>
         <p style={{ fontSize: 15, color: "#4b5563", lineHeight: 1.6, margin: "0 0 28px" }}>
-          {isTrial ? "Suscribite ahora para seguir usando MiStock. Tus datos y productos están intactos, los recuperás al reactivar." :
+          {isTrial ? "Suscribite ahora para seguir usando MiLocal. Tus datos y productos están intactos, los recuperás al reactivar." :
            isCancelled ? "Reactivá tu suscripción cuando quieras y volvés a tener acceso a todos tus datos." :
            "El último cobro no se pudo procesar y ya pasó el período de gracia. Actualizá tu método de pago para volver."}
         </p>
@@ -4824,7 +4921,7 @@ function AccesoBloqueadoScreen({ config, onSuscribir, onLogout }) {
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>Plan</span>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>MiStock — Completo</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>MiLocal — Completo</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>Precio</span>
@@ -4894,7 +4991,7 @@ function SuscripcionPage({ config, onSuscribir, onCancelar }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
             <div>
               <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 4 }}>Plan actual</div>
-              <div style={{ fontSize: 20, fontWeight: 700 }}>MiStock — Completo</div>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>MiLocal — Completo</div>
             </div>
             <span style={{
               background: statusColor.bg, color: statusColor.color, border: `1px solid ${statusColor.border}`,
@@ -5187,8 +5284,8 @@ export default function App() {
   if (!authReady) return (
     <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", background:"#f5f5f7", fontFamily:"system-ui,sans-serif" }}>
       <div style={{ textAlign:"center", color:"#888" }}>
-        <div style={{ marginBottom:12, color:"#111" }}><Store size={40}/></div>
-        <div style={{ fontSize:14 }}>Cargando MiStock...</div>
+        <img src="/milocal-icon.png" alt="MiLocal" style={{ width:60, height:60, borderRadius:12, marginBottom:12 }}/>
+        <div style={{ fontSize:14 }}>Cargando MiLocal...</div>
       </div>
     </div>
   );
@@ -5209,7 +5306,7 @@ export default function App() {
   if (!loaded) return (
     <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", background:"#f5f5f7", fontFamily:"system-ui,sans-serif" }}>
       <div style={{ textAlign:"center", color:"#888" }}>
-        <div style={{ marginBottom:12, color:"#111" }}><Store size={40}/></div>
+        <img src="/milocal-icon.png" alt="MiLocal" style={{ width:60, height:60, borderRadius:12, marginBottom:12 }}/>
         <div style={{ fontSize:14 }}>Sincronizando datos...</div>
       </div>
     </div>
@@ -5280,11 +5377,11 @@ export default function App() {
             <div style={{ display:"flex", alignItems:"center", gap:12 }}>
               {config.logo
                 ? <img src={config.logo} alt="logo" style={{ width:42, height:42, borderRadius:10, objectFit:"cover" }} onError={e => e.target.style.display="none"} />
-                : <div style={{ background:"var(--accent)", borderRadius:10, width:42, height:42, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff" }}><Store size={21}/></div>
+                : <img src="/milocal-icon.png" alt="MiLocal" style={{ width: 42, height: 42, borderRadius: 10 }}/>
               }
               <div style={{ minWidth:0 }}>
                 <div style={{ color:"var(--text)", fontWeight:700, fontSize:16, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", letterSpacing:"-0.4px" }}>{config.nombre}</div>
-                <div style={{ color:"var(--text-light)", fontSize:11.5, marginTop:3 }}>MiStock gestión de ventas</div>
+                <div style={{ color:"var(--text-light)", fontSize:11.5, marginTop:3 }}>MiLocal gestión de ventas</div>
               </div>
             </div>
           </div>
@@ -5327,7 +5424,7 @@ export default function App() {
           {showSubscriptionSuccess && (
             <div style={{ background:"#dcfce7", borderBottom:"1px solid #86efac", padding:"14px 24px", display:"flex", alignItems:"center", gap:10, color:"#15803d", fontSize:14, fontWeight:600 }}>
               <CheckCircle2 size={18}/>
-              ¡Suscripción activada con éxito! Ya podés seguir usando MiStock sin límites.
+              ¡Suscripción activada con éxito! Ya podés seguir usando MiLocal sin límites.
               <button onClick={() => setShowSubscriptionSuccess(false)} style={{ marginLeft:"auto", background:"none", border:"none", cursor:"pointer", color:"#15803d", display:"flex" }}><X size={16}/></button>
             </div>
           )}
