@@ -4908,12 +4908,12 @@ function AccesoBloqueadoScreen({ config, onSuscribir, onLogout }) {
         <h1 style={{ fontSize: 24, fontWeight: 800, margin: "0 0 12px", color: "#111", letterSpacing: "-0.5px" }}>
           {isTrial ? "Tu prueba gratis terminó" :
            isCancelled ? "Tu suscripción está cancelada" :
-           "Acceso bloqueado"}
+           "Servicio suspendido por falta de pago"}
         </h1>
         <p style={{ fontSize: 15, color: "#4b5563", lineHeight: 1.6, margin: "0 0 28px" }}>
           {isTrial ? "Suscribite ahora para seguir usando MiLocal. Tus datos y productos están intactos, los recuperás al reactivar." :
            isCancelled ? "Reactivá tu suscripción cuando quieras y volvés a tener acceso a todos tus datos." :
-           "El último cobro no se pudo procesar y ya pasó el período de gracia. Actualizá tu método de pago para volver."}
+           "No pudimos procesar tu último cobro y ya pasó el período de gracia de 3 días. Actualizá tu método de pago para reactivar tu cuenta."}
         </p>
 
         <div style={{
@@ -5207,6 +5207,35 @@ export default function App() {
     };
     loadData();
   }, [token]);
+
+  // ── Revisión periódica del estado de suscripción ──────────
+  // Sin esto, si el usuario deja la pestaña abierta durante días, no se entera
+  // de un cobro fallido o vencimiento del trial hasta que cierra sesión y vuelve a entrar.
+  // Revisamos cada 60s directo contra la base (no depende de caché ni del render).
+  useEffect(() => {
+    if (!token || !sb._negocioId) return;
+    const checkSubscription = async () => {
+      try {
+        const { data, error } = await _sb
+          .from("negocios")
+          .select("subscription_status, trial_ends_at, next_billing_date, mp_preapproval_id, payment_failed_at, subscription_started_at")
+          .eq("id", sb._negocioId)
+          .maybeSingle();
+        if (error || !data) return;
+        setConfig(prev => ({
+          ...prev,
+          subscriptionStatus: data.subscription_status || 'trial',
+          trialEndsAt: data.trial_ends_at || null,
+          nextBillingDate: data.next_billing_date || null,
+          mpPreapprovalId: data.mp_preapproval_id || null,
+          paymentFailedAt: data.payment_failed_at || null,
+          subscriptionStartedAt: data.subscription_started_at || null,
+        }));
+      } catch (e) { console.error("Error revisando suscripción:", e); }
+    };
+    const interval = setInterval(checkSubscription, 60000); // cada 60s
+    return () => clearInterval(interval);
+  }, [token, loaded]);
 
   const handleLogin = (access_token, userId) => { setToken({ access_token, userId }); setAuthReady(false); };
   const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); navegar("login"); };
