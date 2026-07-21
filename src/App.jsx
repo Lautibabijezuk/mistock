@@ -4265,7 +4265,7 @@ function LandingPage({ onIngresar }) {
       {/* ── NAV ── */}
       <nav style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(255,255,255,0.94)", backdropFilter: "blur(8px)", borderBottom: `1px solid ${C.line}` }}>
         <div style={{ ...wrap, display: "flex", alignItems: "center", justifyContent: "space-between", height: 68 }}>
-          <img src="/milocal-logo.png" alt="MiLocal" style={{ height: 30, width: "auto" }}/>
+          <img src="/milocal-logo.png" alt="MiLocal" style={{ height: 40, width: "auto" }}/>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <button onClick={onIngresar} className="btn-ghost" style={{ background: "transparent", border: "none", color: C.ink, fontWeight: 500, fontSize: 14.5, cursor: "pointer", padding: "10px 16px", borderRadius: 6, fontFamily: font }}>Iniciar sesión</button>
             <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 14.5, cursor: "pointer", padding: "11px 20px", fontFamily: font }}>Empezar gratis</button>
@@ -4468,7 +4468,7 @@ function LandingPage({ onIngresar }) {
       <footer style={{ background: "#000", color: C.mut, padding: "40px 0", textAlign: "center" }}>
         <div style={{ ...wrap }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
-            <img src="/milocal-logo.png" alt="MiLocal" style={{ height: 22, width: "auto", filter: "brightness(0) invert(1)" }}/>
+            <img src="/milocal-logo.png" alt="MiLocal" style={{ height: 32, width: "auto", filter: "brightness(0) invert(1)" }}/>
           </div>
           <p style={{ fontSize: 13, margin: 0 }}>Sistema de gestión para comercios · Argentina · © {new Date().getFullYear()}</p>
         </div>
