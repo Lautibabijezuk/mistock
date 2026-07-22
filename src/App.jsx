@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, Component } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
-import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera } from "lucide-react";
+import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu } from "lucide-react";
 import * as XLSX from "xlsx";
 
 // ═══════════════════════════════════════════════════════════
@@ -671,7 +671,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
         <div style={{ fontSize:13, color:"#888", marginBottom:16 }}>
           {side === "dev" ? "¿Qué talle devuelve el cliente?" : "¿Qué talle se lleva el cliente?"}
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:20 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:20 }}>
           {(prod.talles||[]).map(t => {
             const cnt = spt[t] || 0;
             const sinStock = side === "lleva" && cnt === 0;
@@ -741,7 +741,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
           <div style={{ marginBottom:12 }}>
             <input style={{ ...G.inp({ marginBottom:10 }) }} placeholder="Buscar producto o SKU..." value={search} onChange={e => setSearch(e.target.value)} autoFocus />
             {filtrados.length > 0 ? (
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, maxHeight:320, overflowY:"auto" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, maxHeight:320, overflowY:"auto" }}>
                 {filtrados.map(p => {
                   const totalStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
                   const inList = list.filter(i => i.id === p.id).reduce((a,i)=>a+i.cantidad,0);
@@ -808,7 +808,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
 
   return (
     <Modal title="Cambio de Productos" subtitle="Registrá qué devuelve el cliente y qué se lleva" onClose={onClose} width={780}>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, marginBottom:20 }}>
         <SidePanel label="Productos que Devuelve" list={devuelve} setList={setDevuelve} search={searchDev} setSearch={setSearchDev} showSearch={showSearchDev} setShowSearch={setShowSearchDev} accentColor="#2563eb" soloConStock={false} />
         <SidePanel label="Productos que se Lleva" list={lleva} setList={setLleva} search={searchLleva} setSearch={setSearchLleva} showSearch={showSearchLleva} setShowSearch={setShowSearchLleva} accentColor="#16a34a" soloConStock={true} />
       </div>
@@ -935,7 +935,7 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
       <FieldRow label="Descripción">
         <textarea style={{ ...G.inp(), minHeight:70, resize:"vertical" }} value={f.descripcion} onChange={e => u("descripcion", e.target.value)} placeholder="Describe el producto..." />
       </FieldRow>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
         <FieldRow label="Categoría">
           <select style={G.inp()} value={f.categoria} onChange={e => u("categoria", e.target.value)}>
             <option value="">Seleccionar</option>
@@ -972,7 +972,7 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
 
       {/* Campos extra dinámicos por rubro */}
       {camposExtra.length > 0 && (
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
           {camposExtra.map(campo => (
             <FieldRow key={campo} label={LABELS_CAMPOS[campo] || campo}>
               <input style={G.inp()} value={f[campo]||""} onChange={e => u(campo, e.target.value)} placeholder={LABELS_CAMPOS[campo] || campo} />
@@ -1072,7 +1072,7 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
             {Object.keys(TALLES_PRESET).map(k => <option key={k}>{k}</option>)}
           </select>
           {/* Grilla de talles con input de stock */}
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:10 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:10 }}>
             {(f.talles||[]).map(t => {
               const cnt = f.stockPorTalle?.[t] || 0;
               return (
@@ -1101,7 +1101,7 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
       {tieneColores && (
         <div style={{ marginBottom:20 }}>
           <label style={G.label}>Colores Disponibles</label>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:10 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:8, marginBottom:10 }}>
             {COLORES_TODOS.map(c => (
               <button key={c} onClick={() => toggleColor(c)} style={{ padding:"9px 12px", borderRadius:8, border:`1.5px solid ${coloresExistentes.includes(c)?"#111":"#e5e7eb"}`, fontSize:13, cursor:"pointer", background:coloresExistentes.includes(c)?"#f9f9f9":"#fff", fontWeight:coloresExistentes.includes(c)?700:400 }}>{c}</button>
             ))}
@@ -1222,7 +1222,7 @@ function GastoModal({ tipoInicial, mes, onSave, onClose }) {
       <FieldRow label="Descripción *">
         <input style={G.inp()} value={f.descripcion} onChange={e => u("descripcion", e.target.value)} placeholder="Ej: Alquiler del local" autoFocus />
       </FieldRow>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
         <FieldRow label="Monto *">
           <input style={G.inp()} type="number" min={0} step="0.01" value={f.monto} onChange={e => u("monto", e.target.value)} placeholder="0.00" />
         </FieldRow>
@@ -1345,7 +1345,7 @@ function RemitoModal({ proveedores, products, setProducts, saveProducts, rubro, 
             {prod.colores.map(c => <span key={c} style={{ background:"#f3f4f6", borderRadius:20, padding:"4px 12px", fontSize:12, color:"#555" }}>{c}</span>)}
           </div>
         )}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:20 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10, marginBottom:20 }}>
           {(prod.talles||[]).map(t => (
             <div key={t} style={{ background:"#f9fafb", borderRadius:10, padding:"12px 10px", textAlign:"center", border:"1px solid #e5e7eb" }}>
               <div style={{ fontWeight:700, fontSize:15, marginBottom:4 }}>{t}</div>
@@ -1375,7 +1375,7 @@ function RemitoModal({ proveedores, products, setProducts, saveProducts, rubro, 
 
   return (
     <Modal title="Nuevo Remito de Compra" onClose={onClose} width={780}>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
         <FieldRow label="Número de Remito">
           <input style={G.inp()} value={f.numero} onChange={e => u("numero", e.target.value)} placeholder="Ej: R-001" autoFocus />
         </FieldRow>
@@ -1399,7 +1399,7 @@ function RemitoModal({ proveedores, products, setProducts, saveProducts, rubro, 
 
         {/* Grid de cards — igual a Nueva Venta */}
         {search && filtProd.length > 0 && (
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:12, maxHeight:340, overflowY:"auto" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:12, maxHeight:340, overflowY:"auto" }}>
             {filtProd.map(p => {
               const tieneTalles = esModa && (p.talles||[]).length > 0;
               const totalStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
@@ -1484,7 +1484,7 @@ function ProveedorModal({ prov, onSave, onClose }) {
       <FieldRow label="Persona de Contacto">
         <input style={G.inp()} value={f.contacto||""} onChange={e => setF(p => ({ ...p, contacto:e.target.value }))} placeholder="Nombre del contacto" />
       </FieldRow>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
         <FieldRow label="Teléfono">
           <input style={G.inp()} value={f.telefono} onChange={e => setF(p => ({ ...p, telefono:e.target.value }))} placeholder="+54 9 11 1234-5678" />
         </FieldRow>
@@ -1542,7 +1542,7 @@ function TicketVentaModal({ venta, config, onClose }) {
         </div>
 
         {/* Ticket info */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, fontSize:12, marginBottom:20 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:4, fontSize:12, marginBottom:20 }}>
           <div><span style={{ color:"#999" }}>Ticket</span><div style={{ fontWeight:700, fontSize:14 }}>#{String(venta.numero).padStart(6,"0")}</div></div>
           <div style={{ textAlign:"right" }}><span style={{ color:"#999" }}>Fecha y hora</span><div style={{ fontWeight:600, fontSize:13 }}>{fmtDate(venta.fecha)} {hora}</div></div>
           {venta.cliente && <div><span style={{ color:"#999" }}>Cliente</span><div style={{ fontWeight:600 }}>{venta.cliente}</div></div>}
@@ -1738,7 +1738,7 @@ function DashboardPage({ ctx }) {
   };
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       {showCaja && <AbrirCajaModal setCaja={setCaja} saveCaja={ctx.saveCaja} onClose={() => setShowCaja(false)} />}
       {showCerrar && <CerrarCajaModal caja={caja} sales={sales} config={config} setCaja={setCaja} saveCaja={ctx.saveCaja} onClose={() => setShowCerrar(false)} />}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
@@ -1758,13 +1758,13 @@ function DashboardPage({ ctx }) {
           <button onClick={() => setPage("inventario")} style={{ background:"none", border:"none", color:"#92400e", fontWeight:700, cursor:"pointer", fontSize:12, textDecoration:"underline" }}>Ver inventario</button>
         </div>
       )}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:24 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:14, marginBottom:24 }}>
         <StatCard icon={<DollarSign size={19}/>} bg="#dcfce7" label="Ventas del día" value={fmtMoney(totalHoy, config.moneda)} badge="Hoy" />
         <StatCard icon={<TrendingUp size={19}/>} bg="#ede9fe" label="Ventas del mes" value={fmtMoney(totalMes, config.moneda)} badge="Mes" />
         <StatCard icon={<Package size={19}/>} bg="#dbeafe" label="Unidades en stock" value={totalStock} />
         <StatCard icon={<AlertTriangle size={19}/>} bg="#fef3c7" label="Stock bajo" value={stockBajoCount} textColor={stockBajoCount > 0 ? "#d97706" : "#111"} />
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20, marginBottom:20 }}>
         <div style={G.card()}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <h3 style={{ margin:0, fontSize:15, fontWeight:700 }}>Ventas recientes</h3>
@@ -1802,7 +1802,7 @@ function DashboardPage({ ctx }) {
           ))}
         </div>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20 }}>
         <div style={G.card()}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
             <h3 style={{ margin:0, fontSize:15, fontWeight:700, display:"flex", alignItems:"center", gap:6 }}><Flame size={15} color="#f97316"/>Productos Calientes</h3>
@@ -1898,7 +1898,7 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
       {/* Talles */}
       <div style={{ marginBottom:20 }}>
         <div style={{ fontSize:13, fontWeight:600, color:"#666", marginBottom:10 }}>Seleccionar talle:</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8 }}>
           {(prod.talles||[]).map(t => {
             const cnt = stockPorTalle[t] || 0;
             const agotado = cnt === 0;
@@ -1978,7 +1978,7 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
               <div>{q ? `Sin resultados para "${q}"` : "No hay productos con stock"}</div>
             </div>
           ) : (
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:12 }}>
               {filtrados.map(p => {
                 const inCart = cart.filter(i => (i.productoId||i.id) === p.id);
                 const totalEnCarrito = inCart.reduce((a, i) => a + i.cantidad, 0);
@@ -2161,7 +2161,7 @@ function VentaPage({ ctx }) {
   };
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       {showCaja && <AbrirCajaModal setCaja={setCaja} onClose={() => setShowCaja(false)} />}
       {ventaExito && !ventaParaFacturar && <VentaExitoModal venta={ventaExito} config={config} onClose={() => setVentaExito(null)} />}
       {ventaParaFacturar && (
@@ -2205,7 +2205,7 @@ function VentaPage({ ctx }) {
         <button style={G.btn("outline")} onClick={() => setShowCambio(true)}><RefreshCw size={14}/> Cambio</button>
       </div>
       <CajaBanner caja={caja} onAbrir={() => setShowCaja(true)} />
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 370px", gap:24, alignItems:"start" }}>
+      <div className="venta-grid" style={{ display:"grid", gridTemplateColumns:"1fr 370px", gap:24, alignItems:"start" }}>
         <div>
           {/* Barra de búsqueda + botón de escanear */}
           <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
@@ -2229,7 +2229,7 @@ function VentaPage({ ctx }) {
           {products.length > 0 && (
             <>
               <div style={{ fontSize:12, fontWeight:600, color:"#999", marginBottom:10, textTransform:"uppercase", letterSpacing:"0.5px" }}>Accesos rápidos</div>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10 }}>
                 {products
                   .filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v => +v > 0) : p.stock > 0)
                   .slice(0, 4)
@@ -2601,7 +2601,7 @@ function ImportarExcelModal({ cats, onImport, onClose }) {
           </div>
           <div style={{ ...G.card({ background:"#f9fafb", padding:"16px 20px" }) }}>
             <div style={{ fontWeight:600, fontSize:13, marginBottom:10 }}>Compatible con cualquier sistema</div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, fontSize:12, color:"#666" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:8, fontSize:12, color:"#666" }}>
               {["Tiendanube","WooCommerce","Shopify","Odoo","Excel propio","Cualquier otro"].map(s => (
                 <div key={s} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:8, padding:"8px 12px", textAlign:"center" }}>✓ {s}</div>
               ))}
@@ -2616,7 +2616,7 @@ function ImportarExcelModal({ cats, onImport, onClose }) {
           <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:10, padding:"10px 16px", marginBottom:20, fontSize:13, color:"#166534" }}>
             <b>{rows.length} filas detectadas</b> · {headers.length} columnas · Revisá que los campos estén bien asignados
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:12, marginBottom:16 }}>
             {CAMPOS_IMPORT.map(({ key, label, required }) => (
               <div key={key}>
                 <label style={{ ...G.label, fontSize:12 }}>{label}{required && <span style={{ color:"#dc2626" }}> *</span>}</label>
@@ -2810,7 +2810,7 @@ function InventarioPage({ ctx }) {
   const [showImport, setShowImport] = useState(false);
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       {(showModal||editProd) && <ProductoModal key={editProd?.id || "new"} prod={editProd} onSave={onSaveProd} onClose={() => { setShowModal(false); setEditProd(null); }} cats={cats} rubro={config.rubro} />}
       {ajusteProd && <AjusteStockModal prod={ajusteProd} rubro={config.rubro} onSave={async upd => { const updated = { ...ajusteProd, ...upd }; setProducts(prev => prev.map(p => p.id===ajusteProd.id ? updated : p)); await ctx.saveProduct(updated); }} onClose={() => setAjusteProd(null)} />}
       {showImport && <ImportarExcelModal cats={cats} onImport={async nuevos => { setProducts(prev => [...prev, ...nuevos]); setShowImport(false); await ctx.saveProducts(nuevos); }} onClose={() => setShowImport(false)} />}
@@ -2841,7 +2841,7 @@ function InventarioPage({ ctx }) {
           <button style={G.btn("dark")} onClick={() => setShowModal(true)}><Plus size={14}/> Nuevo producto</button>
         </div>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
         {[["Total en Stock", totalStock, "#111"], ["Stock Bajo", stockBajo, "#d97706"], ["Sin Stock", sinStock, "#dc2626"]].map(([label,val,color]) => (
           <div key={label} style={G.card()}><div style={{ fontSize:13, color:"#999", marginBottom:4 }}>{label}</div><div style={{ fontSize:24, fontWeight:800, color }}>{val}</div></div>
         ))}
@@ -2970,7 +2970,7 @@ function HistorialPage({ ctx }) {
   };
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       {detalle && <DetalleVentaModal venta={detalle} moneda={config.moneda} config={config} onAnular={() => anular(detalle.id)} onClose={() => setDetalle(null)} onVerComprobante={detalle.factura?.estado==="emitida" ? () => { setComprobanteVer(detalle); setDetalle(null); } : null} />}
       {comprobanteVer && <ComprobanteModal venta={comprobanteVer} config={config} onClose={() => setComprobanteVer(null)} />}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
@@ -3045,7 +3045,7 @@ function EstadisticasPage({ ctx }) {
   const labelY = vista === "top" || vista === "talla" || vista === "hora" ? "unidades" : "ventas";
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       <div style={{ marginBottom:24 }}><h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Estadísticas de Ventas</h1><p style={{ margin:0, color:"#888", fontSize:14 }}>Analiza el rendimiento de tu negocio</p></div>
       <div style={{ ...G.card({ marginBottom:20 }) }}>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
@@ -3063,7 +3063,7 @@ function EstadisticasPage({ ctx }) {
           </div>
         </div>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
         <StatCard icon={<DollarSign size={19}/>} bg="#dcfce7" label="Ingresos totales" value={fmtMoney(ingresos, config.moneda)} />
         <StatCard icon={<ShoppingBag size={19}/>} bg="#dbeafe" label="Ventas realizadas" value={vf.length} />
         <StatCard icon={<TrendingUp size={19}/>} bg="#ede9fe" label="Ticket promedio" value={fmtMoney(ticket, config.moneda)} />
@@ -3072,7 +3072,7 @@ function EstadisticasPage({ ctx }) {
         {chartData.length === 0 ? (
           <div style={{ textAlign:"center", padding:"52px 0", color:"#bbb" }}><div style={{ marginBottom:10, opacity:0.25, color:"#aaa" }}><TrendingUp size={36}/></div><div>No hay ventas en el rango seleccionado</div></div>
         ) : esPie ? (
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, alignItems:"center" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20, alignItems:"center" }}>
             <ResponsiveContainer width="100%" height={240}>
               <PieChart><Pie data={chartData.map((d,i) => ({ ...d, name:d.label }))} dataKey="total" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} ${(percent*100).toFixed(0)}%`}>
                 {chartData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
@@ -3114,7 +3114,7 @@ function FinanzasPage({ ctx }) {
   const delGasto = async (id) => { setGastos(prev => prev.filter(g => g.id !== id)); await ctx.deleteGasto(id); };
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       {showModal && <GastoModal tipoInicial={tipoInicial} mes={mes} onSave={async g => { setGastos(prev => [...prev, g]); await ctx.saveGasto(g); }} onClose={() => setShowModal(false)} />}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
         <div><h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Finanzas</h1><p style={{ margin:0, color:"#888", fontSize:14 }}>Controla tus gastos y rentabilidad</p></div>
@@ -3124,7 +3124,7 @@ function FinanzasPage({ ctx }) {
         <span style={{ fontSize:14, color:"#888" }}>Ver mes:</span>
         <input type="month" style={G.inp({ width:200 })} value={mes} onChange={e => setMes(e.target.value)} />
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:24 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:14, marginBottom:24 }}>
         <StatCard icon={<TrendingUp size={19}/>} bg="#dcfce7" label="Ingresos del mes" value={fmtMoney(ingresos, config.moneda)} />
         <StatCard icon={<ClipboardList size={19}/>} bg="#fef3c7" label="Gastos fijos" value={fmtMoney(totalFijos, config.moneda)} />
         <StatCard icon={<Receipt size={19}/>} bg="#dbeafe" label="Gastos variables" value={fmtMoney(totalVar, config.moneda)} />
@@ -3178,7 +3178,7 @@ function RemitosPage({ ctx }) {
   const delProv = async (id) => { setProveedores(prev => prev.filter(p => p.id !== id)); await ctx.deleteProveedor(id); };
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       {showRemito && <RemitoModal proveedores={proveedores} products={products} setProducts={setProducts} saveProducts={ctx.saveProducts} rubro={config.rubro} onSave={async r => { const newRemito = { ...r, id:uid(), numero: remitos.reduce((mx, x) => Math.max(mx, +x.numero || 0), 0) + 1 }; setRemitos(prev => [...prev, newRemito]); await ctx.saveRemito(newRemito); }} onClose={() => setShowRemito(false)} />}
       {(showProveedor||editProv) && <ProveedorModal prov={editProv} onSave={async p => { setProveedores(prev => editProv?prev.map(x=>x.id===p.id?p:x):[...prev,p]); setShowProveedor(false); setEditProv(null); await ctx.saveProveedor(p); }} onClose={() => { setShowProveedor(false); setEditProv(null); }} />}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
@@ -3315,7 +3315,7 @@ function FacturarModal({ venta, config, sales, onFacturar, onSinFactura, onClose
   // ── Step 1: Elegir ────────────────────────────────────────
   if (step === 1) return (
     <Modal title="¿Cómo querés registrar esta venta?" onClose={onClose} width={440}>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:12, marginBottom:20 }}>
         <button onClick={onSinFactura} style={{ background:"#fff", border:"2px solid #e5e7eb", borderRadius:12, padding:"24px 16px", cursor:"pointer", textAlign:"center", transition:"border-color .15s" }}
           onMouseEnter={e=>e.currentTarget.style.borderColor="#111"} onMouseLeave={e=>e.currentTarget.style.borderColor="#e5e7eb"}>
           <div style={{ fontSize:32, marginBottom:10 }}>🧾</div>
@@ -3524,7 +3524,7 @@ function ComprobanteModal({ venta, config, onClose }) {
         <div style={{ height:1, background:"#e5e7eb", margin:"0 0 16px" }} />
 
         {/* Receptor */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, marginBottom:16 }}>
           <div>
             <div style={{ fontSize:11, color:"#888", marginBottom:4 }}>RECEPTOR</div>
             <div style={{ fontWeight:700 }}>{f.receptor?.nombre || "Consumidor Final"}</div>
@@ -3588,7 +3588,7 @@ function ComprobanteModal({ venta, config, onClose }) {
         <div style={{ height:1, background:"#e5e7eb", margin:"16px 0" }} />
 
         {/* CAE */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, fontSize:12 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, fontSize:12 }}>
           <div>
             <span style={{ color:"#666" }}>CAE N°: </span>
             <span style={{ fontWeight:700, fontFamily:"monospace" }}>{f.cae}</span>
@@ -3666,7 +3666,7 @@ function ConfigPage({ ctx }) {
         <p style={{ margin:"0 0 16px", fontSize:13, color:"#888" }}>
           Esto define las categorías disponibles al cargar productos. Elegí el rubro que mejor describa tu negocio.
         </p>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:20 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10, marginBottom:20 }}>
           {RUBROS.map(r => (
             <button key={r} onClick={() => u("rubro", r)} style={{
               padding:"12px 14px", borderRadius:10,
@@ -3704,7 +3704,7 @@ function ConfigPage({ ctx }) {
       {/* Contacto */}
       <div style={{ ...G.card({ marginBottom:24 }) }}>
         <h3 style={{ margin:"0 0 20px", fontSize:16, fontWeight:700 }}><User size={15}/>Contacto</h3>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
           <FieldRow label="Teléfono"><input style={G.inp()} value={f.telefono} onChange={e => u("telefono", e.target.value)} placeholder="+54 9 11 1234-5678" /></FieldRow>
           <FieldRow label="Instagram"><input style={G.inp()} value={f.instagram} onChange={e => u("instagram", e.target.value)} placeholder="@tunegocio" /></FieldRow>
         </div>
@@ -3725,7 +3725,7 @@ function ConfigPage({ ctx }) {
           Completá tus datos fiscales para emitir facturas electrónicas al completar cada venta.
           {!f.facturacionActiva && <span style={{ color:"#d97706", fontWeight:600 }}> (Desactivada)</span>}
         </p>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
           <FieldRow label="CUIT del negocio *">
             <input style={G.inp()} value={f.cuit||""} onChange={e => u("cuit", e.target.value)} placeholder="20-12345678-0" />
           </FieldRow>
@@ -3978,7 +3978,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
               <p style={{ fontSize: 17, color: C.body, margin: "0 0 40px", lineHeight: 1.55, maxWidth: 520, marginLeft: "auto", marginRight: "auto" }}>
                 Configuremos tu negocio en 2 pasos rápidos. Después ya podés empezar a vender.
               </p>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, marginBottom: 44, textAlign: "left" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 16, marginBottom: 44, textAlign: "left" }}>
                 {[
                   { ic: <Package size={20}/>, t: "Inventario", d: "Cargá productos con categorías de tu rubro" },
                   { ic: <ShoppingCart size={20}/>, t: "Ventas", d: "Cobrás rápido, el stock se descuenta solo" },
@@ -4012,7 +4012,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
                   Elegí tu rubro y MiLocal se configura solo con las categorías y campos que necesitás.
                 </p>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 22 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 22 }}>
                 {RUBROS.map(r => (
                   <button
                     key={r}
@@ -4100,7 +4100,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
                   />
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 16 }}>
                   <div>
                     <label style={labelStyle}>Tu nombre (dueño/a)</label>
                     <input
@@ -4303,7 +4303,7 @@ function LandingPage({ onIngresar }) {
                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#34d399" }}/>
                 <span style={{ fontSize: 12, color: C.mut, marginLeft: 8 }}>milocal.com.ar</span>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 12, marginBottom: 14 }}>
                 <div style={{ background: C.purpleSoft, borderRadius: 8, padding: "14px 16px" }}>
                   <div style={{ fontSize: 11, color: C.purpleDark, fontWeight: 600, marginBottom: 4 }}>VENTAS HOY</div>
                   <div style={{ fontSize: 24, fontWeight: 700, color: C.purple }}>$127.400</div>
@@ -4979,7 +4979,7 @@ function SuscripcionPage({ config, onSuscribir, onCancelar }) {
   };
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       <div style={{ maxWidth: 640 }}>
         <div style={{ marginBottom: 28 }}>
           <h1 style={{ margin: "0 0 4px", fontSize: 28, fontWeight: 800 }}>Suscripción</h1>
@@ -5126,6 +5126,7 @@ export default function App() {
   const [remitos, setRemitos] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [showSubscriptionSuccess, setShowSubscriptionSuccess] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false); // drawer del sidebar en mobile
 
   // ── Detectar retorno desde Mercado Pago (?subscription=success) ──
   useEffect(() => {
@@ -5399,26 +5400,69 @@ export default function App() {
   return (
     <>
       <style>{THEME_CSS}</style>
+      <style>{`
+        @media (max-width: 900px) {
+          .app-sidebar { transform: translateX(-100%); transition: transform .25s ease; }
+          .app-sidebar.open { transform: translateX(0); box-shadow: 4px 0 24px rgba(0,0,0,0.15); }
+          .app-main { margin-left: 0 !important; padding-top: 58px; }
+          .app-topbar-mobile { display: flex !important; }
+          .app-overlay.open { display: block !important; }
+          .app-sidebar-close { display: flex !important; }
+          .venta-grid { grid-template-columns: 1fr !important; }
+        }
+        @media (max-width: 640px) {
+          .app-page-pad { padding: 16px !important; }
+          .app-main table { display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+        }
+      `}</style>
       <div style={{ display:"flex", fontFamily:"'DM Sans', system-ui, -apple-system, sans-serif", minHeight:"100vh", background:"var(--bg-page)" }}>
+
+        {/* ── Topbar mobile (solo visible en pantallas chicas) ── */}
+        <div className="app-topbar-mobile" style={{
+          display:"none", alignItems:"center", gap:12,
+          position:"fixed", top:0, left:0, right:0, height:58, zIndex:600,
+          background:"var(--bg-sidebar)", borderBottom:"1px solid var(--border-mid)", padding:"0 16px",
+        }}>
+          <button onClick={() => setSidebarOpen(true)} style={{ background:"none", border:"none", cursor:"pointer", display:"flex", padding:6, color:"var(--text)", flexShrink:0 }}>
+            <Menu size={22}/>
+          </button>
+          <div style={{ minWidth:0, flex:1 }}>
+            <div style={{ color:"var(--text)", fontWeight:700, fontSize:15, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{config.nombre}</div>
+          </div>
+          {stockAlert > 0 && (
+            <span style={{ background:"#dc2626", color:"#fff", fontSize:10, fontWeight:700, minWidth:18, height:18, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, padding:"0 4px" }}>
+              {stockAlert>9?"9+":stockAlert}
+            </span>
+          )}
+        </div>
+
+        {/* ── Overlay oscuro cuando el drawer está abierto (mobile) ── */}
+        <div
+          className={`app-overlay ${sidebarOpen ? "open" : ""}`}
+          onClick={() => setSidebarOpen(false)}
+          style={{ display:"none", position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:550 }}
+        />
+
         {/* ── Sidebar ── */}
-        <aside style={{ width:230, background:"var(--bg-sidebar)", borderRight:"1px solid var(--border-mid)", display:"flex", flexDirection:"column", position:"fixed", top:0, left:0, height:"100vh", zIndex:500 }}>
-          <div style={{ padding:"22px 20px 20px", borderBottom:"1px solid var(--border)" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-              {config.logo
-                ? <img src={config.logo} alt="logo" style={{ width:42, height:42, borderRadius:10, objectFit:"cover" }} onError={e => e.target.style.display="none"} />
-                : <img src="/milocal-icon.png" alt="MiLocal" style={{ width: 42, height: 42, borderRadius: 10 }}/>
-              }
-              <div style={{ minWidth:0 }}>
-                <div style={{ color:"var(--text)", fontWeight:700, fontSize:16, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", letterSpacing:"-0.4px" }}>{config.nombre}</div>
-                <div style={{ color:"var(--text-light)", fontSize:11.5, marginTop:3 }}>MiLocal gestión de ventas</div>
-              </div>
+        <aside className={`app-sidebar ${sidebarOpen ? "open" : ""}`} style={{ width:230, background:"var(--bg-sidebar)", borderRight:"1px solid var(--border-mid)", display:"flex", flexDirection:"column", position:"fixed", top:0, left:0, height:"100vh", zIndex:600 }}>
+          <div style={{ padding:"22px 20px 20px", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"center", gap:12 }}>
+            {config.logo
+              ? <img src={config.logo} alt="logo" style={{ width:42, height:42, borderRadius:10, objectFit:"cover" }} onError={e => e.target.style.display="none"} />
+              : <img src="/milocal-icon.png" alt="MiLocal" style={{ width: 42, height: 42, borderRadius: 10 }}/>
+            }
+            <div style={{ minWidth:0, flex:1 }}>
+              <div style={{ color:"var(--text)", fontWeight:700, fontSize:16, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", letterSpacing:"-0.4px" }}>{config.nombre}</div>
+              <div style={{ color:"var(--text-light)", fontSize:11.5, marginTop:3 }}>MiLocal gestión de ventas</div>
             </div>
+            <button onClick={() => setSidebarOpen(false)} className="app-sidebar-close" style={{ display:"none", background:"none", border:"none", cursor:"pointer", color:"var(--text-muted)", flexShrink:0, padding:4 }}>
+              <X size={20}/>
+            </button>
           </div>
           <nav style={{ flex:1, padding:"14px 12px", display:"flex", flexDirection:"column", gap:3, overflowY:"auto" }}>
             {NAV.map(n => {
               const isActive = page === n.id;
               return (
-                <button key={n.id} onClick={() => setPage(n.id)} style={{
+                <button key={n.id} onClick={() => { setPage(n.id); setSidebarOpen(false); }} style={{
                   display:"flex", alignItems:"center", gap:12,
                   padding:"12px 14px", borderRadius:8, border:"none", cursor:"pointer",
                   fontSize:15, textAlign:"left", width:"100%",
@@ -5449,9 +5493,9 @@ export default function App() {
             <div style={{ color:"var(--text-muted)", fontSize:12, fontWeight:600 }}>1.0 Beta</div>
           </div>
         </aside>
-        <main style={{ marginLeft:230, flex:1, overflow:"auto", minHeight:"100vh" }}>
+        <main className="app-main" style={{ marginLeft:230, flex:1, overflow:"auto", minHeight:"100vh", width:"100%" }}>
           {showSubscriptionSuccess && (
-            <div style={{ background:"#dcfce7", borderBottom:"1px solid #86efac", padding:"14px 24px", display:"flex", alignItems:"center", gap:10, color:"#15803d", fontSize:14, fontWeight:600 }}>
+            <div style={{ background:"#dcfce7", borderBottom:"1px solid #86efac", padding:"14px 24px", display:"flex", alignItems:"center", gap:10, color:"#15803d", fontSize:14, fontWeight:600, flexWrap:"wrap" }}>
               <CheckCircle2 size={18}/>
               ¡Suscripción activada con éxito! Ya podés seguir usando MiLocal sin límites.
               <button onClick={() => setShowSubscriptionSuccess(false)} style={{ marginLeft:"auto", background:"none", border:"none", cursor:"pointer", color:"#15803d", display:"flex" }}><X size={16}/></button>
