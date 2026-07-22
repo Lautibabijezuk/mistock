@@ -138,6 +138,7 @@ const ventaToDb = (v, negocioId) => ({
 const dbToConfig = n => ({
   nombre: n.nombre, moneda: n.moneda||'$', dueno: n.dueno||'', rubro: n.rubro||'',
   telefono: n.telefono||'', instagram: n.instagram||'', logo: n.logo||'',
+  direccion: n.direccion||'',
   cuit: n.cuit||'', razonSocial: n.razon_social||'', tipoContrib: n.tipo_contrib||'monotributista',
   puntoVenta: n.punto_venta||'0001', condicionIVA: n.condicion_iva||'Monotributista',
   facturacionActiva: n.facturacion_activa||false,
@@ -148,10 +149,12 @@ const dbToConfig = n => ({
   mpPreapprovalId: n.mp_preapproval_id || null,
   paymentFailedAt: n.payment_failed_at || null,
   subscriptionStartedAt: n.subscription_started_at || null,
+  accesoManualHasta: n.acceso_manual_hasta || null,
 });
 const configToDb = c => ({
   nombre: c.nombre, moneda: c.moneda, dueno: c.dueno, rubro: c.rubro,
   telefono: c.telefono, instagram: c.instagram, logo: c.logo,
+  direccion: c.direccion,
   cuit: c.cuit, razon_social: c.razonSocial, tipo_contrib: c.tipoContrib,
   punto_venta: c.puntoVenta, condicion_iva: c.condicionIVA,
   facturacion_activa: c.facturacionActiva,
@@ -3738,6 +3741,7 @@ function ConfigPage({ ctx }) {
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
           <FieldRow label="Teléfono"><input style={G.inp()} value={f.telefono} onChange={e => u("telefono", e.target.value)} placeholder="+54 9 11 1234-5678" /></FieldRow>
           <FieldRow label="Instagram"><input style={G.inp()} value={f.instagram} onChange={e => u("instagram", e.target.value)} placeholder="@tunegocio" /></FieldRow>
+          <FieldRow label="Dirección del local"><input style={G.inp()} value={f.direccion||""} onChange={e => u("direccion", e.target.value)} placeholder="Ej: Av. Rivadavia 1234, CABA" /></FieldRow>
         </div>
       </div>
 
@@ -5072,26 +5076,47 @@ function AdminPage({ onVolver }) {
   const [negocios, setNegocios] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("Todos");
+  const [filtroRubro, setFiltroRubro] = useState("Todos");
+  const [procesando, setProcesando] = useState(null); // id del negocio con acción en curso
+  const [confirmCancelar, setConfirmCancelar] = useState(null); // negocio a confirmar cancelación
 
-  useEffect(() => {
-    const cargar = async () => {
-      try {
-        const session = await sb.getSession();
-        if (!session) { setError("Sesión no válida"); setLoading(false); return; }
-        const resp = await fetch(`${SUPABASE_FUNC_URL}/admin-dashboard`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-        const data = await resp.json();
-        if (!resp.ok) { setError(data.error || "No autorizado"); setLoading(false); return; }
-        setResumen(data.resumen);
-        setNegocios(data.negocios || []);
-      } catch (e) {
-        setError(e.message || "Error de conexión");
-      }
-      setLoading(false);
-    };
-    cargar();
-  }, []);
+  const cargar = async () => {
+    try {
+      const session = await sb.getSession();
+      if (!session) { setError("Sesión no válida"); setLoading(false); return; }
+      const resp = await fetch(`${SUPABASE_FUNC_URL}/admin-dashboard`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await resp.json();
+      if (!resp.ok) { setError(data.error || "No autorizado"); setLoading(false); return; }
+      setResumen(data.resumen);
+      setNegocios(data.negocios || []);
+    } catch (e) {
+      setError(e.message || "Error de conexión");
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { cargar(); }, []);
+
+  const ejecutarAccion = async (negocioId, action) => {
+    setProcesando(negocioId + action);
+    try {
+      const session = await sb.getSession();
+      const resp = await fetch(`${SUPABASE_FUNC_URL}/admin-actions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ negocio_id: negocioId, action }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { alert("Error: " + (data.error || "algo salió mal")); setProcesando(null); return; }
+      await cargar(); // refrescar la tabla con el estado actualizado
+    } catch (e) {
+      alert("Error de conexión: " + e.message);
+    }
+    setProcesando(null);
+    setConfirmCancelar(null);
+  };
 
   const ESTADOS = {
     trial: { label: "Prueba", bg: "#fef3c7", color: "#92400e" },
@@ -5100,19 +5125,37 @@ function AdminPage({ onVolver }) {
     cancelled: { label: "Cancelado", bg: "#f3f4f6", color: "#6b7280" },
   };
 
+  const rubrosDisponibles = [...new Set(negocios.map(n => n.rubro).filter(Boolean))].sort();
+
   const negociosFiltrados = negocios.filter(n => {
     const matchBusqueda = !busqueda ||
       (n.nombre || "").toLowerCase().includes(busqueda.toLowerCase()) ||
       (n.email || "").toLowerCase().includes(busqueda.toLowerCase()) ||
       (n.telefono || "").includes(busqueda);
     const matchEstado = filtroEstado === "Todos" || n.subscription_status === filtroEstado;
-    return matchBusqueda && matchEstado;
+    const matchRubro = filtroRubro === "Todos" || n.rubro === filtroRubro;
+    return matchBusqueda && matchEstado && matchRubro;
   });
 
   const fmtFecha = (iso) => {
     if (!iso) return "—";
     const d = new Date(iso);
     return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  };
+
+  const diasDesde = (iso) => {
+    if (!iso) return "";
+    const dias = Math.floor((new Date() - new Date(iso)) / (1000 * 60 * 60 * 24));
+    if (dias === 0) return "hoy";
+    if (dias === 1) return "ayer";
+    return `hace ${dias} días`;
+  };
+
+  const linkWhatsApp = (telefono) => {
+    if (!telefono) return null;
+    let digits = telefono.replace(/\D/g, "");
+    if (!digits.startsWith("54")) digits = "549" + digits;
+    return `https://wa.me/${digits}`;
   };
 
   if (loading) {
@@ -5152,10 +5195,11 @@ function AdminPage({ onVolver }) {
           { label: "Activos", value: resumen.active, bg: "#dcfce7", color: "#15803d" },
           { label: "Atrasados", value: resumen.past_due, bg: "#fee2e2", color: "#dc2626" },
           { label: "Cancelados", value: resumen.cancelled, bg: "#f3f4f6", color: "#6b7280" },
+          { label: "MRR", value: fmtMoney(resumen.mrr, "$"), bg: "#dbeafe", color: "#1e40af" },
         ].map((k, i) => (
           <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
             <div style={{ display:"inline-block", background:k.bg, color:k.color, fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:20, marginBottom:10 }}>{k.label}</div>
-            <div style={{ fontSize:28, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:24, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
           </div>
         ))}
       </div>
@@ -5175,6 +5219,10 @@ function AdminPage({ onVolver }) {
           <option value="past_due">Atrasados</option>
           <option value="cancelled">Cancelados</option>
         </select>
+        <select value={filtroRubro} onChange={e => setFiltroRubro(e.target.value)} style={{ padding:"10px 14px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:14, fontFamily:"inherit" }}>
+          <option value="Todos">Todos los rubros</option>
+          {rubrosDisponibles.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
       </div>
 
       {/* Tabla */}
@@ -5183,7 +5231,7 @@ function AdminPage({ onVolver }) {
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
             <thead>
               <tr style={{ background:"#f9fafb", borderBottom:"1px solid #e5e7eb" }}>
-                {["Negocio","Email","WhatsApp","Rubro","Registrado","Estado","Vence / Próx. cobro"].map(h => (
+                {["Negocio","Dueño/a","Email","WhatsApp","Rubro","Dirección","Instagram","Registrado","Estado","Vence / Próx. cobro","Acciones"].map(h => (
                   <th key={h} style={{ padding:"12px 16px", textAlign:"left", fontWeight:600, color:"#666", whiteSpace:"nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -5192,27 +5240,83 @@ function AdminPage({ onVolver }) {
               {negociosFiltrados.map(n => {
                 const est = ESTADOS[n.subscription_status] || ESTADOS.trial;
                 const fechaRelevante = n.subscription_status === "active" ? n.next_billing_date : n.trial_ends_at;
+                const wa = linkWhatsApp(n.telefono);
+                const tieneCortesia = n.acceso_manual_hasta && new Date(n.acceso_manual_hasta) > new Date();
+                const puedeAccionar = n.subscription_status !== "cancelled";
                 return (
                   <tr key={n.id} style={{ borderBottom:"1px solid #f3f4f6" }}>
                     <td style={{ padding:"12px 16px", fontWeight:600 }}>{n.nombre}</td>
+                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.dueno || "—"}</td>
                     <td style={{ padding:"12px 16px", color:"#666" }}>{n.email || "—"}</td>
-                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.telefono || "—"}</td>
+                    <td style={{ padding:"12px 16px" }}>
+                      {wa ? (
+                        <a href={wa} target="_blank" rel="noopener noreferrer" style={{ color:"#16a34a", fontWeight:600, textDecoration:"none", display:"flex", alignItems:"center", gap:5 }}>
+                          {n.telefono}
+                        </a>
+                      ) : "—"}
+                    </td>
                     <td style={{ padding:"12px 16px", color:"#666" }}>{n.rubro || "—"}</td>
-                    <td style={{ padding:"12px 16px", color:"#666", whiteSpace:"nowrap" }}>{fmtFecha(n.created_at)}</td>
+                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.direccion || "—"}</td>
+                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.instagram ? `@${n.instagram.replace(/^@/,"")}` : "—"}</td>
+                    <td style={{ padding:"12px 16px", color:"#666", whiteSpace:"nowrap" }}>
+                      <div>{fmtFecha(n.created_at)}</div>
+                      <div style={{ fontSize:11, color:"#aaa" }}>{diasDesde(n.created_at)}</div>
+                    </td>
                     <td style={{ padding:"12px 16px" }}>
                       <span style={{ background:est.bg, color:est.color, fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>{est.label}</span>
+                      {tieneCortesia && (
+                        <div style={{ marginTop:5, fontSize:10.5, color:"#7c3aed", fontWeight:600 }}>🎁 cortesía hasta {fmtFecha(n.acceso_manual_hasta)}</div>
+                      )}
                     </td>
                     <td style={{ padding:"12px 16px", color:"#666", whiteSpace:"nowrap" }}>{fmtFecha(fechaRelevante)}</td>
+                    <td style={{ padding:"12px 16px", whiteSpace:"nowrap" }}>
+                      {puedeAccionar && (
+                        <div style={{ display:"flex", gap:6 }}>
+                          <button
+                            onClick={() => ejecutarAccion(n.id, "regalar_mes")}
+                            disabled={procesando === n.id + "regalar_mes"}
+                            title="Regalar 30 días de acceso sin cobrar"
+                            style={{ background:"#f4ecff", color:"#7c3aed", border:"none", borderRadius:6, padding:"6px 10px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
+                          >
+                            {procesando === n.id + "regalar_mes" ? "..." : "🎁 Regalar mes"}
+                          </button>
+                          <button
+                            onClick={() => setConfirmCancelar(n)}
+                            disabled={procesando === n.id + "cancelar"}
+                            title="Cancelar la suscripción"
+                            style={{ background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:6, padding:"6px 10px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
+                          >
+                            {procesando === n.id + "cancelar" ? "..." : "Cancelar"}
+                          </button>
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
               {negociosFiltrados.length === 0 && (
-                <tr><td colSpan={7} style={{ padding:"32px 16px", textAlign:"center", color:"#aaa" }}>No hay negocios que coincidan con el filtro</td></tr>
+                <tr><td colSpan={11} style={{ padding:"32px 16px", textAlign:"center", color:"#aaa" }}>No hay negocios que coincidan con el filtro</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Modal de confirmación para cancelar */}
+      {confirmCancelar && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }} onClick={() => setConfirmCancelar(null)}>
+          <div style={{ background:"#fff", borderRadius:12, padding:"24px 26px", width:"90%", maxWidth:400 }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin:"0 0 10px", fontSize:17, fontWeight:700 }}>¿Cancelar la suscripción de {confirmCancelar.nombre}?</h3>
+            <p style={{ margin:"0 0 20px", fontSize:14, color:"#666", lineHeight:1.5 }}>
+              Se va a cancelar en Mercado Pago (si tiene una suscripción activa ahí) y quedará bloqueado del sistema.
+            </p>
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={() => setConfirmCancelar(null)} style={{ flex:1, background:"#f3f4f6", border:"none", borderRadius:8, padding:"10px", cursor:"pointer", fontFamily:"inherit", fontWeight:500 }}>Volver</button>
+              <button onClick={() => ejecutarAccion(confirmCancelar.id, "cancelar")} style={{ flex:1, background:"#dc2626", color:"#fff", border:"none", borderRadius:8, padding:"10px", cursor:"pointer", fontFamily:"inherit", fontWeight:600 }}>Sí, cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -5225,6 +5329,16 @@ function getSubscriptionState(config) {
   const status = config?.subscriptionStatus || 'trial';
   const trialEnd = config?.trialEndsAt ? new Date(config.trialEndsAt) : null;
   const now = new Date();
+
+  // ── Acceso regalado por el administrador ──
+  // Si tiene una fecha futura, nunca bloqueamos, sin importar el estado real de MP
+  if (config?.accesoManualHasta) {
+    const cortesiaHasta = new Date(config.accesoManualHasta);
+    if (cortesiaHasta > now) {
+      const daysLeft = Math.max(1, Math.ceil((cortesiaHasta - now) / (1000 * 60 * 60 * 24)));
+      return { status: 'cortesia', isActive: true, isTrial: false, isBlocked: false, daysLeft };
+    }
+  }
 
   // Los negocios activos "permanentes" (los pre-existentes) no tienen trialEndsAt
   if (status === 'active' && !trialEnd) {
