@@ -50,6 +50,15 @@ const sb = {
     const { data } = await _sb.auth.getSession();
     return data.session;
   },
+  async resetPasswordForEmail(email) {
+    const redirectTo = `${window.location.origin}/login`;
+    const { error } = await _sb.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) throw new Error(error.message);
+  },
+  async updatePassword(newPassword) {
+    const { error } = await _sb.auth.updateUser({ password: newPassword });
+    if (error) throw new Error(error.message);
+  },
 
   async getNegocio(userId) {
     const { data, error } = await _sb.from("negocios").select("*").eq("user_id", userId).maybeSingle();
@@ -3617,8 +3626,30 @@ function ConfigPage({ ctx }) {
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState("");
   const [resetting, setResetting] = useState(false);
+  const [nuevaPass, setNuevaPass] = useState("");
+  const [confirmarPass, setConfirmarPass] = useState("");
+  const [cambiandoPass, setCambiandoPass] = useState(false);
+  const [passError, setPassError] = useState("");
+  const [passOk, setPassOk] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]:v }));
   const save = async () => { await ctx.setConfig(f); setSaved(true); setTimeout(() => setSaved(false), 2500); };
+
+  // ── Cambiar contraseña ──
+  const handleCambiarPassword = async () => {
+    setPassError(""); setPassOk(false);
+    if (nuevaPass.length < 6) { setPassError("La contraseña debe tener al menos 6 caracteres"); return; }
+    if (nuevaPass !== confirmarPass) { setPassError("Las contraseñas no coinciden"); return; }
+    setCambiandoPass(true);
+    try {
+      await sb.updatePassword(nuevaPass);
+      setPassOk(true);
+      setNuevaPass(""); setConfirmarPass("");
+      setTimeout(() => setPassOk(false), 3500);
+    } catch (e) {
+      setPassError(e?.message || "No pudimos cambiar la contraseña");
+    }
+    setCambiandoPass(false);
+  };
 
   // ── Borrar todos los productos ──
   const handleResetProducts = async () => {
@@ -3781,6 +3812,56 @@ function ConfigPage({ ctx }) {
             Ir a Productos →
           </button>
         )}
+      </div>
+
+      {/* ── Seguridad: cambiar contraseña ── */}
+      <div style={{ ...G.card(), marginTop:40 }}>
+        <h3 style={{ margin:"0 0 4px", fontSize:16, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}><Lock size={16}/>Seguridad</h3>
+        <p style={{ margin:"0 0 20px", fontSize:13, color:"#888" }}>Cambiá la contraseña con la que iniciás sesión en MiLocal.</p>
+
+        {passOk && (
+          <div style={{ background:"#dcfce7", border:"1px solid #86efac", borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:13, color:"#15803d", display:"flex", alignItems:"center", gap:8 }}>
+            <CheckCircle2 size={15}/> Contraseña actualizada correctamente
+          </div>
+        )}
+        {passError && (
+          <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:13, color:"#dc2626", display:"flex", alignItems:"center", gap:8 }}>
+            <AlertCircle size={15}/> {passError}
+          </div>
+        )}
+
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:16, marginBottom:18 }}>
+          <FieldRow label="Nueva contraseña">
+            <input
+              style={G.inp()}
+              type="password"
+              placeholder="Mínimo 6 caracteres"
+              value={nuevaPass}
+              onChange={e => { setNuevaPass(e.target.value); setPassError(""); }}
+            />
+          </FieldRow>
+          <FieldRow label="Confirmar contraseña">
+            <input
+              style={G.inp()}
+              type="password"
+              placeholder="Repetí la contraseña"
+              value={confirmarPass}
+              onChange={e => { setConfirmarPass(e.target.value); setPassError(""); }}
+              onKeyDown={e => e.key === "Enter" && handleCambiarPassword()}
+            />
+          </FieldRow>
+        </div>
+
+        <button
+          onClick={handleCambiarPassword}
+          disabled={cambiandoPass || !nuevaPass || !confirmarPass}
+          style={{
+            ...G.btn((cambiandoPass || !nuevaPass || !confirmarPass) ? "light" : "dark"),
+            fontSize:14, padding:"11px 24px",
+          }}
+        >
+          {cambiandoPass ? "Guardando..." : "Cambiar contraseña"}
+        </button>
       </div>
 
       {/* ── Zona de peligro ── */}
@@ -4481,7 +4562,7 @@ function LandingPage({ onIngresar }) {
 // LOGIN / REGISTER SCREEN
 // ══════════════════════════════════════════════════════════
 function LoginScreen({ onLogin, onVolver }) {
-  const [modo, setModo] = useState("login"); // login | register | confirmar
+  const [modo, setModo] = useState("login"); // login | register | confirmar | recuperar | recuperar_enviado
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [nombreNegocio, setNombreNegocio] = useState("");
@@ -4514,6 +4595,18 @@ function LoginScreen({ onLogin, onVolver }) {
       }
     } catch (e) {
       setError(e?.message || "Error de conexión");
+    }
+    setLoading(false);
+  };
+
+  const enviarRecuperacion = async () => {
+    if (!email.trim()) { setError("Ingresá tu email primero"); return; }
+    setError(""); setLoading(true);
+    try {
+      await sb.resetPasswordForEmail(email.trim());
+      setModo("recuperar_enviado");
+    } catch (e) {
+      setError(e?.message || "No pudimos enviar el email. Intentá de nuevo.");
     }
     setLoading(false);
   };
@@ -4617,18 +4710,89 @@ function LoginScreen({ onLogin, onVolver }) {
           {/* Título */}
           <div style={{ marginBottom: 32 }}>
             <h2 style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-1px", margin: "0 0 8px", color: C.ink }}>
-              {modo === "confirmar" ? "Revisá tu email" : modo === "register" ? "Crear cuenta" : "Iniciar sesión"}
+              {modo === "confirmar" ? "Revisá tu email" :
+               modo === "register" ? "Crear cuenta" :
+               modo === "recuperar" ? "Recuperar contraseña" :
+               modo === "recuperar_enviado" ? "Revisá tu email" :
+               "Iniciar sesión"}
             </h2>
             <p style={{ fontSize: 15, color: C.body, margin: 0 }}>
               {modo === "confirmar"
                 ? `Te enviamos un link a ${email}`
                 : modo === "register"
                   ? "Registrate gratis y arrancá hoy"
-                  : "Ingresá con tus datos para acceder"}
+                  : modo === "recuperar"
+                    ? "Ingresá tu email y te mandamos un link para elegir una nueva contraseña"
+                    : modo === "recuperar_enviado"
+                      ? `Te enviamos un link a ${email} para que elijas una nueva contraseña`
+                      : "Ingresá con tus datos para acceder"}
             </p>
           </div>
 
-          {modo === "confirmar" ? (
+          {modo === "recuperar_enviado" ? (
+            <>
+              <div style={{ background: C.purpleSoft, borderRadius: 10, padding: "24px 20px", marginBottom: 20, textAlign: "center" }}>
+                <div style={{ color: C.purple, marginBottom: 12, display: "flex", justifyContent: "center" }}>
+                  <Mail size={40}/>
+                </div>
+                <p style={{ fontSize: 14, color: C.ink, margin: "0 0 6px", fontWeight: 600 }}>Revisá tu bandeja de entrada</p>
+                <p style={{ fontSize: 13, color: C.body, margin: 0, lineHeight: 1.5 }}>
+                  Hacé clic en el link del email para elegir una nueva contraseña. Si no lo ves, revisá spam.
+                </p>
+              </div>
+              <button
+                onClick={() => setModo("login")}
+                style={{
+                  width: "100%", padding: "14px", background: C.purple, color: "#fff",
+                  border: "none", borderRadius: 4, fontSize: 15, fontWeight: 600, cursor: "pointer",
+                  fontFamily: font,
+                }}
+                className="login-btn"
+              >
+                Volver al login
+              </button>
+            </>
+          ) : modo === "recuperar" ? (
+            <>
+              {error && (
+                <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 6, padding: "11px 14px", marginBottom: 18, fontSize: 13, color: "#dc2626", display: "flex", alignItems: "center", gap: 8 }}>
+                  <AlertCircle size={15}/> {error}
+                </div>
+              )}
+              <div style={{ marginBottom: 24 }}>
+                <label style={labelStyle}>Email</label>
+                <div style={{ position: "relative" }}>
+                  <Mail size={17} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.mut }}/>
+                  <input
+                    className="login-input"
+                    style={inputWithIconStyle}
+                    type="email"
+                    placeholder="tu@email.com"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && enviarRecuperacion()}
+                    autoFocus
+                  />
+                </div>
+              </div>
+              <button
+                onClick={enviarRecuperacion}
+                disabled={loading || !email}
+                className="login-btn"
+                style={{
+                  width: "100%", padding: "14px", background: (loading || !email) ? C.line : C.purple,
+                  color: (loading || !email) ? C.mut : "#fff", border: "none", borderRadius: 4,
+                  fontSize: 15, fontWeight: 600, cursor: (loading || !email) ? "not-allowed" : "pointer",
+                  transition: "background .15s", fontFamily: font,
+                }}
+              >
+                {loading ? "Enviando..." : "Enviar link de recuperación"}
+              </button>
+              <div style={{ textAlign: "center", marginTop: 20, fontSize: 14, color: C.body }}>
+                <button onClick={() => { setModo("login"); setError(""); }} style={{ background: "none", border: "none", color: C.purple, fontWeight: 600, cursor: "pointer", fontSize: 14, fontFamily: font, padding: 0 }}>← Volver al login</button>
+              </div>
+            </>
+          ) : modo === "confirmar" ? (
             <>
               <div style={{ background: C.purpleSoft, borderRadius: 10, padding: "24px 20px", marginBottom: 20, textAlign: "center" }}>
                 <div style={{ color: C.purple, marginBottom: 12, display: "flex", justifyContent: "center" }}>
@@ -4709,6 +4873,17 @@ function LoginScreen({ onLogin, onVolver }) {
                   {showPass ? <EyeOff size={17}/> : <Eye size={17}/>}
                 </button>
               </div>
+              {modo === "login" && (
+                <div style={{ textAlign: "right", marginTop: 8 }}>
+                  <button
+                    onClick={() => { setModo("recuperar"); setError(""); }}
+                    type="button"
+                    style={{ background: "none", border: "none", color: C.mut, cursor: "pointer", fontSize: 13, fontFamily: font, padding: 0 }}
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                </div>
+              )}
             </div>
 
             <button
@@ -4748,8 +4923,144 @@ function LoginScreen({ onLogin, onVolver }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// SUBSCRIPTION — helpers + UI components
+// NUEVA CONTRASEÑA — pantalla que se muestra al volver del link
+// de "recuperar contraseña" que llega por email
 // ══════════════════════════════════════════════════════════
+function NuevaPasswordScreen({ onDone, onCancelar }) {
+  const [password, setPassword] = useState("");
+  const [confirmar, setConfirmar] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+
+  const C = {
+    ink: "#0a0a0a", body: "#4b5563", mut: "#9ca3af", line: "#e5e7eb",
+    bg: "#ffffff", bgSoft: "#f9fafb",
+    purple: "#9238FF", purpleDark: "#7a1de6", purpleSoft: "#f4ecff",
+    green: "#16a34a",
+  };
+  const font = "'DM Sans', system-ui, -apple-system, sans-serif";
+
+  const inputStyle = {
+    width: "100%", padding: "13px 16px", border: `1.5px solid ${C.line}`, borderRadius: 6,
+    fontSize: 14.5, outline: "none", boxSizing: "border-box", fontFamily: font,
+    background: C.bg,
+  };
+  const labelStyle = { fontSize: 13, fontWeight: 500, color: C.ink, display: "block", marginBottom: 8 };
+
+  const submit = async () => {
+    setError("");
+    if (password.length < 6) { setError("La contraseña debe tener al menos 6 caracteres"); return; }
+    if (password !== confirmar) { setError("Las contraseñas no coinciden"); return; }
+    setLoading(true);
+    try {
+      await sb.updatePassword(password);
+      setDone(true);
+    } catch (e) {
+      setError(e?.message || "No pudimos actualizar la contraseña. Probá de nuevo.");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: font, background: C.bg, padding: 24 }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');`}</style>
+      <div style={{ width: "100%", maxWidth: 400 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center", marginBottom: 32 }}>
+          <img src="/milocal-icon.png" alt="MiLocal" style={{ width: 36, height: 36, borderRadius: 8 }}/>
+          <span style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.5px", color: C.ink }}>MiLocal</span>
+        </div>
+
+        {done ? (
+          <div style={{ textAlign: "center" }}>
+            <div style={{ background: C.purpleSoft, borderRadius: 10, padding: "24px 20px", marginBottom: 20 }}>
+              <div style={{ color: C.green, marginBottom: 12, display: "flex", justifyContent: "center" }}>
+                <CheckCircle2 size={40}/>
+              </div>
+              <p style={{ fontSize: 15, color: C.ink, margin: 0, fontWeight: 600 }}>¡Contraseña actualizada!</p>
+            </div>
+            <button
+              onClick={onDone}
+              style={{ width: "100%", padding: "14px", background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: font }}
+            >
+              Ir a MiLocal
+            </button>
+          </div>
+        ) : (
+          <>
+            <h2 style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.7px", margin: "0 0 8px", color: C.ink, textAlign: "center" }}>
+              Elegí una nueva contraseña
+            </h2>
+            <p style={{ fontSize: 14.5, color: C.body, margin: "0 0 28px", textAlign: "center" }}>
+              Tiene que tener al menos 6 caracteres
+            </p>
+
+            {error && (
+              <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 6, padding: "11px 14px", marginBottom: 18, fontSize: 13, color: "#dc2626", display: "flex", alignItems: "center", gap: 8 }}>
+                <AlertCircle size={15}/> {error}
+              </div>
+            )}
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={labelStyle}>Nueva contraseña</label>
+              <div style={{ position: "relative" }}>
+                <input
+                  style={{ ...inputStyle, paddingRight: 44 }}
+                  type={showPass ? "text" : "password"}
+                  placeholder="Mínimo 6 caracteres"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  autoFocus
+                />
+                <button
+                  onClick={() => setShowPass(!showPass)}
+                  type="button"
+                  style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.mut, display: "flex", padding: 4 }}
+                >
+                  {showPass ? <EyeOff size={17}/> : <Eye size={17}/>}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 24 }}>
+              <label style={labelStyle}>Confirmar contraseña</label>
+              <input
+                style={inputStyle}
+                type={showPass ? "text" : "password"}
+                placeholder="Repetí la contraseña"
+                value={confirmar}
+                onChange={e => setConfirmar(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && submit()}
+              />
+            </div>
+
+            <button
+              onClick={submit}
+              disabled={loading || !password || !confirmar}
+              style={{
+                width: "100%", padding: "14px",
+                background: (loading || !password || !confirmar) ? C.line : C.purple,
+                color: (loading || !password || !confirmar) ? C.mut : "#fff",
+                border: "none", borderRadius: 4, fontSize: 15, fontWeight: 600,
+                cursor: (loading || !password || !confirmar) ? "not-allowed" : "pointer",
+                fontFamily: font,
+              }}
+            >
+              {loading ? "Guardando..." : "Guardar nueva contraseña"}
+            </button>
+
+            <div style={{ textAlign: "center", marginTop: 20 }}>
+              <button onClick={onCancelar} style={{ background: "none", border: "none", color: C.mut, cursor: "pointer", fontSize: 13, fontFamily: font, textDecoration: "underline", padding: 0 }}>
+                Cancelar
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 const WHATSAPP_SOPORTE = "5492954587394"; // ← número de MiLocal para cancelar/soporte
 const PRECIO_SUSCRIPCION = 30000;
 const SUPABASE_FUNC_URL = "https://sdizrjbeasubjkpixmro.supabase.co/functions/v1";
@@ -5084,6 +5395,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [token, setToken] = useState(null);
+  const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
   // Ruteo por URL: /home (landing), /login (auth), /app (dashboard)
   const [route, setRoute] = useState(() => {
     if (typeof window === "undefined") return "home";
@@ -5157,6 +5469,14 @@ export default function App() {
     // Auto-refresh y logout listener
     const { data: { subscription } } = _sb.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') { setToken(null); setLoaded(false); setAuthReady(true); }
+      if (event === 'PASSWORD_RECOVERY') {
+        // El usuario vino desde el link de "recuperar contraseña" del email
+        setPasswordRecoveryMode(true);
+        setAuthReady(true);
+        if (session?.access_token) {
+          setToken({ access_token: session.access_token, userId: session.user.id });
+        }
+      }
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -5319,6 +5639,16 @@ export default function App() {
       </div>
     </div>
   );
+
+  // ── Recuperación de contraseña: el usuario vino del link del email ──
+  if (passwordRecoveryMode) {
+    return (
+      <NuevaPasswordScreen
+        onDone={() => { setPasswordRecoveryMode(false); navegar("app"); }}
+        onCancelar={async () => { await sb.signOut(); setToken(null); setPasswordRecoveryMode(false); navegar("login"); }}
+      />
+    );
+  }
 
   if (!token) {
     if (route === "login") return <LoginScreen onLogin={handleLogin} onVolver={() => navegar("home")} />;
