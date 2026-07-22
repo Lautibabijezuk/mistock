@@ -5061,6 +5061,161 @@ function NuevaPasswordScreen({ onDone, onCancelar }) {
     </div>
   );
 }
+
+// ══════════════════════════════════════════════════════════
+// ADMIN PANEL — solo el dueño de MiLocal puede ver esto
+// ══════════════════════════════════════════════════════════
+function AdminPage({ onVolver }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [resumen, setResumen] = useState(null);
+  const [negocios, setNegocios] = useState([]);
+  const [busqueda, setBusqueda] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState("Todos");
+
+  useEffect(() => {
+    const cargar = async () => {
+      try {
+        const session = await sb.getSession();
+        if (!session) { setError("Sesión no válida"); setLoading(false); return; }
+        const resp = await fetch(`${SUPABASE_FUNC_URL}/admin-dashboard`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const data = await resp.json();
+        if (!resp.ok) { setError(data.error || "No autorizado"); setLoading(false); return; }
+        setResumen(data.resumen);
+        setNegocios(data.negocios || []);
+      } catch (e) {
+        setError(e.message || "Error de conexión");
+      }
+      setLoading(false);
+    };
+    cargar();
+  }, []);
+
+  const ESTADOS = {
+    trial: { label: "Prueba", bg: "#fef3c7", color: "#92400e" },
+    active: { label: "Activo", bg: "#dcfce7", color: "#15803d" },
+    past_due: { label: "Atrasado", bg: "#fee2e2", color: "#dc2626" },
+    cancelled: { label: "Cancelado", bg: "#f3f4f6", color: "#6b7280" },
+  };
+
+  const negociosFiltrados = negocios.filter(n => {
+    const matchBusqueda = !busqueda ||
+      (n.nombre || "").toLowerCase().includes(busqueda.toLowerCase()) ||
+      (n.email || "").toLowerCase().includes(busqueda.toLowerCase()) ||
+      (n.telefono || "").includes(busqueda);
+    const matchEstado = filtroEstado === "Todos" || n.subscription_status === filtroEstado;
+    return matchBusqueda && matchEstado;
+  });
+
+  const fmtFecha = (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  };
+
+  if (loading) {
+    return (
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", fontFamily:"'DM Sans',sans-serif", color:"#888" }}>
+        Cargando panel...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", fontFamily:"'DM Sans',sans-serif", flexDirection:"column", gap:16 }}>
+        <div style={{ color:"#dc2626", fontSize:15, fontWeight:600 }}>{error === "No autorizado" ? "No tenés acceso a esta sección" : error}</div>
+        <button onClick={onVolver} style={{ background:"#111", color:"#fff", border:"none", borderRadius:6, padding:"10px 20px", cursor:"pointer", fontFamily:"inherit" }}>Volver a MiLocal</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#f9fafb", fontFamily:"'DM Sans',system-ui,sans-serif", padding:"28px 32px" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');`}</style>
+
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:28 }}>
+        <div>
+          <h1 style={{ margin:"0 0 4px", fontSize:26, fontWeight:800, letterSpacing:"-0.5px" }}>Panel de administración</h1>
+          <p style={{ margin:0, color:"#888", fontSize:14 }}>Todos los negocios registrados en MiLocal</p>
+        </div>
+        <button onClick={onVolver} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:8, padding:"9px 18px", cursor:"pointer", fontSize:14, fontFamily:"inherit", fontWeight:500 }}>← Volver a MiLocal</button>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:14, marginBottom:24 }}>
+        {[
+          { label: "Total negocios", value: resumen.total, bg: "#ede9fe", color: "#7c3aed" },
+          { label: "En prueba", value: resumen.trial, bg: "#fef3c7", color: "#92400e" },
+          { label: "Activos", value: resumen.active, bg: "#dcfce7", color: "#15803d" },
+          { label: "Atrasados", value: resumen.past_due, bg: "#fee2e2", color: "#dc2626" },
+          { label: "Cancelados", value: resumen.cancelled, bg: "#f3f4f6", color: "#6b7280" },
+        ].map((k, i) => (
+          <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+            <div style={{ display:"inline-block", background:k.bg, color:k.color, fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:20, marginBottom:10 }}>{k.label}</div>
+            <div style={{ fontSize:28, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Filtros */}
+      <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+        <input
+          placeholder="Buscar por nombre, email o WhatsApp..."
+          value={busqueda}
+          onChange={e => setBusqueda(e.target.value)}
+          style={{ flex:1, minWidth:220, padding:"10px 14px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:14, fontFamily:"inherit" }}
+        />
+        <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)} style={{ padding:"10px 14px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:14, fontFamily:"inherit" }}>
+          <option value="Todos">Todos los estados</option>
+          <option value="trial">En prueba</option>
+          <option value="active">Activos</option>
+          <option value="past_due">Atrasados</option>
+          <option value="cancelled">Cancelados</option>
+        </select>
+      </div>
+
+      {/* Tabla */}
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, overflow:"hidden" }}>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+            <thead>
+              <tr style={{ background:"#f9fafb", borderBottom:"1px solid #e5e7eb" }}>
+                {["Negocio","Email","WhatsApp","Rubro","Registrado","Estado","Vence / Próx. cobro"].map(h => (
+                  <th key={h} style={{ padding:"12px 16px", textAlign:"left", fontWeight:600, color:"#666", whiteSpace:"nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {negociosFiltrados.map(n => {
+                const est = ESTADOS[n.subscription_status] || ESTADOS.trial;
+                const fechaRelevante = n.subscription_status === "active" ? n.next_billing_date : n.trial_ends_at;
+                return (
+                  <tr key={n.id} style={{ borderBottom:"1px solid #f3f4f6" }}>
+                    <td style={{ padding:"12px 16px", fontWeight:600 }}>{n.nombre}</td>
+                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.email || "—"}</td>
+                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.telefono || "—"}</td>
+                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.rubro || "—"}</td>
+                    <td style={{ padding:"12px 16px", color:"#666", whiteSpace:"nowrap" }}>{fmtFecha(n.created_at)}</td>
+                    <td style={{ padding:"12px 16px" }}>
+                      <span style={{ background:est.bg, color:est.color, fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>{est.label}</span>
+                    </td>
+                    <td style={{ padding:"12px 16px", color:"#666", whiteSpace:"nowrap" }}>{fmtFecha(fechaRelevante)}</td>
+                  </tr>
+                );
+              })}
+              {negociosFiltrados.length === 0 && (
+                <tr><td colSpan={7} style={{ padding:"32px 16px", textAlign:"center", color:"#aaa" }}>No hay negocios que coincidan con el filtro</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
 const WHATSAPP_SOPORTE = "5492954587394"; // ← número de MiLocal para cancelar/soporte
 const PRECIO_SUSCRIPCION = 30000;
 const SUPABASE_FUNC_URL = "https://sdizrjbeasubjkpixmro.supabase.co/functions/v1";
@@ -5396,11 +5551,12 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [token, setToken] = useState(null);
   const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
-  // Ruteo por URL: /home (landing), /login (auth), /app (dashboard)
+  // Ruteo por URL: /home (landing), /login (auth), /app (dashboard), /admin (panel dueño)
   const [route, setRoute] = useState(() => {
     if (typeof window === "undefined") return "home";
     const p = window.location.pathname;
     if (p === "/login") return "login";
+    if (p === "/admin") return "admin";
     if (p === "/app" || p.startsWith("/app/")) return "app";
     return "home";
   });
@@ -5414,6 +5570,7 @@ export default function App() {
     const onPop = () => {
       const p = window.location.pathname;
       if (p === "/login") setRoute("login");
+      else if (p === "/admin") setRoute("admin");
       else if (p === "/app" || p.startsWith("/app/")) setRoute("app");
       else setRoute("home");
     };
@@ -5423,7 +5580,7 @@ export default function App() {
 
   // Helper para navegar y actualizar la URL sin recargar
   const navegar = (dest) => {
-    const url = dest === "home" ? "/home" : dest === "login" ? "/login" : "/app";
+    const url = dest === "home" ? "/home" : dest === "login" ? "/login" : dest === "admin" ? "/admin" : "/app";
     if (window.location.pathname !== url) {
       window.history.pushState({}, "", url);
     }
@@ -5655,6 +5812,12 @@ export default function App() {
     // Cualquier otra ruta sin login → landing
     return <LandingPage onIngresar={() => navegar("login")} />;
   }
+
+  // Panel de administración (solo vos podés entrar — se valida el email en el backend)
+  if (route === "admin") {
+    return <AdminPage onVolver={() => navegar("app")} />;
+  }
+
   // Con token → asegurar URL /app
   if (route !== "app") {
     // Sincronizar URL con estado logueado
