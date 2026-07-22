@@ -5231,7 +5231,7 @@ function AdminPage({ onVolver }) {
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
             <thead>
               <tr style={{ background:"#f9fafb", borderBottom:"1px solid #e5e7eb" }}>
-                {["Negocio","Dueño/a","Email","WhatsApp","Rubro","Dirección","Instagram","Registrado","Estado","Vence / Próx. cobro","Acciones"].map(h => (
+                {["Negocio","Dueño/a","Email","WhatsApp","Rubro","Instagram","Registrado","Estado","Vence / Próx. cobro","Acciones"].map(h => (
                   <th key={h} style={{ padding:"12px 16px", textAlign:"left", fontWeight:600, color:"#666", whiteSpace:"nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -5256,7 +5256,6 @@ function AdminPage({ onVolver }) {
                       ) : "—"}
                     </td>
                     <td style={{ padding:"12px 16px", color:"#666" }}>{n.rubro || "—"}</td>
-                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.direccion || "—"}</td>
                     <td style={{ padding:"12px 16px", color:"#666" }}>{n.instagram ? `@${n.instagram.replace(/^@/,"")}` : "—"}</td>
                     <td style={{ padding:"12px 16px", color:"#666", whiteSpace:"nowrap" }}>
                       <div>{fmtFecha(n.created_at)}</div>
@@ -5280,14 +5279,16 @@ function AdminPage({ onVolver }) {
                           >
                             {procesando === n.id + "regalar_mes" ? "..." : "🎁 Regalar mes"}
                           </button>
-                          <button
-                            onClick={() => setConfirmCancelar(n)}
-                            disabled={procesando === n.id + "cancelar"}
-                            title="Cancelar la suscripción"
-                            style={{ background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:6, padding:"6px 10px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
-                          >
-                            {procesando === n.id + "cancelar" ? "..." : "Cancelar"}
-                          </button>
+                          {tieneCortesia && (
+                            <button
+                              onClick={() => setConfirmCancelar(n)}
+                              disabled={procesando === n.id + "cancelar_regalo"}
+                              title="Deshacer el mes regalado"
+                              style={{ background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:6, padding:"6px 10px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
+                            >
+                              {procesando === n.id + "cancelar_regalo" ? "..." : "Quitar regalo"}
+                            </button>
+                          )}
                         </div>
                       )}
                     </td>
@@ -5295,24 +5296,24 @@ function AdminPage({ onVolver }) {
                 );
               })}
               {negociosFiltrados.length === 0 && (
-                <tr><td colSpan={11} style={{ padding:"32px 16px", textAlign:"center", color:"#aaa" }}>No hay negocios que coincidan con el filtro</td></tr>
+                <tr><td colSpan={10} style={{ padding:"32px 16px", textAlign:"center", color:"#aaa" }}>No hay negocios que coincidan con el filtro</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Modal de confirmación para cancelar */}
+      {/* Modal de confirmación para quitar el mes regalado */}
       {confirmCancelar && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }} onClick={() => setConfirmCancelar(null)}>
           <div style={{ background:"#fff", borderRadius:12, padding:"24px 26px", width:"90%", maxWidth:400 }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin:"0 0 10px", fontSize:17, fontWeight:700 }}>¿Cancelar la suscripción de {confirmCancelar.nombre}?</h3>
+            <h3 style={{ margin:"0 0 10px", fontSize:17, fontWeight:700 }}>¿Quitar el mes regalado a {confirmCancelar.nombre}?</h3>
             <p style={{ margin:"0 0 20px", fontSize:14, color:"#666", lineHeight:1.5 }}>
-              Se va a cancelar en Mercado Pago (si tiene una suscripción activa ahí) y quedará bloqueado del sistema.
+              Esto deshace la cortesía que le diste. No afecta ni cancela nada en Mercado Pago — si el negocio tiene una suscripción real pagando, sigue intacta.
             </p>
             <div style={{ display:"flex", gap:10 }}>
               <button onClick={() => setConfirmCancelar(null)} style={{ flex:1, background:"#f3f4f6", border:"none", borderRadius:8, padding:"10px", cursor:"pointer", fontFamily:"inherit", fontWeight:500 }}>Volver</button>
-              <button onClick={() => ejecutarAccion(confirmCancelar.id, "cancelar")} style={{ flex:1, background:"#dc2626", color:"#fff", border:"none", borderRadius:8, padding:"10px", cursor:"pointer", fontFamily:"inherit", fontWeight:600 }}>Sí, cancelar</button>
+              <button onClick={() => ejecutarAccion(confirmCancelar.id, "cancelar_regalo")} style={{ flex:1, background:"#dc2626", color:"#fff", border:"none", borderRadius:8, padding:"10px", cursor:"pointer", fontFamily:"inherit", fontWeight:600 }}>Sí, quitar</button>
             </div>
           </div>
         </div>
