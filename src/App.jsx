@@ -2142,7 +2142,7 @@ function VentaPage({ ctx }) {
   const [cart, setCart] = useState([]);
   const [cliente, setCliente] = useState("");
   const [metodoPago, setMetodoPago] = useState("");
-  const [descTipo, setDescTipo] = useState("monto");
+  const [descTipo, setDescTipo] = useState("pct");
   const [descValor, setDescValor] = useState("");
   const [efectivoDado, setEfectivoDado] = useState("");
   const [showCobro, setShowCobro] = useState(false);
@@ -2283,7 +2283,7 @@ function VentaPage({ ctx }) {
 
   return (
     <div className="app-page-pad" style={G.page}>
-      {showCaja && <AbrirCajaModal setCaja={setCaja} onClose={() => setShowCaja(false)} />}
+      {showCaja && <AbrirCajaModal setCaja={setCaja} saveCaja={ctx.saveCaja} onClose={() => setShowCaja(false)} />}
       {ventaExito && !ventaParaFacturar && <VentaExitoModal venta={ventaExito} config={config} onClose={() => setVentaExito(null)} />}
       {ventaParaFacturar && (
         <FacturarModal
