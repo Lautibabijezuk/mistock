@@ -2326,7 +2326,7 @@ function VentaPage({ ctx }) {
         <button style={G.btn("outline")} onClick={() => setShowCambio(true)}><RefreshCw size={14}/> Cambio</button>
       </div>
       <CajaBanner caja={caja} onAbrir={() => setShowCaja(true)} />
-      <div className="venta-grid" style={{ display:"grid", gridTemplateColumns:"1fr 370px", gap:24, alignItems:"start" }}>
+      <div className="venta-grid" style={{ display:"grid", gridTemplateColumns:"1.3fr 1fr", gap:24, alignItems:"start" }}>
         <div>
           {/* Barra de búsqueda + botón de escanear */}
           <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
@@ -2436,7 +2436,6 @@ function VentaPage({ ctx }) {
               ))}
             </div>
           )}
-          <input style={{ ...G.inp(), marginBottom:10 }} placeholder="Nombre cliente (opcional)" value={cliente} onChange={e => setCliente(e.target.value)} />
           <div style={{ borderTop:"1px solid #f0f0f0", paddingTop:12, marginBottom:14 }}>
             <div style={{ display:"flex", justifyContent:"space-between", fontWeight:800, fontSize:17 }}><span>Total</span><span>{fmtMoney(subtotal, config.moneda)}</span></div>
           </div>
@@ -2453,6 +2452,7 @@ function VentaPage({ ctx }) {
 
       {showCobro && (
         <Modal title="Completar venta" subtitle={`Subtotal: ${fmtMoney(subtotal, config.moneda)}`} onClose={() => setShowCobro(false)} width={400}>
+          <input style={{ ...G.inp(), marginBottom:14 }} placeholder="Nombre cliente (opcional)" value={cliente} onChange={e => setCliente(e.target.value)} />
           <div style={{ marginBottom:14 }}>
             <div style={{ fontSize:12, color:"#999", marginBottom:6, fontWeight:600 }}>Descuento</div>
             <div style={{ display:"flex", marginBottom:8 }}>
