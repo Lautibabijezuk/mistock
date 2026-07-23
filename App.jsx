@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, Component } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
-import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera } from "lucide-react";
+import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu } from "lucide-react";
 import * as XLSX from "xlsx";
 
 // ═══════════════════════════════════════════════════════════
@@ -49,6 +49,15 @@ const sb = {
   async getSession() {
     const { data } = await _sb.auth.getSession();
     return data.session;
+  },
+  async resetPasswordForEmail(email) {
+    const redirectTo = `${window.location.origin}/login`;
+    const { error } = await _sb.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) throw new Error(error.message);
+  },
+  async updatePassword(newPassword) {
+    const { error } = await _sb.auth.updateUser({ password: newPassword });
+    if (error) throw new Error(error.message);
   },
 
   async getNegocio(userId) {
@@ -103,6 +112,7 @@ const dbToProduct = r => ({
   laboratorio: r.laboratorio||'', medida: r.medida||'', material: r.material||'',
   codigoBarras: r.codigo_barras||'', unidadMedida: r.unidad_medida||'',
   origen: r.origen||'', edadRecomendada: r.edad_recomendada||'', editorial: r.editorial||'',
+  especie: r.especie||'',
 });
 const productToDb = (p, negocioId) => ({
   id: p.id, negocio_id: negocioId, nombre: p.nombre, descripcion: p.descripcion||'',
@@ -111,6 +121,10 @@ const productToDb = (p, negocioId) => ({
   talles: p.talles||[], colores: p.colores||[], stock_por_talle: p.stockPorTalle||{},
   imagen: p.imagen||'', marca: p.marca||'', temporada: p.temporada||'',
   vencimiento: p.vencimiento||'', codigo_barras: p.codigoBarras||null,
+  modelo: p.modelo||'', garantia: p.garantia||'', laboratorio: p.laboratorio||'',
+  medida: p.medida||'', material: p.material||'', unidad_medida: p.unidadMedida||'',
+  origen: p.origen||'', edad_recomendada: p.edadRecomendada||'', editorial: p.editorial||'',
+  especie: p.especie||'',
 });
 const dbToVenta = r => ({
   id: r.id, numero: r.numero, fecha: r.fecha, cliente: r.cliente,
@@ -129,6 +143,7 @@ const ventaToDb = (v, negocioId) => ({
 const dbToConfig = n => ({
   nombre: n.nombre, moneda: n.moneda||'$', dueno: n.dueno||'', rubro: n.rubro||'',
   telefono: n.telefono||'', instagram: n.instagram||'', logo: n.logo||'',
+  direccion: n.direccion||'',
   cuit: n.cuit||'', razonSocial: n.razon_social||'', tipoContrib: n.tipo_contrib||'monotributista',
   puntoVenta: n.punto_venta||'0001', condicionIVA: n.condicion_iva||'Monotributista',
   facturacionActiva: n.facturacion_activa||false,
@@ -139,10 +154,12 @@ const dbToConfig = n => ({
   mpPreapprovalId: n.mp_preapproval_id || null,
   paymentFailedAt: n.payment_failed_at || null,
   subscriptionStartedAt: n.subscription_started_at || null,
+  accesoManualHasta: n.acceso_manual_hasta || null,
 });
 const configToDb = c => ({
   nombre: c.nombre, moneda: c.moneda, dueno: c.dueno, rubro: c.rubro,
   telefono: c.telefono, instagram: c.instagram, logo: c.logo,
+  direccion: c.direccion,
   cuit: c.cuit, razon_social: c.razonSocial, tipo_contrib: c.tipoContrib,
   punto_venta: c.puntoVenta, condicion_iva: c.condicionIVA,
   facturacion_activa: c.facturacionActiva,
@@ -179,7 +196,7 @@ const addDays = (d, n) => { const dt = new Date(d + "T12:00:00"); dt.setDate(dt.
 const subDays = (d, n) => addDays(d, -n);
 const monthLabel = (ym) => { const [y, m] = ym.split("-"); return new Date(+y, +m - 1, 1).toLocaleDateString("es-AR", { month: "long", year: "numeric" }); };
 
-const RUBROS = ["👗 Ropa / Indumentaria","🏠 Bazar / Hogar","🍬 Kiosko / Despensa","🔧 Ferretería / Construcción","💊 Farmacia / Perfumería","🧸 Juguetería","📚 Librería / Papelería","📱 Electrónica / Tecnología","🥬 Almacén / Verdulería","🏪 Otro / General"];
+const RUBROS = ["👗 Ropa / Indumentaria","👟 Calzado","🏠 Bazar / Hogar","🍬 Kiosko / Despensa","🛒 Supermercado / Autoservicio","🔧 Ferretería / Construcción","💊 Farmacia / Perfumería","💄 Perfumería / Cosmética","🧸 Juguetería","📚 Librería / Papelería","📱 Electrónica / Tecnología","🥬 Almacén / Verdulería","🐾 Pet Shop","🍷 Vinoteca / Bebidas","🥖 Panadería / Pastelería","🥩 Carnicería / Fiambrería","🕶️ Óptica","🎉 Regalería / Cotillón","🌱 Vivero / Jardinería","🏪 Otro / General"];
 const PAGOS = ["Efectivo","Tarjeta débito","Tarjeta crédito","Transferencia","Mercado Pago","Otro"];
 // Categorías dinámicas por rubro
 const CATS_POR_RUBRO = {
@@ -235,13 +252,65 @@ const CATS_POR_RUBRO = {
     "Granos y Cereales","Condimentos y Salsas","Congelados","Limpieza",
     "Artículos de Higiene","Fiambres","Otros"
   ],
+  "👟 Calzado": [
+    "Zapatillas","Zapatos de Vestir","Botas y Botinetas","Sandalias","Ojotas",
+    "Calzado Deportivo","Calzado Infantil","Pantuflas","Plantillas y Accesorios","Otros"
+  ],
+  "🐾 Pet Shop": [
+    "Alimento para Perros","Alimento para Gatos","Snacks y Premios","Accesorios",
+    "Higiene y Cuidado","Juguetes","Correas y Collares","Camas y Casas",
+    "Peceras y Acuarios","Aves y Roedores","Otros"
+  ],
+  "🍷 Vinoteca / Bebidas": [
+    "Vinos Tintos","Vinos Blancos","Vinos Rosados","Espumantes y Champagne",
+    "Cervezas","Whisky y Destilados","Vodka y Gin","Aperitivos","Licores",
+    "Sin Alcohol","Accesorios","Otros"
+  ],
+  "💄 Perfumería / Cosmética": [
+    "Perfumes","Maquillaje","Cuidado Facial","Cuidado Capilar","Cuidado Corporal",
+    "Esmaltes y Uñas","Accesorios de Belleza","Sets de Regalo","Otros"
+  ],
+  "🥖 Panadería / Pastelería": [
+    "Panes","Facturas y Medialunas","Tortas y Tartas","Galletitas","Pastelería Fina",
+    "Sándwiches","Bebidas","Productos sin TACC","Otros"
+  ],
+  "🥩 Carnicería / Fiambrería": [
+    "Vacuno","Cerdo","Pollo","Cordero","Achuras","Embutidos","Fiambres",
+    "Quesos","Congelados","Otros"
+  ],
+  "🕶️ Óptica": [
+    "Anteojos de Sol","Anteojos Recetados","Lentes de Contacto","Armazones",
+    "Accesorios","Estuches y Cadenas","Líquidos y Limpieza","Otros"
+  ],
+  "🎉 Regalería / Cotillón": [
+    "Globos","Decoración de Fiestas","Velas","Bolsas de Regalo","Papel de Regalo",
+    "Cotillón Temático","Piñatas","Souvenirs","Otros"
+  ],
+  "🛒 Supermercado / Autoservicio": [
+    "Almacén (Conservas y Enlatados)","Granos y Legumbres","Lácteos y Huevos",
+    "Fiambres y Quesos","Panificados","Bebidas con Alcohol","Bebidas sin Alcohol",
+    "Limpieza del Hogar","Higiene Personal","Congelados","Golosinas y Snacks",
+    "Frutas y Verduras","Carnes","Bazar y Descartables","Otros"
+  ],
+  "🌱 Vivero / Jardinería": [
+    "Plantas","Macetas y Contenedores","Tierra y Sustratos","Fertilizantes y Abonos",
+    "Semillas","Herramientas de Jardín","Riego","Insecticidas y Fungicidas",
+    "Decoración de Jardín","Otros"
+  ],
   "🏪 Otro / General": [
     "General","Producto","Servicio","Insumos","Equipamiento","Accesorios","Otros"
   ],
 };
 const CATS_PROD_FALLBACK = ["General","Producto","Servicio","Accesorios","Insumos","Otros"];
 const CATS_GASTO = ["Alquiler","Servicios","Sueldos","Mercadería","Marketing","Transporte","Mantenimiento","Impuestos","Otro"];
-const TALLES_PRESET = { "Ropa — XS al XXL": ["XS","S","M","L","XL","XXL"], "Calzado — 35 al 45": ["35","36","37","38","39","40","41","42","43","44","45"], "Niños — 2 al 16": ["2","4","6","8","10","12","14","16"], "Único": ["Único"] };
+const TALLES_PRESET = {
+  "Ropa — XS al XXL": ["XS","S","M","L","XL","XXL"],
+  "Jeans — Talle USA": ["26","28","30","32","34","36","38","40","42","44"],
+  "Jeans — Talle EU": ["36","38","40","42","44","46","48","50","52"],
+  "Calzado — 35 al 45": ["35","36","37","38","39","40","41","42","43","44","45"],
+  "Niños — 2 al 16": ["2","4","6","8","10","12","14","16"],
+  "Único": ["Único"],
+};
 const COLORES_DEFAULT = ["Azul Marino","Blanco","Negro","Rojo","Verde","Amarillo","Rosa","Gris","Beige","Marrón","Celeste","Violeta"];
 const PIE_COLORS = ["#111","#16a34a","#2563eb","#d97706","#dc2626","#7c3aed","#0891b2","#ea580c"];
 
@@ -577,7 +646,7 @@ function CerrarCajaModal({ caja, sales, config, setCaja, saveCaja, onClose }) {
         })()}
 
         <div style={{ textAlign:"center", paddingTop:12, borderTop:"1px solid #f0f0f0", fontSize:11, color:"#bbb" }}>
-          Cierre generado a las {ahora} · MiStock
+          Cierre generado a las {ahora} · MiLocal
         </div>
       </div>
 
@@ -671,7 +740,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
         <div style={{ fontSize:13, color:"#888", marginBottom:16 }}>
           {side === "dev" ? "¿Qué talle devuelve el cliente?" : "¿Qué talle se lleva el cliente?"}
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:20 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:20 }}>
           {(prod.talles||[]).map(t => {
             const cnt = spt[t] || 0;
             const sinStock = side === "lleva" && cnt === 0;
@@ -741,7 +810,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
           <div style={{ marginBottom:12 }}>
             <input style={{ ...G.inp({ marginBottom:10 }) }} placeholder="Buscar producto o SKU..." value={search} onChange={e => setSearch(e.target.value)} autoFocus />
             {filtrados.length > 0 ? (
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, maxHeight:320, overflowY:"auto" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, maxHeight:320, overflowY:"auto" }}>
                 {filtrados.map(p => {
                   const totalStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
                   const inList = list.filter(i => i.id === p.id).reduce((a,i)=>a+i.cantidad,0);
@@ -808,7 +877,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
 
   return (
     <Modal title="Cambio de Productos" subtitle="Registrá qué devuelve el cliente y qué se lleva" onClose={onClose} width={780}>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, marginBottom:20 }}>
         <SidePanel label="Productos que Devuelve" list={devuelve} setList={setDevuelve} search={searchDev} setSearch={setSearchDev} showSearch={showSearchDev} setShowSearch={setShowSearchDev} accentColor="#2563eb" soloConStock={false} />
         <SidePanel label="Productos que se Lleva" list={lleva} setList={setLleva} search={searchLleva} setSearch={setSearchLleva} showSearch={showSearchLleva} setShowSearch={setShowSearchLleva} accentColor="#16a34a" soloConStock={true} />
       </div>
@@ -832,23 +901,33 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
 }
 
 // ── Nuevo Producto ─────────────────────────────────────────
-const RUBROS_CON_TALLES = ["👗 Ropa / Indumentaria"];
-const RUBROS_CON_COLORES = ["👗 Ropa / Indumentaria", "🏠 Bazar / Hogar", "🧸 Juguetería"];
+const RUBROS_CON_TALLES = ["👗 Ropa / Indumentaria", "👟 Calzado"];
+const RUBROS_CON_COLORES = ["👗 Ropa / Indumentaria", "🏠 Bazar / Hogar", "🧸 Juguetería", "👟 Calzado"];
 const CAMPOS_EXTRA_POR_RUBRO = {
   "👗 Ropa / Indumentaria": ["temporada"],
+  "👟 Calzado": ["marca"],
   "📱 Electrónica / Tecnología": ["marca","modelo","garantia"],
   "💊 Farmacia / Perfumería": ["laboratorio","vencimiento"],
+  "💄 Perfumería / Cosmética": ["marca","vencimiento"],
   "🔧 Ferretería / Construcción": ["marca","medida","material"],
   "🍬 Kiosko / Despensa": ["marca","vencimiento","codigoBarras"],
   "🥬 Almacén / Verdulería": ["unidadMedida","vencimiento","origen"],
   "🏠 Bazar / Hogar": ["marca","material"],
   "🧸 Juguetería": ["marca","edadRecomendada"],
   "📚 Librería / Papelería": ["marca","editorial"],
+  "🐾 Pet Shop": ["marca","especie","vencimiento"],
+  "🍷 Vinoteca / Bebidas": ["marca","origen","vencimiento"],
+  "🥖 Panadería / Pastelería": ["unidadMedida","vencimiento"],
+  "🥩 Carnicería / Fiambrería": ["unidadMedida","vencimiento"],
+  "🕶️ Óptica": ["marca","modelo"],
+  "🎉 Regalería / Cotillón": ["marca"],
+  "🛒 Supermercado / Autoservicio": ["marca","vencimiento","codigoBarras"],
+  "🌱 Vivero / Jardinería": ["marca","vencimiento"],
   "🏪 Otro / General": [],
 };
-const LABELS_CAMPOS = { temporada:"Temporada", marca:"Marca", modelo:"Modelo", garantia:"Garantía", laboratorio:"Laboratorio", vencimiento:"Vencimiento", medida:"Medida", material:"Material", codigoBarras:"Código de barras", unidadMedida:"Unidad de medida", origen:"Origen", edadRecomendada:"Edad recomendada", editorial:"Editorial" };
+const LABELS_CAMPOS = { temporada:"Temporada", marca:"Marca", modelo:"Modelo", garantia:"Garantía", laboratorio:"Laboratorio", vencimiento:"Vencimiento", medida:"Medida", material:"Material", codigoBarras:"Código de barras", unidadMedida:"Unidad de medida", origen:"Origen", edadRecomendada:"Edad recomendada", editorial:"Editorial", especie:"Especie" };
 
-const RUBROS_CON_VENCIMIENTO = ["🍬 Kiosko / Despensa", "💊 Farmacia / Perfumería", "🥬 Almacén / Verdulería"];
+const RUBROS_CON_VENCIMIENTO = ["🍬 Kiosko / Despensa", "💊 Farmacia / Perfumería", "💄 Perfumería / Cosmética", "🥬 Almacén / Verdulería", "🐾 Pet Shop", "🍷 Vinoteca / Bebidas", "🥖 Panadería / Pastelería", "🥩 Carnicería / Fiambrería", "🛒 Supermercado / Autoservicio", "🌱 Vivero / Jardinería"];
 
 function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
   const esModa = RUBROS_CON_TALLES.includes(rubro);
@@ -857,20 +936,24 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
   const [error, setError] = useState("");
   const [escanerAbierto, setEscanerAbierto] = useState(false);
 
+  // Calzado arranca con numeración 35-45, el resto de rubros con talles usa XS-XXL
+  const tallesDefault = rubro === "👟 Calzado" ? ["35","36","37","38","39","40","41","42","43","44","45"] : ["XS","S","M","L","XL","XXL"];
+  const stockPorTalleDefault = Object.fromEntries(tallesDefault.map(t => [t, 0]));
+
   const [f, setF] = useState(() => {
     const defaults = {
       nombre:"", descripcion:"", categoria:"", sku:"", precio:"", costo:"", imagen:"",
-      talles: esModa ? ["XS","S","M","L","XL","XXL"] : [],
-      stockPorTalle: esModa ? { XS:0, S:0, M:0, L:0, XL:0, XXL:0 } : {},
+      talles: esModa ? tallesDefault : [],
+      stockPorTalle: esModa ? stockPorTalleDefault : {},
       colores:[], talleCustom:"", colorCustom:"", stockMinimo:3, stock:0,
       temporada:"", marca:"", modelo:"", garantia:"", laboratorio:"", vencimiento:"",
-      medida:"", material:"", codigoBarras:"", unidadMedida:"", origen:"", edadRecomendada:"", editorial:""
+      medida:"", material:"", codigoBarras:"", unidadMedida:"", origen:"", edadRecomendada:"", editorial:"", especie:""
     };
     if (!prod) return defaults;
     // Deep copy + merge with defaults for missing fields
     const base = { ...defaults, ...JSON.parse(JSON.stringify(prod)) };
     // Ensure arrays exist
-    if (!Array.isArray(base.talles)) base.talles = esModa ? ["XS","S","M","L","XL","XXL"] : [];
+    if (!Array.isArray(base.talles)) base.talles = esModa ? tallesDefault : [];
     if (!Array.isArray(base.colores)) base.colores = [];
     if (!base.stockPorTalle || typeof base.stockPorTalle !== "object") base.stockPorTalle = {};
     // Init stockPorTalle for talles that don't have it
@@ -935,7 +1018,7 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
       <FieldRow label="Descripción">
         <textarea style={{ ...G.inp(), minHeight:70, resize:"vertical" }} value={f.descripcion} onChange={e => u("descripcion", e.target.value)} placeholder="Describe el producto..." />
       </FieldRow>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
         <FieldRow label="Categoría">
           <select style={G.inp()} value={f.categoria} onChange={e => u("categoria", e.target.value)}>
             <option value="">Seleccionar</option>
@@ -972,7 +1055,7 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
 
       {/* Campos extra dinámicos por rubro */}
       {camposExtra.length > 0 && (
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
           {camposExtra.map(campo => (
             <FieldRow key={campo} label={LABELS_CAMPOS[campo] || campo}>
               <input style={G.inp()} value={f[campo]||""} onChange={e => u(campo, e.target.value)} placeholder={LABELS_CAMPOS[campo] || campo} />
@@ -1072,7 +1155,7 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
             {Object.keys(TALLES_PRESET).map(k => <option key={k}>{k}</option>)}
           </select>
           {/* Grilla de talles con input de stock */}
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:10 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:10 }}>
             {(f.talles||[]).map(t => {
               const cnt = f.stockPorTalle?.[t] || 0;
               return (
@@ -1101,7 +1184,7 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
       {tieneColores && (
         <div style={{ marginBottom:20 }}>
           <label style={G.label}>Colores Disponibles</label>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:10 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:8, marginBottom:10 }}>
             {COLORES_TODOS.map(c => (
               <button key={c} onClick={() => toggleColor(c)} style={{ padding:"9px 12px", borderRadius:8, border:`1.5px solid ${coloresExistentes.includes(c)?"#111":"#e5e7eb"}`, fontSize:13, cursor:"pointer", background:coloresExistentes.includes(c)?"#f9f9f9":"#fff", fontWeight:coloresExistentes.includes(c)?700:400 }}>{c}</button>
             ))}
@@ -1222,7 +1305,7 @@ function GastoModal({ tipoInicial, mes, onSave, onClose }) {
       <FieldRow label="Descripción *">
         <input style={G.inp()} value={f.descripcion} onChange={e => u("descripcion", e.target.value)} placeholder="Ej: Alquiler del local" autoFocus />
       </FieldRow>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
         <FieldRow label="Monto *">
           <input style={G.inp()} type="number" min={0} step="0.01" value={f.monto} onChange={e => u("monto", e.target.value)} placeholder="0.00" />
         </FieldRow>
@@ -1345,7 +1428,7 @@ function RemitoModal({ proveedores, products, setProducts, saveProducts, rubro, 
             {prod.colores.map(c => <span key={c} style={{ background:"#f3f4f6", borderRadius:20, padding:"4px 12px", fontSize:12, color:"#555" }}>{c}</span>)}
           </div>
         )}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:20 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10, marginBottom:20 }}>
           {(prod.talles||[]).map(t => (
             <div key={t} style={{ background:"#f9fafb", borderRadius:10, padding:"12px 10px", textAlign:"center", border:"1px solid #e5e7eb" }}>
               <div style={{ fontWeight:700, fontSize:15, marginBottom:4 }}>{t}</div>
@@ -1375,7 +1458,7 @@ function RemitoModal({ proveedores, products, setProducts, saveProducts, rubro, 
 
   return (
     <Modal title="Nuevo Remito de Compra" onClose={onClose} width={780}>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
         <FieldRow label="Número de Remito">
           <input style={G.inp()} value={f.numero} onChange={e => u("numero", e.target.value)} placeholder="Ej: R-001" autoFocus />
         </FieldRow>
@@ -1399,7 +1482,7 @@ function RemitoModal({ proveedores, products, setProducts, saveProducts, rubro, 
 
         {/* Grid de cards — igual a Nueva Venta */}
         {search && filtProd.length > 0 && (
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:12, maxHeight:340, overflowY:"auto" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:12, maxHeight:340, overflowY:"auto" }}>
             {filtProd.map(p => {
               const tieneTalles = esModa && (p.talles||[]).length > 0;
               const totalStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
@@ -1484,7 +1567,7 @@ function ProveedorModal({ prov, onSave, onClose }) {
       <FieldRow label="Persona de Contacto">
         <input style={G.inp()} value={f.contacto||""} onChange={e => setF(p => ({ ...p, contacto:e.target.value }))} placeholder="Nombre del contacto" />
       </FieldRow>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
         <FieldRow label="Teléfono">
           <input style={G.inp()} value={f.telefono} onChange={e => setF(p => ({ ...p, telefono:e.target.value }))} placeholder="+54 9 11 1234-5678" />
         </FieldRow>
@@ -1542,7 +1625,7 @@ function TicketVentaModal({ venta, config, onClose }) {
         </div>
 
         {/* Ticket info */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4, fontSize:12, marginBottom:20 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:4, fontSize:12, marginBottom:20 }}>
           <div><span style={{ color:"#999" }}>Ticket</span><div style={{ fontWeight:700, fontSize:14 }}>#{String(venta.numero).padStart(6,"0")}</div></div>
           <div style={{ textAlign:"right" }}><span style={{ color:"#999" }}>Fecha y hora</span><div style={{ fontWeight:600, fontSize:13 }}>{fmtDate(venta.fecha)} {hora}</div></div>
           {venta.cliente && <div><span style={{ color:"#999" }}>Cliente</span><div style={{ fontWeight:600 }}>{venta.cliente}</div></div>}
@@ -1738,7 +1821,7 @@ function DashboardPage({ ctx }) {
   };
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       {showCaja && <AbrirCajaModal setCaja={setCaja} saveCaja={ctx.saveCaja} onClose={() => setShowCaja(false)} />}
       {showCerrar && <CerrarCajaModal caja={caja} sales={sales} config={config} setCaja={setCaja} saveCaja={ctx.saveCaja} onClose={() => setShowCerrar(false)} />}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
@@ -1758,13 +1841,13 @@ function DashboardPage({ ctx }) {
           <button onClick={() => setPage("inventario")} style={{ background:"none", border:"none", color:"#92400e", fontWeight:700, cursor:"pointer", fontSize:12, textDecoration:"underline" }}>Ver inventario</button>
         </div>
       )}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:24 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:14, marginBottom:24 }}>
         <StatCard icon={<DollarSign size={19}/>} bg="#dcfce7" label="Ventas del día" value={fmtMoney(totalHoy, config.moneda)} badge="Hoy" />
         <StatCard icon={<TrendingUp size={19}/>} bg="#ede9fe" label="Ventas del mes" value={fmtMoney(totalMes, config.moneda)} badge="Mes" />
         <StatCard icon={<Package size={19}/>} bg="#dbeafe" label="Unidades en stock" value={totalStock} />
         <StatCard icon={<AlertTriangle size={19}/>} bg="#fef3c7" label="Stock bajo" value={stockBajoCount} textColor={stockBajoCount > 0 ? "#d97706" : "#111"} />
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20, marginBottom:20 }}>
         <div style={G.card()}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <h3 style={{ margin:0, fontSize:15, fontWeight:700 }}>Ventas recientes</h3>
@@ -1802,7 +1885,7 @@ function DashboardPage({ ctx }) {
           ))}
         </div>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20 }}>
         <div style={G.card()}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
             <h3 style={{ margin:0, fontSize:15, fontWeight:700, display:"flex", alignItems:"center", gap:6 }}><Flame size={15} color="#f97316"/>Productos Calientes</h3>
@@ -1873,8 +1956,12 @@ function DashboardPage({ ctx }) {
 // ── Selector de Talle para Nueva Venta ────────────────────
 function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
   const [talleSelec, setTalleSelec] = useState(null);
+  const [colorSelec, setColorSelec] = useState(null);
   const stockPorTalle = prod.stockPorTalle || {};
   const totalDisp = Object.values(stockPorTalle).reduce((a,v) => a+(+v||0), 0);
+  const tieneTalles = (prod.talles||[]).length > 0;
+  const tieneColores = (prod.colores||[]).length > 0;
+  const faltaElegir = (tieneTalles && !talleSelec) || (tieneColores && !colorSelec);
 
   return (
     <Modal title={prod.nombre} subtitle={prod.categoria} onClose={onClose} width={420}>
@@ -1883,47 +1970,59 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
       )}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
         <span style={{ fontWeight:800, fontSize:22, color:"#111" }}>{fmtMoney(prod.precio, moneda)}</span>
-        <span style={{ fontSize:12, color:"#888" }}>{totalDisp} unidades disponibles</span>
+        {tieneTalles && <span style={{ fontSize:12, color:"#888" }}>{totalDisp} unidades disponibles</span>}
       </div>
 
-      {/* Colores */}
-      {prod.colores?.length > 0 && (
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
-          {(prod.colores||[]).map(c => (
-            <span key={c} style={{ background:"#f3f4f6", borderRadius:20, padding:"4px 12px", fontSize:12, color:"#555", fontWeight:500 }}>{c}</span>
-          ))}
+      {/* Colores — seleccionable */}
+      {tieneColores && (
+        <div style={{ marginBottom:20 }}>
+          <div style={{ fontSize:13, fontWeight:600, color:"#666", marginBottom:10 }}>Seleccionar color:</div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {(prod.colores||[]).map(c => {
+              const selec = colorSelec === c;
+              return (
+                <button key={c} onClick={() => setColorSelec(c)} style={{
+                  background: selec ? "#111" : "#f3f4f6", borderRadius:20, padding:"7px 16px",
+                  fontSize:13, color: selec ? "#fff" : "#555", fontWeight: selec ? 700 : 500,
+                  border: selec ? "2px solid #111" : "2px solid transparent", cursor:"pointer", transition:"all .15s",
+                }}>{c}</button>
+              );
+            })}
+          </div>
         </div>
       )}
 
       {/* Talles */}
-      <div style={{ marginBottom:20 }}>
-        <div style={{ fontSize:13, fontWeight:600, color:"#666", marginBottom:10 }}>Seleccionar talle:</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
-          {(prod.talles||[]).map(t => {
-            const cnt = stockPorTalle[t] || 0;
-            const agotado = cnt === 0;
-            const selec = talleSelec === t;
-            return (
-              <button key={t} onClick={() => !agotado && setTalleSelec(t)} style={{
-                borderRadius:10, border:`2px solid ${selec?"#111":agotado?"#f5f5f5":"#e5e7eb"}`,
-                padding:"10px 8px", cursor:agotado?"not-allowed":"pointer", textAlign:"center",
-                background: selec?"#111":agotado?"#fafafa":"#fff",
-                opacity: agotado ? 0.45 : 1, transition:"all .15s"
-              }}>
-                <div style={{ fontSize:13, fontWeight:700, color:selec?"#fff":agotado?"#bbb":"#111" }}>{t}</div>
-                <div style={{ fontSize:11, color:selec?"#ccc":agotado?"#ccc":"#888", marginTop:2 }}>{cnt} ud.</div>
-              </button>
-            );
-          })}
+      {tieneTalles && (
+        <div style={{ marginBottom:20 }}>
+          <div style={{ fontSize:13, fontWeight:600, color:"#666", marginBottom:10 }}>Seleccionar talle:</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8 }}>
+            {(prod.talles||[]).map(t => {
+              const cnt = stockPorTalle[t] || 0;
+              const agotado = cnt === 0;
+              const selec = talleSelec === t;
+              return (
+                <button key={t} onClick={() => !agotado && setTalleSelec(t)} style={{
+                  borderRadius:10, border:`2px solid ${selec?"#111":agotado?"#f5f5f5":"#e5e7eb"}`,
+                  padding:"10px 8px", cursor:agotado?"not-allowed":"pointer", textAlign:"center",
+                  background: selec?"#111":agotado?"#fafafa":"#fff",
+                  opacity: agotado ? 0.45 : 1, transition:"all .15s"
+                }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:selec?"#fff":agotado?"#bbb":"#111" }}>{t}</div>
+                  <div style={{ fontSize:11, color:selec?"#ccc":agotado?"#ccc":"#888", marginTop:2 }}>{cnt} ud.</div>
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       <button
-        style={{ ...G.btn(talleSelec ? "dark" : "light"), width:"100%", justifyContent:"center", padding:"13px", fontSize:15 }}
-        onClick={() => { if (talleSelec) { onSelect(talleSelec, stockPorTalle[talleSelec]); onClose(); } }}
-        disabled={!talleSelec}
+        style={{ ...G.btn(!faltaElegir ? "dark" : "light"), width:"100%", justifyContent:"center", padding:"13px", fontSize:15 }}
+        onClick={() => { if (!faltaElegir) { onSelect(talleSelec, tieneTalles ? stockPorTalle[talleSelec] : null, colorSelec); onClose(); } }}
+        disabled={faltaElegir}
       >
-        {talleSelec ? `Agregar talle ${talleSelec} al carrito` : "Seleccioná un talle"}
+        {faltaElegir ? (tieneTalles && !talleSelec ? "Seleccioná un talle" : "Seleccioná un color") : "Agregar al carrito"}
       </button>
     </Modal>
   );
@@ -1978,7 +2077,7 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
               <div>{q ? `Sin resultados para "${q}"` : "No hay productos con stock"}</div>
             </div>
           ) : (
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:12 }}>
               {filtrados.map(p => {
                 const inCart = cart.filter(i => (i.productoId||i.id) === p.id);
                 const totalEnCarrito = inCart.reduce((a, i) => a + i.cantidad, 0);
@@ -2036,6 +2135,7 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
 function VentaPage({ ctx }) {
   const { config, caja, setCaja, products, setProducts, sales, setSales } = ctx;
   const esModa = RUBROS_CON_TALLES.includes(config.rubro);
+  const tieneColores = RUBROS_CON_COLORES.includes(config.rubro);
   const [search, setSearch] = useState("");
   const [showBuscador, setShowBuscador] = useState(false);
   const [cart, setCart] = useState([]);
@@ -2091,21 +2191,24 @@ function VentaPage({ ctx }) {
   const total = Math.max(0, subtotal - descMonto);
   const cambio = metodoPago === "Efectivo" && +efectivoDado > total ? +efectivoDado - total : 0;
 
-  const addToCart = (prod, talle = null, stockMax = null) => {
-    const cartKey = talle ? `${prod.id}__${talle}` : prod.id;
+  const addToCart = (prod, talle = null, stockMax = null, color = null) => {
+    const cartKey = [prod.id, talle, color].filter(Boolean).join("__") || prod.id;
     const maxStock = stockMax !== null ? stockMax : prod.stock;
+    const sufijo = [talle ? `T.${talle}` : null, color].filter(Boolean).join(" - ");
     setCart(prev => {
       const idx = prev.findIndex(i => i.cartKey === cartKey);
       if (idx >= 0) {
         if (prev[idx].cantidad >= maxStock) return prev;
         return prev.map((it, i) => i === idx ? { ...it, cantidad: it.cantidad + 1 } : it);
       }
-      return [...prev, { cartKey, id: prod.id, nombre: prod.nombre + (talle ? ` — T.${talle}` : ""), precio: prod.precio, cantidad: 1, stock: maxStock, talle, productoId: prod.id }];
+      return [...prev, { cartKey, id: prod.id, nombre: prod.nombre + (sufijo ? ` — ${sufijo}` : ""), precio: prod.precio, cantidad: 1, stock: maxStock, talle, color, productoId: prod.id }];
     });
   };
 
   const handleProdClick = (prod) => {
-    if (esModa && prod.talles?.length > 0 && prod.stockPorTalle) {
+    const tieneTallesProd = esModa && prod.talles?.length > 0 && prod.stockPorTalle;
+    const tieneColoresProd = tieneColores && prod.colores?.length > 0;
+    if (tieneTallesProd || tieneColoresProd) {
       setProdTalle(prod);
     } else {
       addToCart(prod);
@@ -2128,7 +2231,7 @@ function VentaPage({ ctx }) {
     try {
     const venta = {
       id: uid(), numero: sales.reduce((mx, s) => Math.max(mx, +s.numero || 0), 0) + 1, fecha: todayStr(), cliente, metodoPago,
-      items: cart.map(i => ({ productoId: i.productoId || i.id, nombre: i.nombre, cantidad: i.cantidad, precio: i.precio, talle: i.talle || null })),
+      items: cart.map(i => ({ productoId: i.productoId || i.id, nombre: i.nombre, cantidad: i.cantidad, precio: i.precio, talle: i.talle || null, color: i.color || null })),
       subtotal, descuento: descMonto, descuentoTipo: descTipo, total, efectivoDado: +efectivoDado || 0, cambio: Math.round(cambio)
     };
     const affectedIds = new Set(cart.map(i => i.productoId || i.id));
@@ -2161,7 +2264,7 @@ function VentaPage({ ctx }) {
   };
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       {showCaja && <AbrirCajaModal setCaja={setCaja} onClose={() => setShowCaja(false)} />}
       {ventaExito && !ventaParaFacturar && <VentaExitoModal venta={ventaExito} config={config} onClose={() => setVentaExito(null)} />}
       {ventaParaFacturar && (
@@ -2180,7 +2283,7 @@ function VentaPage({ ctx }) {
       )}
       {comprobanteVer && <ComprobanteModal venta={comprobanteVer} config={config} onClose={() => setComprobanteVer(null)} />}
       {showCambio && <CambioProductosModal products={products} setProducts={setProducts} saveProducts={ctx.saveProducts} rubro={config.rubro} onClose={() => setShowCambio(false)} />}
-      {prodTalle && <TalleSelectorModal prod={prodTalle} moneda={config.moneda} onSelect={(talle, stock) => addToCart(prodTalle, talle, stock)} onClose={() => setProdTalle(null)} />}
+      {prodTalle && <TalleSelectorModal prod={prodTalle} moneda={config.moneda} onSelect={(talle, stock, color) => addToCart(prodTalle, talle, stock, color)} onClose={() => setProdTalle(null)} />}
       {escanerAbierto && (
         <EscanerModal
           titulo="Escanear producto"
@@ -2205,7 +2308,7 @@ function VentaPage({ ctx }) {
         <button style={G.btn("outline")} onClick={() => setShowCambio(true)}><RefreshCw size={14}/> Cambio</button>
       </div>
       <CajaBanner caja={caja} onAbrir={() => setShowCaja(true)} />
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 370px", gap:24, alignItems:"start" }}>
+      <div className="venta-grid" style={{ display:"grid", gridTemplateColumns:"1fr 370px", gap:24, alignItems:"start" }}>
         <div>
           {/* Barra de búsqueda + botón de escanear */}
           <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
@@ -2229,7 +2332,7 @@ function VentaPage({ ctx }) {
           {products.length > 0 && (
             <>
               <div style={{ fontSize:12, fontWeight:600, color:"#999", marginBottom:10, textTransform:"uppercase", letterSpacing:"0.5px" }}>Accesos rápidos</div>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10 }}>
                 {products
                   .filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v => +v > 0) : p.stock > 0)
                   .slice(0, 4)
@@ -2601,7 +2704,7 @@ function ImportarExcelModal({ cats, onImport, onClose }) {
           </div>
           <div style={{ ...G.card({ background:"#f9fafb", padding:"16px 20px" }) }}>
             <div style={{ fontWeight:600, fontSize:13, marginBottom:10 }}>Compatible con cualquier sistema</div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, fontSize:12, color:"#666" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:8, fontSize:12, color:"#666" }}>
               {["Tiendanube","WooCommerce","Shopify","Odoo","Excel propio","Cualquier otro"].map(s => (
                 <div key={s} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:8, padding:"8px 12px", textAlign:"center" }}>✓ {s}</div>
               ))}
@@ -2616,7 +2719,7 @@ function ImportarExcelModal({ cats, onImport, onClose }) {
           <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:10, padding:"10px 16px", marginBottom:20, fontSize:13, color:"#166534" }}>
             <b>{rows.length} filas detectadas</b> · {headers.length} columnas · Revisá que los campos estén bien asignados
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:12, marginBottom:16 }}>
             {CAMPOS_IMPORT.map(({ key, label, required }) => (
               <div key={key}>
                 <label style={{ ...G.label, fontSize:12 }}>{label}{required && <span style={{ color:"#dc2626" }}> *</span>}</label>
@@ -2810,7 +2913,7 @@ function InventarioPage({ ctx }) {
   const [showImport, setShowImport] = useState(false);
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       {(showModal||editProd) && <ProductoModal key={editProd?.id || "new"} prod={editProd} onSave={onSaveProd} onClose={() => { setShowModal(false); setEditProd(null); }} cats={cats} rubro={config.rubro} />}
       {ajusteProd && <AjusteStockModal prod={ajusteProd} rubro={config.rubro} onSave={async upd => { const updated = { ...ajusteProd, ...upd }; setProducts(prev => prev.map(p => p.id===ajusteProd.id ? updated : p)); await ctx.saveProduct(updated); }} onClose={() => setAjusteProd(null)} />}
       {showImport && <ImportarExcelModal cats={cats} onImport={async nuevos => { setProducts(prev => [...prev, ...nuevos]); setShowImport(false); await ctx.saveProducts(nuevos); }} onClose={() => setShowImport(false)} />}
@@ -2841,7 +2944,7 @@ function InventarioPage({ ctx }) {
           <button style={G.btn("dark")} onClick={() => setShowModal(true)}><Plus size={14}/> Nuevo producto</button>
         </div>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
         {[["Total en Stock", totalStock, "#111"], ["Stock Bajo", stockBajo, "#d97706"], ["Sin Stock", sinStock, "#dc2626"]].map(([label,val,color]) => (
           <div key={label} style={G.card()}><div style={{ fontSize:13, color:"#999", marginBottom:4 }}>{label}</div><div style={{ fontSize:24, fontWeight:800, color }}>{val}</div></div>
         ))}
@@ -2970,7 +3073,7 @@ function HistorialPage({ ctx }) {
   };
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       {detalle && <DetalleVentaModal venta={detalle} moneda={config.moneda} config={config} onAnular={() => anular(detalle.id)} onClose={() => setDetalle(null)} onVerComprobante={detalle.factura?.estado==="emitida" ? () => { setComprobanteVer(detalle); setDetalle(null); } : null} />}
       {comprobanteVer && <ComprobanteModal venta={comprobanteVer} config={config} onClose={() => setComprobanteVer(null)} />}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
@@ -3027,7 +3130,28 @@ function EstadisticasPage({ ctx }) {
   const ingresos = vf.reduce((a,s) => a+s.total, 0);
   const ticket = vf.length > 0 ? ingresos / vf.length : 0;
 
-  const VISTAS = [{ v:"hora", l:"Ventas por hora" },{ v:"dia", l:"Ventas por día" },{ v:"mes", l:"Ventas por mes" },{ v:"anio", l:"Ventas por año" },{ v:"categoria", l:"Ventas por categoría" },{ v:"talla", l:"Ventas por talla" },{ v:"top", l:"Top productos" },{ v:"metodo", l:"Métodos de pago" }];
+  const VISTAS = [{ v:"hora", l:"Ventas por hora" },{ v:"dia", l:"Ventas por día" },{ v:"mes", l:"Ventas por mes" },{ v:"anio", l:"Ventas por año" },{ v:"categoria", l:"Ventas por categoría" },{ v:"talla", l:"Ventas por talles" },{ v:"color", l:"Ventas por color" },{ v:"top", l:"Productos más vendidos" },{ v:"top_menos", l:"Productos menos vendidos" },{ v:"metodo", l:"Métodos de pago" }];
+
+  // Ranking completo de productos: unidades vendidas + plata generada, en el rango de fechas elegido
+  const rankingProductos = useMemo(() => {
+    const porProducto = {}; // productoId -> { nombre, categoria, unidades, total }
+    vf.forEach(s => (s.items||[]).forEach(i => {
+      const key = i.productoId || i.nombre;
+      if (!porProducto[key]) {
+        const p = products.find(x => x.id === i.productoId);
+        porProducto[key] = { nombre: i.nombre, categoria: p?.categoria || "—", unidades: 0, total: 0 };
+      }
+      porProducto[key].unidades += i.cantidad;
+      porProducto[key].total += (i.precio||0) * i.cantidad;
+    }));
+    // Sumamos también los productos que NO tuvieron ninguna venta en el período (0 unidades)
+    products.forEach(p => {
+      if (!porProducto[p.id]) {
+        porProducto[p.id] = { nombre: p.nombre, categoria: p.categoria || "—", unidades: 0, total: 0 };
+      }
+    });
+    return Object.values(porProducto);
+  }, [vf, products]);
 
   const chartData = useMemo(() => {
     if (vista === "dia") { const m={}; vf.forEach(s=>{m[s.fecha]=(m[s.fecha]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f.slice(5),total:Math.round(t)})); }
@@ -3035,17 +3159,17 @@ function EstadisticasPage({ ctx }) {
     if (vista === "anio") { const m={}; vf.forEach(s=>{const k=s.fecha.slice(0,4);m[k]=(m[k]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f,total:Math.round(t)})); }
     if (vista === "hora") { const m={}; for(let h=0;h<24;h++)m[h]=0; vf.forEach(s=>{const d=new Date(s.fecha+"T12:00:00");m[d.getHours()]=(m[d.getHours()]||0)+s.total;}); return Object.entries(m).map(([h,t])=>({label:h+"hs",total:Math.round(t)})); }
     if (vista === "metodo") { const m={}; vf.forEach(s=>{m[s.metodoPago]=(m[s.metodoPago]||0)+s.total;}); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:Math.round(t)})); }
-    if (vista === "top") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{m[i.nombre]=(m[i.nombre]||0)+i.cantidad;})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([l,t])=>({label:l,total:t})); }
     if (vista === "categoria") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{const p=products.find(x=>x.id===i.productoId);const cat=p?.categoria||"Otro";m[cat]=(m[cat]||0)+i.precio*i.cantidad;})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:Math.round(t)})); }
-    if (vista === "talla") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{const p=products.find(x=>x.id===i.productoId);if(p?.talle){m[p.talle]=(m[p.talle]||0)+i.cantidad;}})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:t})); }
+    if (vista === "talla") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{if(i.talle){m[i.talle]=(m[i.talle]||0)+i.cantidad;}})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:t})); }
+    if (vista === "color") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{if(i.color){m[i.color]=(m[i.color]||0)+i.cantidad;}})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:t})); }
     return [];
   }, [vf, vista, products]);
 
   const esPie = vista === "metodo" || vista === "categoria";
-  const labelY = vista === "top" || vista === "talla" || vista === "hora" ? "unidades" : "ventas";
+  const labelY = vista === "top" || vista === "top_menos" || vista === "talla" || vista === "color" || vista === "hora" ? "unidades" : "ventas";
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       <div style={{ marginBottom:24 }}><h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Estadísticas de Ventas</h1><p style={{ margin:0, color:"#888", fontSize:14 }}>Analiza el rendimiento de tu negocio</p></div>
       <div style={{ ...G.card({ marginBottom:20 }) }}>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
@@ -3053,7 +3177,7 @@ function EstadisticasPage({ ctx }) {
             <button key={p} onClick={() => setPresetRange(p)} style={{ padding:"6px 14px", borderRadius:7, border:"1px solid #e5e7eb", cursor:"pointer", fontSize:12, background:preset===p?"#111":"#fff", color:preset===p?"#fff":"#374151", fontWeight:preset===p?600:400 }}>{p}</button>
           ))}
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:16 }}>
           <div><label style={{ fontSize:11, color:"#999", display:"block", marginBottom:4 }}>Fecha inicio</label><input type="date" style={G.inp()} value={fechaIni} onChange={e => { setFechaIni(e.target.value); setPreset(""); }} /></div>
           <div><label style={{ fontSize:11, color:"#999", display:"block", marginBottom:4 }}>Fecha fin</label><input type="date" style={G.inp()} value={fechaFin} onChange={e => { setFechaFin(e.target.value); setPreset(""); }} /></div>
           <div><label style={{ fontSize:11, color:"#999", display:"block", marginBottom:4 }}>Vista</label>
@@ -3063,16 +3187,49 @@ function EstadisticasPage({ ctx }) {
           </div>
         </div>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
         <StatCard icon={<DollarSign size={19}/>} bg="#dcfce7" label="Ingresos totales" value={fmtMoney(ingresos, config.moneda)} />
         <StatCard icon={<ShoppingBag size={19}/>} bg="#dbeafe" label="Ventas realizadas" value={vf.length} />
         <StatCard icon={<TrendingUp size={19}/>} bg="#ede9fe" label="Ticket promedio" value={fmtMoney(ticket, config.moneda)} />
       </div>
       <div style={G.card()}>
-        {chartData.length === 0 ? (
+        {(vista === "top" || vista === "top_menos") ? (
+          rankingProductos.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"52px 0", color:"#bbb" }}><div style={{ marginBottom:10, opacity:0.25, color:"#aaa" }}><TrendingUp size={36}/></div><div>Todavía no cargaste productos</div></div>
+          ) : (
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13.5 }}>
+                <thead>
+                  <tr style={{ borderBottom:"1px solid #e5e7eb" }}>
+                    <th style={{ padding:"10px 12px", textAlign:"left", fontWeight:600, color:"#888", width:50 }}>#</th>
+                    <th style={{ padding:"10px 12px", textAlign:"left", fontWeight:600, color:"#888" }}>Producto</th>
+                    <th style={{ padding:"10px 12px", textAlign:"left", fontWeight:600, color:"#888" }}>Categoría</th>
+                    <th style={{ padding:"10px 12px", textAlign:"right", fontWeight:600, color:"#888" }}>Unidades vendidas</th>
+                    <th style={{ padding:"10px 12px", textAlign:"right", fontWeight:600, color:"#888" }}>Plata generada</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...rankingProductos]
+                    .sort((a, b) => vista === "top" ? b.unidades - a.unidades : a.unidades - b.unidades)
+                    .map((p, i) => (
+                      <tr key={i} style={{ borderBottom:"1px solid #f5f5f5" }}>
+                        <td style={{ padding:"10px 12px", color:"#aaa", fontWeight:600 }}>{i + 1}</td>
+                        <td style={{ padding:"10px 12px", fontWeight:600 }}>{p.nombre}</td>
+                        <td style={{ padding:"10px 12px", color:"#888" }}>{p.categoria}</td>
+                        <td style={{ padding:"10px 12px", textAlign:"right", fontWeight:700, color: p.unidades === 0 ? "#dc2626" : "#111" }}>
+                          {p.unidades === 0 ? "Sin ventas" : `${p.unidades} uds`}
+                        </td>
+                        <td style={{ padding:"10px 12px", textAlign:"right", color:"#888" }}>{fmtMoney(p.total, config.moneda)}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : chartData.length === 0 ? (
           <div style={{ textAlign:"center", padding:"52px 0", color:"#bbb" }}><div style={{ marginBottom:10, opacity:0.25, color:"#aaa" }}><TrendingUp size={36}/></div><div>No hay ventas en el rango seleccionado</div></div>
         ) : esPie ? (
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, alignItems:"center" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20, alignItems:"center" }}>
             <ResponsiveContainer width="100%" height={240}>
               <PieChart><Pie data={chartData.map((d,i) => ({ ...d, name:d.label }))} dataKey="total" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} ${(percent*100).toFixed(0)}%`}>
                 {chartData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
@@ -3086,13 +3243,17 @@ function EstadisticasPage({ ctx }) {
             ))}</div>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={chartData} margin={{ top:4, right:8, left:8, bottom:4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" />
-              <XAxis dataKey="label" tick={{ fontSize:11, fill:"#bbb" }} />
-              <YAxis tick={{ fontSize:11, fill:"#bbb" }} tickFormatter={v => labelY==="ventas" ? `${config.moneda}${v>=1000?(v/1000).toFixed(0)+"k":v}` : v} />
-              <Tooltip formatter={v => [labelY==="ventas" ? fmtMoney(v, config.moneda) : v+" uds", ""]} labelStyle={{ fontSize:12 }} />
-              <Bar dataKey="total" fill="#111" radius={[4,4,0,0]} />
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={chartData} margin={{ top:8, right:8, left:8, bottom:4 }} barCategoryGap="28%">
+              <XAxis dataKey="label" tick={{ fontSize:12.5, fill:"#6b7280" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize:12.5, fill:"#6b7280" }} axisLine={false} tickLine={false} tickFormatter={v => labelY==="ventas" ? `${config.moneda}${v>=1000?(v/1000).toFixed(0)+"k":v}` : v} />
+              <Tooltip
+                cursor={{ fill:"rgba(0,0,0,0.03)" }}
+                contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }}
+                formatter={v => [labelY==="ventas" ? fmtMoney(v, config.moneda) : v+" uds", ""]}
+                labelStyle={{ fontSize:12, fontWeight:600 }}
+              />
+              <Bar dataKey="total" fill="#111" radius={[10,10,0,0]} maxBarSize={64} />
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -3114,7 +3275,7 @@ function FinanzasPage({ ctx }) {
   const delGasto = async (id) => { setGastos(prev => prev.filter(g => g.id !== id)); await ctx.deleteGasto(id); };
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       {showModal && <GastoModal tipoInicial={tipoInicial} mes={mes} onSave={async g => { setGastos(prev => [...prev, g]); await ctx.saveGasto(g); }} onClose={() => setShowModal(false)} />}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
         <div><h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Finanzas</h1><p style={{ margin:0, color:"#888", fontSize:14 }}>Controla tus gastos y rentabilidad</p></div>
@@ -3124,7 +3285,7 @@ function FinanzasPage({ ctx }) {
         <span style={{ fontSize:14, color:"#888" }}>Ver mes:</span>
         <input type="month" style={G.inp({ width:200 })} value={mes} onChange={e => setMes(e.target.value)} />
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:24 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:14, marginBottom:24 }}>
         <StatCard icon={<TrendingUp size={19}/>} bg="#dcfce7" label="Ingresos del mes" value={fmtMoney(ingresos, config.moneda)} />
         <StatCard icon={<ClipboardList size={19}/>} bg="#fef3c7" label="Gastos fijos" value={fmtMoney(totalFijos, config.moneda)} />
         <StatCard icon={<Receipt size={19}/>} bg="#dbeafe" label="Gastos variables" value={fmtMoney(totalVar, config.moneda)} />
@@ -3178,7 +3339,7 @@ function RemitosPage({ ctx }) {
   const delProv = async (id) => { setProveedores(prev => prev.filter(p => p.id !== id)); await ctx.deleteProveedor(id); };
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       {showRemito && <RemitoModal proveedores={proveedores} products={products} setProducts={setProducts} saveProducts={ctx.saveProducts} rubro={config.rubro} onSave={async r => { const newRemito = { ...r, id:uid(), numero: remitos.reduce((mx, x) => Math.max(mx, +x.numero || 0), 0) + 1 }; setRemitos(prev => [...prev, newRemito]); await ctx.saveRemito(newRemito); }} onClose={() => setShowRemito(false)} />}
       {(showProveedor||editProv) && <ProveedorModal prov={editProv} onSave={async p => { setProveedores(prev => editProv?prev.map(x=>x.id===p.id?p:x):[...prev,p]); setShowProveedor(false); setEditProv(null); await ctx.saveProveedor(p); }} onClose={() => { setShowProveedor(false); setEditProv(null); }} />}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
@@ -3315,7 +3476,7 @@ function FacturarModal({ venta, config, sales, onFacturar, onSinFactura, onClose
   // ── Step 1: Elegir ────────────────────────────────────────
   if (step === 1) return (
     <Modal title="¿Cómo querés registrar esta venta?" onClose={onClose} width={440}>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:12, marginBottom:20 }}>
         <button onClick={onSinFactura} style={{ background:"#fff", border:"2px solid #e5e7eb", borderRadius:12, padding:"24px 16px", cursor:"pointer", textAlign:"center", transition:"border-color .15s" }}
           onMouseEnter={e=>e.currentTarget.style.borderColor="#111"} onMouseLeave={e=>e.currentTarget.style.borderColor="#e5e7eb"}>
           <div style={{ fontSize:32, marginBottom:10 }}>🧾</div>
@@ -3524,7 +3685,7 @@ function ComprobanteModal({ venta, config, onClose }) {
         <div style={{ height:1, background:"#e5e7eb", margin:"0 0 16px" }} />
 
         {/* Receptor */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, marginBottom:16 }}>
           <div>
             <div style={{ fontSize:11, color:"#888", marginBottom:4 }}>RECEPTOR</div>
             <div style={{ fontWeight:700 }}>{f.receptor?.nombre || "Consumidor Final"}</div>
@@ -3588,7 +3749,7 @@ function ComprobanteModal({ venta, config, onClose }) {
         <div style={{ height:1, background:"#e5e7eb", margin:"16px 0" }} />
 
         {/* CAE */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, fontSize:12 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, fontSize:12 }}>
           <div>
             <span style={{ color:"#666" }}>CAE N°: </span>
             <span style={{ fontWeight:700, fontFamily:"monospace" }}>{f.cae}</span>
@@ -3617,8 +3778,30 @@ function ConfigPage({ ctx }) {
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState("");
   const [resetting, setResetting] = useState(false);
+  const [nuevaPass, setNuevaPass] = useState("");
+  const [confirmarPass, setConfirmarPass] = useState("");
+  const [cambiandoPass, setCambiandoPass] = useState(false);
+  const [passError, setPassError] = useState("");
+  const [passOk, setPassOk] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]:v }));
   const save = async () => { await ctx.setConfig(f); setSaved(true); setTimeout(() => setSaved(false), 2500); };
+
+  // ── Cambiar contraseña ──
+  const handleCambiarPassword = async () => {
+    setPassError(""); setPassOk(false);
+    if (nuevaPass.length < 6) { setPassError("La contraseña debe tener al menos 6 caracteres"); return; }
+    if (nuevaPass !== confirmarPass) { setPassError("Las contraseñas no coinciden"); return; }
+    setCambiandoPass(true);
+    try {
+      await sb.updatePassword(nuevaPass);
+      setPassOk(true);
+      setNuevaPass(""); setConfirmarPass("");
+      setTimeout(() => setPassOk(false), 3500);
+    } catch (e) {
+      setPassError(e?.message || "No pudimos cambiar la contraseña");
+    }
+    setCambiandoPass(false);
+  };
 
   // ── Borrar todos los productos ──
   const handleResetProducts = async () => {
@@ -3666,7 +3849,7 @@ function ConfigPage({ ctx }) {
         <p style={{ margin:"0 0 16px", fontSize:13, color:"#888" }}>
           Esto define las categorías disponibles al cargar productos. Elegí el rubro que mejor describa tu negocio.
         </p>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:20 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10, marginBottom:20 }}>
           {RUBROS.map(r => (
             <button key={r} onClick={() => u("rubro", r)} style={{
               padding:"12px 14px", borderRadius:10,
@@ -3704,72 +3887,22 @@ function ConfigPage({ ctx }) {
       {/* Contacto */}
       <div style={{ ...G.card({ marginBottom:24 }) }}>
         <h3 style={{ margin:"0 0 20px", fontSize:16, fontWeight:700 }}><User size={15}/>Contacto</h3>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
           <FieldRow label="Teléfono"><input style={G.inp()} value={f.telefono} onChange={e => u("telefono", e.target.value)} placeholder="+54 9 11 1234-5678" /></FieldRow>
           <FieldRow label="Instagram"><input style={G.inp()} value={f.instagram} onChange={e => u("instagram", e.target.value)} placeholder="@tunegocio" /></FieldRow>
+          <FieldRow label="Dirección del local"><input style={G.inp()} value={f.direccion||""} onChange={e => u("direccion", e.target.value)} placeholder="Ej: Av. Rivadavia 1234, CABA" /></FieldRow>
         </div>
       </div>
 
-      {/* Facturación Electrónica */}
+      {/* Facturación Electrónica — Próximamente */}
       <div style={{ ...G.card({ marginBottom:24 }) }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
           <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>🏛️ Facturación Electrónica (AFIP/ARCA)</h3>
-          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-            <span style={{ fontSize:12, color:"#888" }}>{f.facturacionActiva ? "Activa" : "Inactiva"}</span>
-            <button onClick={() => u("facturacionActiva", !f.facturacionActiva)} style={{ width:44, height:24, borderRadius:20, border:"none", cursor:"pointer", background:f.facturacionActiva?"#16a34a":"#d1d5db", position:"relative", transition:"background .2s" }}>
-              <span style={{ position:"absolute", top:2, left:f.facturacionActiva?22:2, width:20, height:20, borderRadius:"50%", background:"#fff", transition:"left .2s", boxShadow:"0 1px 3px rgba(0,0,0,0.2)" }}/>
-            </button>
-          </div>
+          <span style={{ background:"#f4ecff", color:"#7c3aed", fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Próximamente</span>
         </div>
-        <p style={{ margin:"0 0 20px", fontSize:13, color:"#888" }}>
-          Completá tus datos fiscales para emitir facturas electrónicas al completar cada venta.
-          {!f.facturacionActiva && <span style={{ color:"#d97706", fontWeight:600 }}> (Desactivada)</span>}
+        <p style={{ margin:0, fontSize:13, color:"#888", lineHeight:1.5 }}>
+          Estamos preparando la emisión de facturas electrónicas con CAE, integrada a AFIP. Vas a poder activarla directamente desde acá apenas esté disponible.
         </p>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
-          <FieldRow label="CUIT del negocio *">
-            <input style={G.inp()} value={f.cuit||""} onChange={e => u("cuit", e.target.value)} placeholder="20-12345678-0" />
-          </FieldRow>
-          <FieldRow label="Razón social *">
-            <input style={G.inp()} value={f.razonSocial||""} onChange={e => u("razonSocial", e.target.value)} placeholder="Tu nombre o empresa" />
-          </FieldRow>
-          <FieldRow label="Tipo de contribuyente *">
-            <select style={G.inp()} value={f.tipoContrib||"monotributista"} onChange={e => { u("tipoContrib", e.target.value); u("condicionIVA", e.target.value==="monotributista"?"Monotributista":"Responsable Inscripto"); }}>
-              <option value="monotributista">Monotributista → emite Factura C</option>
-              <option value="responsable_inscripto">Responsable Inscripto → emite A o B</option>
-            </select>
-          </FieldRow>
-          <FieldRow label="Punto de venta (N°)">
-            <input style={G.inp()} value={f.puntoVenta||"0001"} onChange={e => u("puntoVenta", e.target.value)} placeholder="0001" maxLength={4} />
-          </FieldRow>
-        </div>
-        <div style={{ background:"#f9fafb", borderRadius:10, padding:"12px 16px", marginTop:12, fontSize:13, display:"flex", gap:16, alignItems:"center" }}>
-          <span style={{ fontWeight:600, color:"#666" }}>Emite:</span>
-          {(f.tipoContrib||"monotributista") === "monotributista" ? (
-            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-              <span style={{ background:"#111", color:"#fff", borderRadius:8, padding:"4px 14px", fontWeight:900, fontSize:18 }}>C</span>
-              <span style={{ color:"#666", fontSize:12 }}>Factura C — cualquier cliente</span>
-            </div>
-          ) : (
-            <>
-              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                <span style={{ background:"#111", color:"#fff", borderRadius:8, padding:"4px 12px", fontWeight:900, fontSize:16 }}>A</span>
-                <span style={{ color:"#666", fontSize:12 }}>Receptor RI</span>
-              </div>
-              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                <span style={{ background:"#555", color:"#fff", borderRadius:8, padding:"4px 12px", fontWeight:900, fontSize:16 }}>B</span>
-                <span style={{ color:"#666", fontSize:12 }}>Cons. Final</span>
-              </div>
-            </>
-          )}
-        </div>
-        {f.facturacionActiva && (!f.cuit || !f.razonSocial) && (
-          <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:10, padding:"10px 16px", marginTop:12, fontSize:13, color:"#dc2626" }}>
-            ⚠ Completá el CUIT y la Razón Social para activar la facturación.
-          </div>
-        )}
-        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", marginTop:12, fontSize:12, color:"#92400e" }}>
-          💡 La integración real con AFIP requiere un certificado digital y un backend. La UI está lista — cuando tengas el backend, conectamos la API y queda operativo.
-        </div>
       </div>
 
       <div style={{ display:"flex", gap:12 }}>
@@ -3781,6 +3914,56 @@ function ConfigPage({ ctx }) {
             Ir a Productos →
           </button>
         )}
+      </div>
+
+      {/* ── Seguridad: cambiar contraseña ── */}
+      <div style={{ ...G.card(), marginTop:40 }}>
+        <h3 style={{ margin:"0 0 4px", fontSize:16, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}><Lock size={16}/>Seguridad</h3>
+        <p style={{ margin:"0 0 20px", fontSize:13, color:"#888" }}>Cambiá la contraseña con la que iniciás sesión en MiLocal.</p>
+
+        {passOk && (
+          <div style={{ background:"#dcfce7", border:"1px solid #86efac", borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:13, color:"#15803d", display:"flex", alignItems:"center", gap:8 }}>
+            <CheckCircle2 size={15}/> Contraseña actualizada correctamente
+          </div>
+        )}
+        {passError && (
+          <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:13, color:"#dc2626", display:"flex", alignItems:"center", gap:8 }}>
+            <AlertCircle size={15}/> {passError}
+          </div>
+        )}
+
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:16, marginBottom:18 }}>
+          <FieldRow label="Nueva contraseña">
+            <input
+              style={G.inp()}
+              type="password"
+              placeholder="Mínimo 6 caracteres"
+              value={nuevaPass}
+              onChange={e => { setNuevaPass(e.target.value); setPassError(""); }}
+            />
+          </FieldRow>
+          <FieldRow label="Confirmar contraseña">
+            <input
+              style={G.inp()}
+              type="password"
+              placeholder="Repetí la contraseña"
+              value={confirmarPass}
+              onChange={e => { setConfirmarPass(e.target.value); setPassError(""); }}
+              onKeyDown={e => e.key === "Enter" && handleCambiarPassword()}
+            />
+          </FieldRow>
+        </div>
+
+        <button
+          onClick={handleCambiarPassword}
+          disabled={cambiandoPass || !nuevaPass || !confirmarPass}
+          style={{
+            ...G.btn((cambiandoPass || !nuevaPass || !confirmarPass) ? "light" : "dark"),
+            fontSize:14, padding:"11px 24px",
+          }}
+        >
+          {cambiandoPass ? "Guardando..." : "Cambiar contraseña"}
+        </button>
       </div>
 
       {/* ── Zona de peligro ── */}
@@ -3946,7 +4129,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
           <div style={{ background: C.purple, width: 34, height: 34, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}>
             <Store size={18}/>
           </div>
-          <span style={{ fontWeight: 700, fontSize: 19, letterSpacing: "-0.5px" }}>MiStock</span>
+          <span style={{ fontWeight: 700, fontSize: 19, letterSpacing: "-0.5px" }}>MiLocal</span>
         </div>
         <div style={{ fontSize: 13, color: C.mut }}>Configuración inicial</div>
       </div>
@@ -3973,12 +4156,12 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
                 <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.purple }}/> ¡Cuenta creada!
               </div>
               <h1 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: "0 0 18px" }}>
-                Bienvenido a MiStock
+                Bienvenido a MiLocal
               </h1>
               <p style={{ fontSize: 17, color: C.body, margin: "0 0 40px", lineHeight: 1.55, maxWidth: 520, marginLeft: "auto", marginRight: "auto" }}>
                 Configuremos tu negocio en 2 pasos rápidos. Después ya podés empezar a vender.
               </p>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, marginBottom: 44, textAlign: "left" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 16, marginBottom: 44, textAlign: "left" }}>
                 {[
                   { ic: <Package size={20}/>, t: "Inventario", d: "Cargá productos con categorías de tu rubro" },
                   { ic: <ShoppingCart size={20}/>, t: "Ventas", d: "Cobrás rápido, el stock se descuenta solo" },
@@ -4009,10 +4192,10 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
                   ¿Qué tipo de negocio tenés?
                 </h2>
                 <p style={{ fontSize: 15.5, color: C.body, margin: 0, lineHeight: 1.5 }}>
-                  Elegí tu rubro y MiStock se configura solo con las categorías y campos que necesitás.
+                  Elegí tu rubro y MiLocal se configura solo con las categorías y campos que necesitás.
                 </p>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 22 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 22 }}>
                 {RUBROS.map(r => (
                   <button
                     key={r}
@@ -4100,7 +4283,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
                   />
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 16 }}>
                   <div>
                     <label style={labelStyle}>Tu nombre (dueño/a)</label>
                     <input
@@ -4187,7 +4370,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
                   disabled={!nombre.trim() || !whatsapp.trim()}
                   style={(nombre.trim() && whatsapp.trim()) ? primaryBtn : disabledBtn}
                 >
-                  ¡Comenzar a usar MiStock!
+                  ¡Comenzar a usar MiLocal!
                 </button>
               </div>
             </div>
@@ -4205,7 +4388,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
 // ══════════════════════════════════════════════════════════
 // LANDING PAGE — estilo violeta+blanco (inspirado en Caibe)
 // ══════════════════════════════════════════════════════════
-const WHATSAPP_NUMERO = "5491100000000"; // ← reemplazar por tu WhatsApp real
+const WHATSAPP_NUMERO = "5492954587394"; // ← WhatsApp real de MiLocal
 const PRECIO_MENSUAL = "30.000"; // ← precio de la mensualidad en ARS
 
 function LandingPage({ onIngresar }) {
@@ -4227,18 +4410,18 @@ function LandingPage({ onIngresar }) {
   ];
 
   const faqs = [
-    { q: "¿Necesito instalar algo?", a: "No. MiStock funciona 100% en la web. Entrás desde cualquier computadora, tablet o celular con internet, sin descargar ni instalar nada." },
+    { q: "¿Necesito instalar algo?", a: "No. MiLocal funciona 100% en la web. Entrás desde cualquier computadora, tablet o celular con internet, sin descargar ni instalar nada." },
     { q: "¿Mis datos están seguros?", a: "Sí. Toda tu información se guarda en la nube con respaldo automático. Cada negocio ve únicamente sus propios datos, protegidos con tu usuario y contraseña." },
-    { q: "¿Sirve para mi rubro?", a: "MiStock es multirrubro. Se adapta a indumentaria, calzado, electrónica, kioscos, farmacias y prácticamente cualquier comercio minorista. Al crear tu cuenta elegís tu rubro y el sistema se configura solo." },
+    { q: "¿Sirve para mi rubro?", a: "MiLocal es multirrubro. Se adapta a indumentaria, calzado, electrónica, kioscos, farmacias y prácticamente cualquier comercio minorista. Al crear tu cuenta elegís tu rubro y el sistema se configura solo." },
     { q: "¿Puedo emitir facturas?", a: "Sí. El sistema emite comprobantes tipo A, B y C con numeración correlativa, listos para AFIP. También podés dar tickets de venta comunes cuando no hace falta factura." },
-    { q: "¿Puedo usar MiStock desde el celular?", a: "Sí. La app se adapta a cualquier dispositivo. Vendé desde el mostrador con la compu y controlá el negocio desde el celular cuando estás afuera." },
+    { q: "¿Puedo usar MiLocal desde el celular?", a: "Sí. La app se adapta a cualquier dispositivo. Vendé desde el mostrador con la compu y controlá el negocio desde el celular cuando estás afuera." },
     { q: "¿Qué pasa si tengo un problema?", a: "Nos escribís por WhatsApp y te ayudamos. Estamos para que puedas vender tranquilo." },
   ];
 
   const funciones = [
     { t: "Control total del stock", d: "Alta y baja de productos, stock por talle y color, y alertas de faltantes automáticas.", ic: <Package size={24}/> },
     { t: "Ventas y ganancias visibles", d: "Cada venta queda registrada con precio, cantidad y margen. Sabés cuánto ganás por día.", ic: <TrendingUp size={24}/> },
-    { t: "Facturación AFIP lista", d: "Emití Factura A, B y C con CAE. Todo queda registrado y listo para tu contador.", ic: <Receipt size={24}/> },
+    { t: "Escaneo de códigos de barra", d: "Cargá y vendé más rápido escaneando con la cámara o un lector USB.", ic: <ScanLine size={24}/> },
     { t: "Ahorro de tiempo real", d: "Vendé en segundos, sin hacer cuentas mentales. Descontá stock y calculá vuelto solo.", ic: <Timer size={24}/> },
     { t: "Estadísticas que sirven", d: "Qué se vende, qué no, a qué hora y qué día. Decisiones con datos, no a ojo.", ic: <BarChart2 size={24}/> },
     { t: "Todo en la nube", d: "Acceso desde cualquier dispositivo con internet. Sin instalar, sin perder datos, siempre al día.", ic: <RefreshCw size={24}/> },
@@ -4265,10 +4448,7 @@ function LandingPage({ onIngresar }) {
       {/* ── NAV ── */}
       <nav style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(255,255,255,0.94)", backdropFilter: "blur(8px)", borderBottom: `1px solid ${C.line}` }}>
         <div style={{ ...wrap, display: "flex", alignItems: "center", justifyContent: "space-between", height: 68 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ background: C.purple, width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}><Store size={19}/></div>
-            <span style={{ fontWeight: 700, fontSize: 22, letterSpacing: "-0.7px" }}>MiStock</span>
-          </div>
+          <img src="/milocal-logo.png" alt="MiLocal" style={{ height: 40, width: "auto" }}/>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <button onClick={onIngresar} className="btn-ghost" style={{ background: "transparent", border: "none", color: C.ink, fontWeight: 500, fontSize: 14.5, cursor: "pointer", padding: "10px 16px", borderRadius: 6, fontFamily: font }}>Iniciar sesión</button>
             <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 14.5, cursor: "pointer", padding: "11px 20px", fontFamily: font }}>Empezar gratis</button>
@@ -4284,7 +4464,7 @@ function LandingPage({ onIngresar }) {
               Menos planillas.<br/>Más ventas.
             </h1>
             <p style={{ fontSize: 18, lineHeight: 1.55, color: C.body, margin: "0 0 32px", maxWidth: 520 }}>
-              MiStock reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás, controlás el stock y facturás a AFIP — todo desde un mismo lugar.
+              MiLocal reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás y controlás el stock — todo desde un mismo lugar.
             </p>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "14px 28px", fontFamily: font }}>¡Empezar gratis!</button>
@@ -4304,9 +4484,9 @@ function LandingPage({ onIngresar }) {
                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#f87171" }}/>
                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#fbbf24" }}/>
                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#34d399" }}/>
-                <span style={{ fontSize: 12, color: C.mut, marginLeft: 8 }}>mistock.com.ar</span>
+                <span style={{ fontSize: 12, color: C.mut, marginLeft: 8 }}>milocal.com.ar</span>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 12, marginBottom: 14 }}>
                 <div style={{ background: C.purpleSoft, borderRadius: 8, padding: "14px 16px" }}>
                   <div style={{ fontSize: 11, color: C.purpleDark, fontWeight: 600, marginBottom: 4 }}>VENTAS HOY</div>
                   <div style={{ fontSize: 24, fontWeight: 700, color: C.purple }}>$127.400</div>
@@ -4352,7 +4532,7 @@ function LandingPage({ onIngresar }) {
       {/* ── QUÉ ES / PROPUESTA ── */}
       <section style={{ ...wrap, padding: "40px 24px 80px" }}>
         <div style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 60px" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Por qué MiStock</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Por qué MiLocal</div>
           <h2 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: "0 0 20px" }}>
             Diseñado para el mostrador.
           </h2>
@@ -4403,11 +4583,11 @@ function LandingPage({ onIngresar }) {
         <div style={{ textAlign: "center", marginBottom: 50 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Precio</div>
           <h2 style={{ fontSize: 46, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: "0 0 14px" }}>Un precio. Todo el sistema.</h2>
-          <p style={{ fontSize: 17, color: C.body, margin: 0 }}>Sin planes básicos que después te cobran los "extra". Con MiStock accedés a todo desde el día uno.</p>
+          <p style={{ fontSize: 17, color: C.body, margin: 0 }}>Sin planes básicos que después te cobran los "extra". Con MiLocal accedés a todo desde el día uno.</p>
         </div>
         <div style={{ maxWidth: 440, margin: "0 auto", background: C.bg, border: `2px solid ${C.purple}`, borderRadius: 14, padding: "40px 36px", position: "relative", boxShadow: "0 20px 60px rgba(146,56,255,0.15)" }}>
           <div style={{ position: "absolute", top: -13, left: "50%", transform: "translateX(-50%)", background: C.purple, color: "#fff", fontSize: 12, fontWeight: 600, padding: "5px 14px", borderRadius: 20, letterSpacing: "0.5px" }}>PLAN ÚNICO</div>
-          <div style={{ fontSize: 15, fontWeight: 500, color: C.mut, marginBottom: 8, marginTop: 6 }}>MiStock</div>
+          <div style={{ fontSize: 15, fontWeight: 500, color: C.mut, marginBottom: 8, marginTop: 6 }}>MiLocal</div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 6 }}>
             <span style={{ fontSize: 24, fontWeight: 600, color: C.ink }}>$</span>
             <span style={{ fontSize: 60, fontWeight: 700, letterSpacing: "-2.5px" }}>{PRECIO_MENSUAL}</span>
@@ -4422,7 +4602,7 @@ function LandingPage({ onIngresar }) {
             </div>
           </div>
           <div style={{ marginBottom: 28 }}>
-            {["Ventas y tickets ilimitados", "Productos ilimitados", "Control de stock por talle y color", "Facturación AFIP (A, B y C)", "Estadísticas y reportes", "Remitos, proveedores y caja", "Acceso desde cualquier dispositivo", "Respaldo automático en la nube", "Soporte por WhatsApp"].map((f, i) => (
+            {["Ventas y tickets ilimitados", "Productos ilimitados", "Control de stock por talle y color", "Escáner de códigos de barra", "Estadísticas y reportes", "Remitos, proveedores y caja", "Acceso desde cualquier dispositivo", "Respaldo automático en la nube", "Soporte por WhatsApp"].map((f, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 11, fontSize: 15, color: C.ink }}>
                 <span style={{ color: C.green, display: "flex", flexShrink: 0 }}><CheckCircle2 size={17}/></span> {f}
               </div>
@@ -4470,9 +4650,8 @@ function LandingPage({ onIngresar }) {
       {/* ── FOOTER ── */}
       <footer style={{ background: "#000", color: C.mut, padding: "40px 0", textAlign: "center" }}>
         <div style={{ ...wrap }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, marginBottom: 10 }}>
-            <div style={{ background: C.purple, width: 28, height: 28, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}><Store size={15}/></div>
-            <span style={{ fontWeight: 700, fontSize: 16, color: "#fff" }}>MiStock</span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+            <img src="/milocal-logo.png" alt="MiLocal" style={{ height: 32, width: "auto", filter: "brightness(0) invert(1)" }}/>
           </div>
           <p style={{ fontSize: 13, margin: 0 }}>Sistema de gestión para comercios · Argentina · © {new Date().getFullYear()}</p>
         </div>
@@ -4485,7 +4664,7 @@ function LandingPage({ onIngresar }) {
 // LOGIN / REGISTER SCREEN
 // ══════════════════════════════════════════════════════════
 function LoginScreen({ onLogin, onVolver }) {
-  const [modo, setModo] = useState("login"); // login | register | confirmar
+  const [modo, setModo] = useState("login"); // login | register | confirmar | recuperar | recuperar_enviado
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [nombreNegocio, setNombreNegocio] = useState("");
@@ -4518,6 +4697,18 @@ function LoginScreen({ onLogin, onVolver }) {
       }
     } catch (e) {
       setError(e?.message || "Error de conexión");
+    }
+    setLoading(false);
+  };
+
+  const enviarRecuperacion = async () => {
+    if (!email.trim()) { setError("Ingresá tu email primero"); return; }
+    setError(""); setLoading(true);
+    try {
+      await sb.resetPasswordForEmail(email.trim());
+      setModo("recuperar_enviado");
+    } catch (e) {
+      setError(e?.message || "No pudimos enviar el email. Intentá de nuevo.");
     }
     setLoading(false);
   };
@@ -4566,10 +4757,8 @@ function LoginScreen({ onLogin, onVolver }) {
             display: "flex", alignItems: "center", gap: 10, background: "transparent", border: "none",
             color: "#fff", cursor: "pointer", padding: 0, fontFamily: font,
           }}>
-            <div style={{ background: C.purple, width: 40, height: 40, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Store size={20}/>
-            </div>
-            <span style={{ fontWeight: 700, fontSize: 22, letterSpacing: "-0.7px" }}>MiStock</span>
+            <img src="/milocal-icon.png" alt="MiLocal" style={{ width: 40, height: 40, borderRadius: 8 }}/>
+            <span style={{ fontWeight: 700, fontSize: 22, letterSpacing: "-0.7px" }}>MiLocal</span>
           </button>
         </div>
 
@@ -4590,7 +4779,7 @@ function LoginScreen({ onLogin, onVolver }) {
           <div style={{ marginTop: 36, display: "flex", flexDirection: "column", gap: 14 }}>
             {[
               "Ventas y stock en tiempo real",
-              "Facturación AFIP incluida",
+              "Escáner de códigos de barra",
               "Acceso desde cualquier dispositivo",
             ].map((t, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 14.5, color: "#e5e7eb" }}>
@@ -4605,7 +4794,7 @@ function LoginScreen({ onLogin, onVolver }) {
 
         {/* Footer izquierdo */}
         <div style={{ position: "relative", zIndex: 1, fontSize: 12.5, color: "#8a97a8" }}>
-          © {new Date().getFullYear()} MiStock · Sistema de gestión para comercios
+          © {new Date().getFullYear()} MiLocal · Sistema de gestión para comercios
         </div>
       </div>
 
@@ -4623,18 +4812,89 @@ function LoginScreen({ onLogin, onVolver }) {
           {/* Título */}
           <div style={{ marginBottom: 32 }}>
             <h2 style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-1px", margin: "0 0 8px", color: C.ink }}>
-              {modo === "confirmar" ? "Revisá tu email" : modo === "register" ? "Crear cuenta" : "Iniciar sesión"}
+              {modo === "confirmar" ? "Revisá tu email" :
+               modo === "register" ? "Crear cuenta" :
+               modo === "recuperar" ? "Recuperar contraseña" :
+               modo === "recuperar_enviado" ? "Revisá tu email" :
+               "Iniciar sesión"}
             </h2>
             <p style={{ fontSize: 15, color: C.body, margin: 0 }}>
               {modo === "confirmar"
                 ? `Te enviamos un link a ${email}`
                 : modo === "register"
                   ? "Registrate gratis y arrancá hoy"
-                  : "Ingresá con tus datos para acceder"}
+                  : modo === "recuperar"
+                    ? "Ingresá tu email y te mandamos un link para elegir una nueva contraseña"
+                    : modo === "recuperar_enviado"
+                      ? `Te enviamos un link a ${email} para que elijas una nueva contraseña`
+                      : "Ingresá con tus datos para acceder"}
             </p>
           </div>
 
-          {modo === "confirmar" ? (
+          {modo === "recuperar_enviado" ? (
+            <>
+              <div style={{ background: C.purpleSoft, borderRadius: 10, padding: "24px 20px", marginBottom: 20, textAlign: "center" }}>
+                <div style={{ color: C.purple, marginBottom: 12, display: "flex", justifyContent: "center" }}>
+                  <Mail size={40}/>
+                </div>
+                <p style={{ fontSize: 14, color: C.ink, margin: "0 0 6px", fontWeight: 600 }}>Revisá tu bandeja de entrada</p>
+                <p style={{ fontSize: 13, color: C.body, margin: 0, lineHeight: 1.5 }}>
+                  Hacé clic en el link del email para elegir una nueva contraseña. Si no lo ves, revisá spam.
+                </p>
+              </div>
+              <button
+                onClick={() => setModo("login")}
+                style={{
+                  width: "100%", padding: "14px", background: C.purple, color: "#fff",
+                  border: "none", borderRadius: 4, fontSize: 15, fontWeight: 600, cursor: "pointer",
+                  fontFamily: font,
+                }}
+                className="login-btn"
+              >
+                Volver al login
+              </button>
+            </>
+          ) : modo === "recuperar" ? (
+            <>
+              {error && (
+                <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 6, padding: "11px 14px", marginBottom: 18, fontSize: 13, color: "#dc2626", display: "flex", alignItems: "center", gap: 8 }}>
+                  <AlertCircle size={15}/> {error}
+                </div>
+              )}
+              <div style={{ marginBottom: 24 }}>
+                <label style={labelStyle}>Email</label>
+                <div style={{ position: "relative" }}>
+                  <Mail size={17} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.mut }}/>
+                  <input
+                    className="login-input"
+                    style={inputWithIconStyle}
+                    type="email"
+                    placeholder="tu@email.com"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && enviarRecuperacion()}
+                    autoFocus
+                  />
+                </div>
+              </div>
+              <button
+                onClick={enviarRecuperacion}
+                disabled={loading || !email}
+                className="login-btn"
+                style={{
+                  width: "100%", padding: "14px", background: (loading || !email) ? C.line : C.purple,
+                  color: (loading || !email) ? C.mut : "#fff", border: "none", borderRadius: 4,
+                  fontSize: 15, fontWeight: 600, cursor: (loading || !email) ? "not-allowed" : "pointer",
+                  transition: "background .15s", fontFamily: font,
+                }}
+              >
+                {loading ? "Enviando..." : "Enviar link de recuperación"}
+              </button>
+              <div style={{ textAlign: "center", marginTop: 20, fontSize: 14, color: C.body }}>
+                <button onClick={() => { setModo("login"); setError(""); }} style={{ background: "none", border: "none", color: C.purple, fontWeight: 600, cursor: "pointer", fontSize: 14, fontFamily: font, padding: 0 }}>← Volver al login</button>
+              </div>
+            </>
+          ) : modo === "confirmar" ? (
             <>
               <div style={{ background: C.purpleSoft, borderRadius: 10, padding: "24px 20px", marginBottom: 20, textAlign: "center" }}>
                 <div style={{ color: C.purple, marginBottom: 12, display: "flex", justifyContent: "center" }}>
@@ -4715,6 +4975,17 @@ function LoginScreen({ onLogin, onVolver }) {
                   {showPass ? <EyeOff size={17}/> : <Eye size={17}/>}
                 </button>
               </div>
+              {modo === "login" && (
+                <div style={{ textAlign: "right", marginTop: 8 }}>
+                  <button
+                    onClick={() => { setModo("recuperar"); setError(""); }}
+                    type="button"
+                    style={{ background: "none", border: "none", color: C.mut, cursor: "pointer", fontSize: 13, fontFamily: font, padding: 0 }}
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                </div>
+              )}
             </div>
 
             <button
@@ -4754,9 +5025,401 @@ function LoginScreen({ onLogin, onVolver }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// SUBSCRIPTION — helpers + UI components
+// NUEVA CONTRASEÑA — pantalla que se muestra al volver del link
+// de "recuperar contraseña" que llega por email
 // ══════════════════════════════════════════════════════════
-const WHATSAPP_SOPORTE = "5491100000000"; // ← número de MiStock para cancelar/soporte
+function NuevaPasswordScreen({ onDone, onCancelar }) {
+  const [password, setPassword] = useState("");
+  const [confirmar, setConfirmar] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+
+  const C = {
+    ink: "#0a0a0a", body: "#4b5563", mut: "#9ca3af", line: "#e5e7eb",
+    bg: "#ffffff", bgSoft: "#f9fafb",
+    purple: "#9238FF", purpleDark: "#7a1de6", purpleSoft: "#f4ecff",
+    green: "#16a34a",
+  };
+  const font = "'DM Sans', system-ui, -apple-system, sans-serif";
+
+  const inputStyle = {
+    width: "100%", padding: "13px 16px", border: `1.5px solid ${C.line}`, borderRadius: 6,
+    fontSize: 14.5, outline: "none", boxSizing: "border-box", fontFamily: font,
+    background: C.bg,
+  };
+  const labelStyle = { fontSize: 13, fontWeight: 500, color: C.ink, display: "block", marginBottom: 8 };
+
+  const submit = async () => {
+    setError("");
+    if (password.length < 6) { setError("La contraseña debe tener al menos 6 caracteres"); return; }
+    if (password !== confirmar) { setError("Las contraseñas no coinciden"); return; }
+    setLoading(true);
+    try {
+      await sb.updatePassword(password);
+      setDone(true);
+    } catch (e) {
+      setError(e?.message || "No pudimos actualizar la contraseña. Probá de nuevo.");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: font, background: C.bg, padding: 24 }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');`}</style>
+      <div style={{ width: "100%", maxWidth: 400 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center", marginBottom: 32 }}>
+          <img src="/milocal-icon.png" alt="MiLocal" style={{ width: 36, height: 36, borderRadius: 8 }}/>
+          <span style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.5px", color: C.ink }}>MiLocal</span>
+        </div>
+
+        {done ? (
+          <div style={{ textAlign: "center" }}>
+            <div style={{ background: C.purpleSoft, borderRadius: 10, padding: "24px 20px", marginBottom: 20 }}>
+              <div style={{ color: C.green, marginBottom: 12, display: "flex", justifyContent: "center" }}>
+                <CheckCircle2 size={40}/>
+              </div>
+              <p style={{ fontSize: 15, color: C.ink, margin: 0, fontWeight: 600 }}>¡Contraseña actualizada!</p>
+            </div>
+            <button
+              onClick={onDone}
+              style={{ width: "100%", padding: "14px", background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: font }}
+            >
+              Ir a MiLocal
+            </button>
+          </div>
+        ) : (
+          <>
+            <h2 style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.7px", margin: "0 0 8px", color: C.ink, textAlign: "center" }}>
+              Elegí una nueva contraseña
+            </h2>
+            <p style={{ fontSize: 14.5, color: C.body, margin: "0 0 28px", textAlign: "center" }}>
+              Tiene que tener al menos 6 caracteres
+            </p>
+
+            {error && (
+              <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 6, padding: "11px 14px", marginBottom: 18, fontSize: 13, color: "#dc2626", display: "flex", alignItems: "center", gap: 8 }}>
+                <AlertCircle size={15}/> {error}
+              </div>
+            )}
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={labelStyle}>Nueva contraseña</label>
+              <div style={{ position: "relative" }}>
+                <input
+                  style={{ ...inputStyle, paddingRight: 44 }}
+                  type={showPass ? "text" : "password"}
+                  placeholder="Mínimo 6 caracteres"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  autoFocus
+                />
+                <button
+                  onClick={() => setShowPass(!showPass)}
+                  type="button"
+                  style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.mut, display: "flex", padding: 4 }}
+                >
+                  {showPass ? <EyeOff size={17}/> : <Eye size={17}/>}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 24 }}>
+              <label style={labelStyle}>Confirmar contraseña</label>
+              <input
+                style={inputStyle}
+                type={showPass ? "text" : "password"}
+                placeholder="Repetí la contraseña"
+                value={confirmar}
+                onChange={e => setConfirmar(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && submit()}
+              />
+            </div>
+
+            <button
+              onClick={submit}
+              disabled={loading || !password || !confirmar}
+              style={{
+                width: "100%", padding: "14px",
+                background: (loading || !password || !confirmar) ? C.line : C.purple,
+                color: (loading || !password || !confirmar) ? C.mut : "#fff",
+                border: "none", borderRadius: 4, fontSize: 15, fontWeight: 600,
+                cursor: (loading || !password || !confirmar) ? "not-allowed" : "pointer",
+                fontFamily: font,
+              }}
+            >
+              {loading ? "Guardando..." : "Guardar nueva contraseña"}
+            </button>
+
+            <div style={{ textAlign: "center", marginTop: 20 }}>
+              <button onClick={onCancelar} style={{ background: "none", border: "none", color: C.mut, cursor: "pointer", fontSize: 13, fontFamily: font, textDecoration: "underline", padding: 0 }}>
+                Cancelar
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// ADMIN PANEL — solo el dueño de MiLocal puede ver esto
+// ══════════════════════════════════════════════════════════
+function AdminPage({ onVolver }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [resumen, setResumen] = useState(null);
+  const [negocios, setNegocios] = useState([]);
+  const [busqueda, setBusqueda] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState("Todos");
+  const [filtroRubro, setFiltroRubro] = useState("Todos");
+  const [procesando, setProcesando] = useState(null); // id del negocio con acción en curso
+  const [confirmCancelar, setConfirmCancelar] = useState(null); // negocio a confirmar cancelación
+
+  const cargar = async () => {
+    try {
+      const session = await sb.getSession();
+      if (!session) { setError("Sesión no válida"); setLoading(false); return; }
+      const resp = await fetch(`${SUPABASE_FUNC_URL}/admin-dashboard`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await resp.json();
+      if (!resp.ok) { setError(data.error || "No autorizado"); setLoading(false); return; }
+      setResumen(data.resumen);
+      setNegocios(data.negocios || []);
+    } catch (e) {
+      setError(e.message || "Error de conexión");
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { cargar(); }, []);
+
+  const ejecutarAccion = async (negocioId, action) => {
+    setProcesando(negocioId + action);
+    try {
+      const session = await sb.getSession();
+      const resp = await fetch(`${SUPABASE_FUNC_URL}/admin-actions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ negocio_id: negocioId, action }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { alert("Error: " + (data.error || "algo salió mal")); setProcesando(null); return; }
+      await cargar(); // refrescar la tabla con el estado actualizado
+    } catch (e) {
+      alert("Error de conexión: " + e.message);
+    }
+    setProcesando(null);
+    setConfirmCancelar(null);
+  };
+
+  const ESTADOS = {
+    trial: { label: "Prueba", bg: "#fef3c7", color: "#92400e" },
+    active: { label: "Activo", bg: "#dcfce7", color: "#15803d" },
+    past_due: { label: "Atrasado", bg: "#fee2e2", color: "#dc2626" },
+    cancelled: { label: "Cancelado", bg: "#f3f4f6", color: "#6b7280" },
+  };
+
+  const rubrosDisponibles = [...new Set(negocios.map(n => n.rubro).filter(Boolean))].sort();
+
+  const negociosFiltrados = negocios.filter(n => {
+    const matchBusqueda = !busqueda ||
+      (n.nombre || "").toLowerCase().includes(busqueda.toLowerCase()) ||
+      (n.email || "").toLowerCase().includes(busqueda.toLowerCase()) ||
+      (n.telefono || "").includes(busqueda);
+    const matchEstado = filtroEstado === "Todos" || n.subscription_status === filtroEstado;
+    const matchRubro = filtroRubro === "Todos" || n.rubro === filtroRubro;
+    return matchBusqueda && matchEstado && matchRubro;
+  });
+
+  const fmtFecha = (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  };
+
+  const diasDesde = (iso) => {
+    if (!iso) return "";
+    const dias = Math.floor((new Date() - new Date(iso)) / (1000 * 60 * 60 * 24));
+    if (dias === 0) return "hoy";
+    if (dias === 1) return "ayer";
+    return `hace ${dias} días`;
+  };
+
+  const linkWhatsApp = (telefono) => {
+    if (!telefono) return null;
+    let digits = telefono.replace(/\D/g, "");
+    if (!digits.startsWith("54")) digits = "549" + digits;
+    return `https://wa.me/${digits}`;
+  };
+
+  if (loading) {
+    return (
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", fontFamily:"'DM Sans',sans-serif", color:"#888" }}>
+        Cargando panel...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", fontFamily:"'DM Sans',sans-serif", flexDirection:"column", gap:16 }}>
+        <div style={{ color:"#dc2626", fontSize:15, fontWeight:600 }}>{error === "No autorizado" ? "No tenés acceso a esta sección" : error}</div>
+        <button onClick={onVolver} style={{ background:"#111", color:"#fff", border:"none", borderRadius:6, padding:"10px 20px", cursor:"pointer", fontFamily:"inherit" }}>Volver a MiLocal</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#f9fafb", fontFamily:"'DM Sans',system-ui,sans-serif", padding:"28px 32px" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');`}</style>
+
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:28 }}>
+        <div>
+          <h1 style={{ margin:"0 0 4px", fontSize:26, fontWeight:800, letterSpacing:"-0.5px" }}>Panel de administración</h1>
+          <p style={{ margin:0, color:"#888", fontSize:14 }}>Todos los negocios registrados en MiLocal</p>
+        </div>
+        <button onClick={onVolver} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:8, padding:"9px 18px", cursor:"pointer", fontSize:14, fontFamily:"inherit", fontWeight:500 }}>← Volver a MiLocal</button>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:14, marginBottom:24 }}>
+        {[
+          { label: "Total negocios", value: resumen.total, bg: "#ede9fe", color: "#7c3aed" },
+          { label: "En prueba", value: resumen.trial, bg: "#fef3c7", color: "#92400e" },
+          { label: "Activos", value: resumen.active, bg: "#dcfce7", color: "#15803d" },
+          { label: "Atrasados", value: resumen.past_due, bg: "#fee2e2", color: "#dc2626" },
+          { label: "Cancelados", value: resumen.cancelled, bg: "#f3f4f6", color: "#6b7280" },
+          { label: "MRR", value: fmtMoney(resumen.mrr, "$"), bg: "#dbeafe", color: "#1e40af" },
+        ].map((k, i) => (
+          <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+            <div style={{ display:"inline-block", background:k.bg, color:k.color, fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:20, marginBottom:10 }}>{k.label}</div>
+            <div style={{ fontSize:24, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Filtros */}
+      <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+        <input
+          placeholder="Buscar por nombre, email o WhatsApp..."
+          value={busqueda}
+          onChange={e => setBusqueda(e.target.value)}
+          style={{ flex:1, minWidth:220, padding:"10px 14px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:14, fontFamily:"inherit" }}
+        />
+        <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)} style={{ padding:"10px 14px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:14, fontFamily:"inherit" }}>
+          <option value="Todos">Todos los estados</option>
+          <option value="trial">En prueba</option>
+          <option value="active">Activos</option>
+          <option value="past_due">Atrasados</option>
+          <option value="cancelled">Cancelados</option>
+        </select>
+        <select value={filtroRubro} onChange={e => setFiltroRubro(e.target.value)} style={{ padding:"10px 14px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:14, fontFamily:"inherit" }}>
+          <option value="Todos">Todos los rubros</option>
+          {rubrosDisponibles.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
+
+      {/* Tabla */}
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, overflow:"hidden" }}>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+            <thead>
+              <tr style={{ background:"#f9fafb", borderBottom:"1px solid #e5e7eb" }}>
+                {["Negocio","Dueño/a","Email","WhatsApp","Rubro","Instagram","Registrado","Estado","Vence / Próx. cobro","Acciones"].map(h => (
+                  <th key={h} style={{ padding:"12px 16px", textAlign:"left", fontWeight:600, color:"#666", whiteSpace:"nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {negociosFiltrados.map(n => {
+                const est = ESTADOS[n.subscription_status] || ESTADOS.trial;
+                const fechaRelevante = n.subscription_status === "active" ? n.next_billing_date : n.trial_ends_at;
+                const wa = linkWhatsApp(n.telefono);
+                const tieneCortesia = n.acceso_manual_hasta && new Date(n.acceso_manual_hasta) > new Date();
+                const puedeAccionar = n.subscription_status !== "cancelled";
+                return (
+                  <tr key={n.id} style={{ borderBottom:"1px solid #f3f4f6" }}>
+                    <td style={{ padding:"12px 16px", fontWeight:600 }}>{n.nombre}</td>
+                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.dueno || "—"}</td>
+                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.email || "—"}</td>
+                    <td style={{ padding:"12px 16px" }}>
+                      {wa ? (
+                        <a href={wa} target="_blank" rel="noopener noreferrer" style={{ color:"#16a34a", fontWeight:600, textDecoration:"none", display:"flex", alignItems:"center", gap:5 }}>
+                          {n.telefono}
+                        </a>
+                      ) : "—"}
+                    </td>
+                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.rubro || "—"}</td>
+                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.instagram ? `@${n.instagram.replace(/^@/,"")}` : "—"}</td>
+                    <td style={{ padding:"12px 16px", color:"#666", whiteSpace:"nowrap" }}>
+                      <div>{fmtFecha(n.created_at)}</div>
+                      <div style={{ fontSize:11, color:"#aaa" }}>{diasDesde(n.created_at)}</div>
+                    </td>
+                    <td style={{ padding:"12px 16px" }}>
+                      <span style={{ background:est.bg, color:est.color, fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>{est.label}</span>
+                      {tieneCortesia && (
+                        <div style={{ marginTop:5, fontSize:10.5, color:"#7c3aed", fontWeight:600 }}>🎁 cortesía hasta {fmtFecha(n.acceso_manual_hasta)}</div>
+                      )}
+                    </td>
+                    <td style={{ padding:"12px 16px", color:"#666", whiteSpace:"nowrap" }}>{fmtFecha(fechaRelevante)}</td>
+                    <td style={{ padding:"12px 16px", whiteSpace:"nowrap" }}>
+                      {puedeAccionar && (
+                        <div style={{ display:"flex", gap:6 }}>
+                          <button
+                            onClick={() => ejecutarAccion(n.id, "regalar_mes")}
+                            disabled={procesando === n.id + "regalar_mes"}
+                            title="Regalar 30 días de acceso sin cobrar"
+                            style={{ background:"#f4ecff", color:"#7c3aed", border:"none", borderRadius:6, padding:"6px 10px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
+                          >
+                            {procesando === n.id + "regalar_mes" ? "..." : "🎁 Regalar mes"}
+                          </button>
+                          {tieneCortesia && (
+                            <button
+                              onClick={() => setConfirmCancelar(n)}
+                              disabled={procesando === n.id + "cancelar_regalo"}
+                              title="Deshacer el mes regalado"
+                              style={{ background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:6, padding:"6px 10px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
+                            >
+                              {procesando === n.id + "cancelar_regalo" ? "..." : "Quitar regalo"}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {negociosFiltrados.length === 0 && (
+                <tr><td colSpan={10} style={{ padding:"32px 16px", textAlign:"center", color:"#aaa" }}>No hay negocios que coincidan con el filtro</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Modal de confirmación para quitar el mes regalado */}
+      {confirmCancelar && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }} onClick={() => setConfirmCancelar(null)}>
+          <div style={{ background:"#fff", borderRadius:12, padding:"24px 26px", width:"90%", maxWidth:400 }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin:"0 0 10px", fontSize:17, fontWeight:700 }}>¿Quitar el mes regalado a {confirmCancelar.nombre}?</h3>
+            <p style={{ margin:"0 0 20px", fontSize:14, color:"#666", lineHeight:1.5 }}>
+              Esto deshace la cortesía que le diste. No afecta ni cancela nada en Mercado Pago — si el negocio tiene una suscripción real pagando, sigue intacta.
+            </p>
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={() => setConfirmCancelar(null)} style={{ flex:1, background:"#f3f4f6", border:"none", borderRadius:8, padding:"10px", cursor:"pointer", fontFamily:"inherit", fontWeight:500 }}>Volver</button>
+              <button onClick={() => ejecutarAccion(confirmCancelar.id, "cancelar_regalo")} style={{ flex:1, background:"#dc2626", color:"#fff", border:"none", borderRadius:8, padding:"10px", cursor:"pointer", fontFamily:"inherit", fontWeight:600 }}>Sí, quitar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+const WHATSAPP_SOPORTE = "5492954587394"; // ← número de MiLocal para cancelar/soporte
 const PRECIO_SUSCRIPCION = 30000;
 const SUPABASE_FUNC_URL = "https://sdizrjbeasubjkpixmro.supabase.co/functions/v1";
 
@@ -4765,6 +5428,16 @@ function getSubscriptionState(config) {
   const status = config?.subscriptionStatus || 'trial';
   const trialEnd = config?.trialEndsAt ? new Date(config.trialEndsAt) : null;
   const now = new Date();
+
+  // ── Acceso regalado por el administrador ──
+  // Si tiene una fecha futura, nunca bloqueamos, sin importar el estado real de MP
+  if (config?.accesoManualHasta) {
+    const cortesiaHasta = new Date(config.accesoManualHasta);
+    if (cortesiaHasta > now) {
+      const daysLeft = Math.max(1, Math.ceil((cortesiaHasta - now) / (1000 * 60 * 60 * 24)));
+      return { status: 'cortesia', isActive: true, isTrial: false, isBlocked: false, daysLeft };
+    }
+  }
 
   // Los negocios activos "permanentes" (los pre-existentes) no tienen trialEndsAt
   if (status === 'active' && !trialEnd) {
@@ -4825,7 +5498,7 @@ async function iniciarSuscripcion() {
 // Abrir WhatsApp con mensaje pre-armado para cancelar
 function abrirCancelacionWhatsApp(nombreNegocio) {
   const msg = encodeURIComponent(
-    `Hola, soy ${nombreNegocio} y quiero cancelar mi suscripción de MiStock.`
+    `Hola, soy ${nombreNegocio} y quiero cancelar mi suscripción de MiLocal.`
   );
   window.open(`https://wa.me/${WHATSAPP_SOPORTE}?text=${msg}`, "_blank");
 }
@@ -4914,12 +5587,12 @@ function AccesoBloqueadoScreen({ config, onSuscribir, onLogout }) {
         <h1 style={{ fontSize: 24, fontWeight: 800, margin: "0 0 12px", color: "#111", letterSpacing: "-0.5px" }}>
           {isTrial ? "Tu prueba gratis terminó" :
            isCancelled ? "Tu suscripción está cancelada" :
-           "Acceso bloqueado"}
+           "Servicio suspendido por falta de pago"}
         </h1>
         <p style={{ fontSize: 15, color: "#4b5563", lineHeight: 1.6, margin: "0 0 28px" }}>
-          {isTrial ? "Suscribite ahora para seguir usando MiStock. Tus datos y productos están intactos, los recuperás al reactivar." :
+          {isTrial ? "Suscribite ahora para seguir usando MiLocal. Tus datos y productos están intactos, los recuperás al reactivar." :
            isCancelled ? "Reactivá tu suscripción cuando quieras y volvés a tener acceso a todos tus datos." :
-           "El último cobro no se pudo procesar y ya pasó el período de gracia. Actualizá tu método de pago para volver."}
+           "No pudimos procesar tu último cobro y ya pasó el período de gracia de 3 días. Actualizá tu método de pago para reactivar tu cuenta."}
         </p>
 
         <div style={{
@@ -4927,7 +5600,7 @@ function AccesoBloqueadoScreen({ config, onSuscribir, onLogout }) {
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>Plan</span>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>MiStock — Completo</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>MiLocal — Completo</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>Precio</span>
@@ -4985,7 +5658,7 @@ function SuscripcionPage({ config, onSuscribir, onCancelar }) {
   };
 
   return (
-    <div style={G.page}>
+    <div className="app-page-pad" style={G.page}>
       <div style={{ maxWidth: 640 }}>
         <div style={{ marginBottom: 28 }}>
           <h1 style={{ margin: "0 0 4px", fontSize: 28, fontWeight: 800 }}>Suscripción</h1>
@@ -4997,7 +5670,7 @@ function SuscripcionPage({ config, onSuscribir, onCancelar }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
             <div>
               <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 4 }}>Plan actual</div>
-              <div style={{ fontSize: 20, fontWeight: 700 }}>MiStock — Completo</div>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>MiLocal — Completo</div>
             </div>
             <span style={{
               background: statusColor.bg, color: statusColor.color, border: `1px solid ${statusColor.border}`,
@@ -5090,11 +5763,13 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [token, setToken] = useState(null);
-  // Ruteo por URL: /home (landing), /login (auth), /app (dashboard)
+  const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
+  // Ruteo por URL: /home (landing), /login (auth), /app (dashboard), /admin (panel dueño)
   const [route, setRoute] = useState(() => {
     if (typeof window === "undefined") return "home";
     const p = window.location.pathname;
     if (p === "/login") return "login";
+    if (p === "/admin") return "admin";
     if (p === "/app" || p.startsWith("/app/")) return "app";
     return "home";
   });
@@ -5108,6 +5783,7 @@ export default function App() {
     const onPop = () => {
       const p = window.location.pathname;
       if (p === "/login") setRoute("login");
+      else if (p === "/admin") setRoute("admin");
       else if (p === "/app" || p.startsWith("/app/")) setRoute("app");
       else setRoute("home");
     };
@@ -5117,7 +5793,7 @@ export default function App() {
 
   // Helper para navegar y actualizar la URL sin recargar
   const navegar = (dest) => {
-    const url = dest === "home" ? "/home" : dest === "login" ? "/login" : "/app";
+    const url = dest === "home" ? "/home" : dest === "login" ? "/login" : dest === "admin" ? "/admin" : "/app";
     if (window.location.pathname !== url) {
       window.history.pushState({}, "", url);
     }
@@ -5132,6 +5808,7 @@ export default function App() {
   const [remitos, setRemitos] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [showSubscriptionSuccess, setShowSubscriptionSuccess] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false); // drawer del sidebar en mobile
 
   // ── Detectar retorno desde Mercado Pago (?subscription=success) ──
   useEffect(() => {
@@ -5162,6 +5839,14 @@ export default function App() {
     // Auto-refresh y logout listener
     const { data: { subscription } } = _sb.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') { setToken(null); setLoaded(false); setAuthReady(true); }
+      if (event === 'PASSWORD_RECOVERY') {
+        // El usuario vino desde el link de "recuperar contraseña" del email
+        setPasswordRecoveryMode(true);
+        setAuthReady(true);
+        if (session?.access_token) {
+          setToken({ access_token: session.access_token, userId: session.user.id });
+        }
+      }
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -5213,6 +5898,35 @@ export default function App() {
     };
     loadData();
   }, [token]);
+
+  // ── Revisión periódica del estado de suscripción ──────────
+  // Sin esto, si el usuario deja la pestaña abierta durante días, no se entera
+  // de un cobro fallido o vencimiento del trial hasta que cierra sesión y vuelve a entrar.
+  // Revisamos cada 60s directo contra la base (no depende de caché ni del render).
+  useEffect(() => {
+    if (!token || !sb._negocioId) return;
+    const checkSubscription = async () => {
+      try {
+        const { data, error } = await _sb
+          .from("negocios")
+          .select("subscription_status, trial_ends_at, next_billing_date, mp_preapproval_id, payment_failed_at, subscription_started_at")
+          .eq("id", sb._negocioId)
+          .maybeSingle();
+        if (error || !data) return;
+        setConfig(prev => ({
+          ...prev,
+          subscriptionStatus: data.subscription_status || 'trial',
+          trialEndsAt: data.trial_ends_at || null,
+          nextBillingDate: data.next_billing_date || null,
+          mpPreapprovalId: data.mp_preapproval_id || null,
+          paymentFailedAt: data.payment_failed_at || null,
+          subscriptionStartedAt: data.subscription_started_at || null,
+        }));
+      } catch (e) { console.error("Error revisando suscripción:", e); }
+    };
+    const interval = setInterval(checkSubscription, 60000); // cada 60s
+    return () => clearInterval(interval);
+  }, [token, loaded]);
 
   const handleLogin = (access_token, userId) => { setToken({ access_token, userId }); setAuthReady(false); };
   const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); navegar("login"); };
@@ -5290,17 +6004,33 @@ export default function App() {
   if (!authReady) return (
     <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", background:"#f5f5f7", fontFamily:"system-ui,sans-serif" }}>
       <div style={{ textAlign:"center", color:"#888" }}>
-        <div style={{ marginBottom:12, color:"#111" }}><Store size={40}/></div>
-        <div style={{ fontSize:14 }}>Cargando MiStock...</div>
+        <img src="/milocal-icon.png" alt="MiLocal" style={{ width:60, height:60, borderRadius:12, marginBottom:12 }}/>
+        <div style={{ fontSize:14 }}>Cargando MiLocal...</div>
       </div>
     </div>
   );
+
+  // ── Recuperación de contraseña: el usuario vino del link del email ──
+  if (passwordRecoveryMode) {
+    return (
+      <NuevaPasswordScreen
+        onDone={() => { setPasswordRecoveryMode(false); navegar("app"); }}
+        onCancelar={async () => { await sb.signOut(); setToken(null); setPasswordRecoveryMode(false); navegar("login"); }}
+      />
+    );
+  }
 
   if (!token) {
     if (route === "login") return <LoginScreen onLogin={handleLogin} onVolver={() => navegar("home")} />;
     // Cualquier otra ruta sin login → landing
     return <LandingPage onIngresar={() => navegar("login")} />;
   }
+
+  // Panel de administración (solo vos podés entrar — se valida el email en el backend)
+  if (route === "admin") {
+    return <AdminPage onVolver={() => navegar("app")} />;
+  }
+
   // Con token → asegurar URL /app
   if (route !== "app") {
     // Sincronizar URL con estado logueado
@@ -5312,7 +6042,7 @@ export default function App() {
   if (!loaded) return (
     <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", background:"#f5f5f7", fontFamily:"system-ui,sans-serif" }}>
       <div style={{ textAlign:"center", color:"#888" }}>
-        <div style={{ marginBottom:12, color:"#111" }}><Store size={40}/></div>
+        <img src="/milocal-icon.png" alt="MiLocal" style={{ width:60, height:60, borderRadius:12, marginBottom:12 }}/>
         <div style={{ fontSize:14 }}>Sincronizando datos...</div>
       </div>
     </div>
@@ -5376,26 +6106,69 @@ export default function App() {
   return (
     <>
       <style>{THEME_CSS}</style>
+      <style>{`
+        @media (max-width: 900px) {
+          .app-sidebar { transform: translateX(-100%); transition: transform .25s ease; }
+          .app-sidebar.open { transform: translateX(0); box-shadow: 4px 0 24px rgba(0,0,0,0.15); }
+          .app-main { margin-left: 0 !important; padding-top: 58px; }
+          .app-topbar-mobile { display: flex !important; }
+          .app-overlay.open { display: block !important; }
+          .app-sidebar-close { display: flex !important; }
+          .venta-grid { grid-template-columns: 1fr !important; }
+        }
+        @media (max-width: 640px) {
+          .app-page-pad { padding: 16px !important; }
+          .app-main table { display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+        }
+      `}</style>
       <div style={{ display:"flex", fontFamily:"'DM Sans', system-ui, -apple-system, sans-serif", minHeight:"100vh", background:"var(--bg-page)" }}>
+
+        {/* ── Topbar mobile (solo visible en pantallas chicas) ── */}
+        <div className="app-topbar-mobile" style={{
+          display:"none", alignItems:"center", gap:12,
+          position:"fixed", top:0, left:0, right:0, height:58, zIndex:600,
+          background:"var(--bg-sidebar)", borderBottom:"1px solid var(--border-mid)", padding:"0 16px",
+        }}>
+          <button onClick={() => setSidebarOpen(true)} style={{ background:"none", border:"none", cursor:"pointer", display:"flex", padding:6, color:"var(--text)", flexShrink:0 }}>
+            <Menu size={22}/>
+          </button>
+          <div style={{ minWidth:0, flex:1 }}>
+            <div style={{ color:"var(--text)", fontWeight:700, fontSize:15, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{config.nombre}</div>
+          </div>
+          {stockAlert > 0 && (
+            <span style={{ background:"#dc2626", color:"#fff", fontSize:10, fontWeight:700, minWidth:18, height:18, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, padding:"0 4px" }}>
+              {stockAlert>9?"9+":stockAlert}
+            </span>
+          )}
+        </div>
+
+        {/* ── Overlay oscuro cuando el drawer está abierto (mobile) ── */}
+        <div
+          className={`app-overlay ${sidebarOpen ? "open" : ""}`}
+          onClick={() => setSidebarOpen(false)}
+          style={{ display:"none", position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:550 }}
+        />
+
         {/* ── Sidebar ── */}
-        <aside style={{ width:230, background:"var(--bg-sidebar)", borderRight:"1px solid var(--border-mid)", display:"flex", flexDirection:"column", position:"fixed", top:0, left:0, height:"100vh", zIndex:500 }}>
-          <div style={{ padding:"22px 20px 20px", borderBottom:"1px solid var(--border)" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-              {config.logo
-                ? <img src={config.logo} alt="logo" style={{ width:42, height:42, borderRadius:10, objectFit:"cover" }} onError={e => e.target.style.display="none"} />
-                : <div style={{ background:"var(--accent)", borderRadius:10, width:42, height:42, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff" }}><Store size={21}/></div>
-              }
-              <div style={{ minWidth:0 }}>
-                <div style={{ color:"var(--text)", fontWeight:700, fontSize:16, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", letterSpacing:"-0.4px" }}>{config.nombre}</div>
-                <div style={{ color:"var(--text-light)", fontSize:11.5, marginTop:3 }}>MiStock gestión de ventas</div>
-              </div>
+        <aside className={`app-sidebar ${sidebarOpen ? "open" : ""}`} style={{ width:230, background:"var(--bg-sidebar)", borderRight:"1px solid var(--border-mid)", display:"flex", flexDirection:"column", position:"fixed", top:0, left:0, height:"100vh", zIndex:600 }}>
+          <div style={{ padding:"22px 20px 20px", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"center", gap:12 }}>
+            {config.logo
+              ? <img src={config.logo} alt="logo" style={{ width:42, height:42, borderRadius:10, objectFit:"cover" }} onError={e => e.target.style.display="none"} />
+              : <img src="/milocal-icon.png" alt="MiLocal" style={{ width: 42, height: 42, borderRadius: 10 }}/>
+            }
+            <div style={{ minWidth:0, flex:1 }}>
+              <div style={{ color:"var(--text)", fontWeight:700, fontSize:16, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", letterSpacing:"-0.4px" }}>{config.nombre}</div>
+              <div style={{ color:"var(--text-light)", fontSize:11.5, marginTop:3 }}>MiLocal gestión de ventas</div>
             </div>
+            <button onClick={() => setSidebarOpen(false)} className="app-sidebar-close" style={{ display:"none", background:"none", border:"none", cursor:"pointer", color:"var(--text-muted)", flexShrink:0, padding:4 }}>
+              <X size={20}/>
+            </button>
           </div>
           <nav style={{ flex:1, padding:"14px 12px", display:"flex", flexDirection:"column", gap:3, overflowY:"auto" }}>
             {NAV.map(n => {
               const isActive = page === n.id;
               return (
-                <button key={n.id} onClick={() => setPage(n.id)} style={{
+                <button key={n.id} onClick={() => { setPage(n.id); setSidebarOpen(false); }} style={{
                   display:"flex", alignItems:"center", gap:12,
                   padding:"12px 14px", borderRadius:8, border:"none", cursor:"pointer",
                   fontSize:15, textAlign:"left", width:"100%",
@@ -5426,11 +6199,11 @@ export default function App() {
             <div style={{ color:"var(--text-muted)", fontSize:12, fontWeight:600 }}>1.0 Beta</div>
           </div>
         </aside>
-        <main style={{ marginLeft:230, flex:1, overflow:"auto", minHeight:"100vh" }}>
+        <main className="app-main" style={{ marginLeft:230, flex:1, overflow:"auto", minHeight:"100vh", width:"100%" }}>
           {showSubscriptionSuccess && (
-            <div style={{ background:"#dcfce7", borderBottom:"1px solid #86efac", padding:"14px 24px", display:"flex", alignItems:"center", gap:10, color:"#15803d", fontSize:14, fontWeight:600 }}>
+            <div style={{ background:"#dcfce7", borderBottom:"1px solid #86efac", padding:"14px 24px", display:"flex", alignItems:"center", gap:10, color:"#15803d", fontSize:14, fontWeight:600, flexWrap:"wrap" }}>
               <CheckCircle2 size={18}/>
-              ¡Suscripción activada con éxito! Ya podés seguir usando MiStock sin límites.
+              ¡Suscripción activada con éxito! Ya podés seguir usando MiLocal sin límites.
               <button onClick={() => setShowSubscriptionSuccess(false)} style={{ marginLeft:"auto", background:"none", border:"none", cursor:"pointer", color:"#15803d", display:"flex" }}><X size={16}/></button>
             </div>
           )}
