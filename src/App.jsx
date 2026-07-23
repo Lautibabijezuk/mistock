@@ -3153,19 +3153,37 @@ function EstadisticasPage({ ctx }) {
     return Object.values(porProducto);
   }, [vf, products]);
 
+  // Ranking por categoría / talle / color: unidades vendidas + % del total de unidades del período
+  const rankingDimension = useMemo(() => {
+    if (!["categoria","talla","color"].includes(vista)) return [];
+    const m = {};
+    vf.forEach(s => (s.items||[]).forEach(i => {
+      let key;
+      if (vista === "categoria") { const p = products.find(x => x.id === i.productoId); key = p?.categoria || "Otro"; }
+      else if (vista === "talla") { key = i.talle; }
+      else { key = i.color; }
+      if (!key) return;
+      if (!m[key]) m[key] = { nombre: key, unidades: 0, total: 0 };
+      m[key].unidades += i.cantidad;
+      m[key].total += (i.precio||0) * i.cantidad;
+    }));
+    const lista = Object.values(m);
+    const totalUnidades = lista.reduce((a, x) => a + x.unidades, 0);
+    return lista
+      .map(x => ({ ...x, pct: totalUnidades > 0 ? (x.unidades / totalUnidades) * 100 : 0 }))
+      .sort((a, b) => b.unidades - a.unidades);
+  }, [vf, vista, products]);
+
   const chartData = useMemo(() => {
     if (vista === "dia") { const m={}; vf.forEach(s=>{m[s.fecha]=(m[s.fecha]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f.slice(5),total:Math.round(t)})); }
     if (vista === "mes") { const m={}; vf.forEach(s=>{const k=s.fecha.slice(0,7);m[k]=(m[k]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f,total:Math.round(t)})); }
     if (vista === "anio") { const m={}; vf.forEach(s=>{const k=s.fecha.slice(0,4);m[k]=(m[k]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f,total:Math.round(t)})); }
     if (vista === "hora") { const m={}; for(let h=0;h<24;h++)m[h]=0; vf.forEach(s=>{const d=new Date(s.fecha+"T12:00:00");m[d.getHours()]=(m[d.getHours()]||0)+s.total;}); return Object.entries(m).map(([h,t])=>({label:h+"hs",total:Math.round(t)})); }
     if (vista === "metodo") { const m={}; vf.forEach(s=>{m[s.metodoPago]=(m[s.metodoPago]||0)+s.total;}); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:Math.round(t)})); }
-    if (vista === "categoria") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{const p=products.find(x=>x.id===i.productoId);const cat=p?.categoria||"Otro";m[cat]=(m[cat]||0)+i.precio*i.cantidad;})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:Math.round(t)})); }
-    if (vista === "talla") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{if(i.talle){m[i.talle]=(m[i.talle]||0)+i.cantidad;}})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:t})); }
-    if (vista === "color") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{if(i.color){m[i.color]=(m[i.color]||0)+i.cantidad;}})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:t})); }
     return [];
   }, [vf, vista, products]);
 
-  const esPie = vista === "metodo" || vista === "categoria";
+  const esPie = vista === "metodo";
   const labelY = vista === "top" || vista === "top_menos" || vista === "talla" || vista === "color" || vista === "hora" ? "unidades" : "ventas";
 
   return (
@@ -3193,7 +3211,41 @@ function EstadisticasPage({ ctx }) {
         <StatCard icon={<TrendingUp size={19}/>} bg="#ede9fe" label="Ticket promedio" value={fmtMoney(ticket, config.moneda)} />
       </div>
       <div style={G.card()}>
-        {(vista === "top" || vista === "top_menos") ? (
+        {["categoria","talla","color"].includes(vista) ? (
+          rankingDimension.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"52px 0", color:"#bbb" }}>
+              <div style={{ marginBottom:10, opacity:0.25, color:"#aaa" }}><TrendingUp size={36}/></div>
+              <div>No hay ventas en el rango seleccionado{vista !== "categoria" ? " con ese dato cargado" : ""}</div>
+            </div>
+          ) : (
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13.5 }}>
+                <thead>
+                  <tr style={{ borderBottom:"1px solid #e5e7eb" }}>
+                    <th style={{ padding:"10px 12px", textAlign:"left", fontWeight:600, color:"#888", width:50 }}>#</th>
+                    <th style={{ padding:"10px 12px", textAlign:"left", fontWeight:600, color:"#888" }}>
+                      {vista === "categoria" ? "Categoría" : vista === "talla" ? "Talle" : "Color"}
+                    </th>
+                    <th style={{ padding:"10px 12px", textAlign:"right", fontWeight:600, color:"#888" }}>Unidades vendidas</th>
+                    <th style={{ padding:"10px 12px", textAlign:"right", fontWeight:600, color:"#888" }}>% de ventas</th>
+                    <th style={{ padding:"10px 12px", textAlign:"right", fontWeight:600, color:"#888" }}>Plata generada</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rankingDimension.map((p, i) => (
+                    <tr key={i} style={{ borderBottom:"1px solid #f5f5f5" }}>
+                      <td style={{ padding:"10px 12px", color:"#aaa", fontWeight:600 }}>{i + 1}</td>
+                      <td style={{ padding:"10px 12px", fontWeight:600 }}>{p.nombre}</td>
+                      <td style={{ padding:"10px 12px", textAlign:"right", fontWeight:700 }}>{p.unidades} uds</td>
+                      <td style={{ padding:"10px 12px", textAlign:"right", color:"#888" }}>{p.pct.toFixed(1)}%</td>
+                      <td style={{ padding:"10px 12px", textAlign:"right", color:"#888" }}>{fmtMoney(p.total, config.moneda)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : (vista === "top" || vista === "top_menos") ? (
           rankingProductos.length === 0 ? (
             <div style={{ textAlign:"center", padding:"52px 0", color:"#bbb" }}><div style={{ marginBottom:10, opacity:0.25, color:"#aaa" }}><TrendingUp size={36}/></div><div>Todavía no cargaste productos</div></div>
           ) : (
@@ -3253,7 +3305,7 @@ function EstadisticasPage({ ctx }) {
                 formatter={v => [labelY==="ventas" ? fmtMoney(v, config.moneda) : v+" uds", ""]}
                 labelStyle={{ fontSize:12, fontWeight:600 }}
               />
-              <Bar dataKey="total" fill="#5EC9D1" radius={[10,10,0,0]} maxBarSize={64} />
+              <Bar dataKey="total" fill="#111" radius={[10,10,0,0]} maxBarSize={64} />
             </BarChart>
           </ResponsiveContainer>
         )}
