@@ -132,13 +132,14 @@ const dbToVenta = r => ({
   descuento: parseFloat(r.descuento)||0, descuentoTipo: r.descuento_tipo,
   total: parseFloat(r.total)||0, efectivoDado: parseFloat(r.efectivo_dado)||0,
   cambio: parseFloat(r.cambio)||0, anulada: r.anulada||false, factura: r.factura||null,
+  pagosCombinados: r.pagos_combinados||null,
 });
 const ventaToDb = (v, negocioId) => ({
   id: v.id, negocio_id: negocioId, numero: v.numero, fecha: v.fecha,
   cliente: v.cliente||'', metodo_pago: v.metodoPago, items: v.items||[],
   subtotal: v.subtotal||0, descuento: v.descuento||0, descuento_tipo: v.descuentoTipo||'monto',
   total: v.total||0, efectivo_dado: v.efectivoDado||0, cambio: v.cambio||0,
-  factura: v.factura||null,
+  factura: v.factura||null, pagos_combinados: v.pagosCombinados||null,
 });
 const dbToConfig = n => ({
   nombre: n.nombre, moneda: n.moneda||'$', dueno: n.dueno||'', rubro: n.rubro||'',
@@ -2144,6 +2145,11 @@ function VentaPage({ ctx }) {
   const [descTipo, setDescTipo] = useState("monto");
   const [descValor, setDescValor] = useState("");
   const [efectivoDado, setEfectivoDado] = useState("");
+  const [showCobro, setShowCobro] = useState(false);
+  const [splitMetodo1, setSplitMetodo1] = useState("Efectivo");
+  const [splitMonto1, setSplitMonto1] = useState("");
+  const [splitMetodo2, setSplitMetodo2] = useState("Tarjeta débito");
+  const [splitMonto2, setSplitMonto2] = useState("");
   const [showCaja, setShowCaja] = useState(false);
   const [showCambio, setShowCambio] = useState(false);
   const [ventaExito, setVentaExito] = useState(null);
@@ -2223,16 +2229,27 @@ function VentaPage({ ctx }) {
 
   const [guardandoVenta, setGuardandoVenta] = useState(false);
 
+  const esCombinado = metodoPago === "combinar";
+  const sumaSplit = (+splitMonto1 || 0) + (+splitMonto2 || 0);
+  const splitValido = !esCombinado || Math.abs(sumaSplit - total) < 1;
+
   const completarVenta = async () => {
     if (guardandoVenta) return; // evita doble click → venta duplicada
     if (cart.length === 0 || !metodoPago) return;
+    if (esCombinado && !splitValido) return;
     if (!caja.abierta) { setShowCaja(true); return; }
     setGuardandoVenta(true);
     try {
+    const metodoPagoFinal = esCombinado ? `Combinado (${splitMetodo1} + ${splitMetodo2})` : metodoPago;
+    const pagosCombinados = esCombinado ? [
+      { metodo: splitMetodo1, monto: +splitMonto1 || 0 },
+      { metodo: splitMetodo2, monto: +splitMonto2 || 0 },
+    ] : null;
     const venta = {
-      id: uid(), numero: sales.reduce((mx, s) => Math.max(mx, +s.numero || 0), 0) + 1, fecha: todayStr(), cliente, metodoPago,
+      id: uid(), numero: sales.reduce((mx, s) => Math.max(mx, +s.numero || 0), 0) + 1, fecha: todayStr(), cliente, metodoPago: metodoPagoFinal,
       items: cart.map(i => ({ productoId: i.productoId || i.id, nombre: i.nombre, cantidad: i.cantidad, precio: i.precio, talle: i.talle || null, color: i.color || null })),
-      subtotal, descuento: descMonto, descuentoTipo: descTipo, total, efectivoDado: +efectivoDado || 0, cambio: Math.round(cambio)
+      subtotal, descuento: descMonto, descuentoTipo: descTipo, total, efectivoDado: +efectivoDado || 0, cambio: Math.round(cambio),
+      pagosCombinados,
     };
     const affectedIds = new Set(cart.map(i => i.productoId || i.id));
     const updatedProducts = products.map(p => {
@@ -2258,6 +2275,7 @@ function VentaPage({ ctx }) {
     await ctx.saveVenta(venta);
     await ctx.saveProducts(updatedProducts.filter(p => affectedIds.has(p.id)));
     setCart([]); setCliente(""); setMetodoPago(""); setDescValor(""); setEfectivoDado("");
+    setSplitMonto1(""); setSplitMonto2(""); setShowCobro(false);
     } finally {
       setGuardandoVenta(false);
     }
@@ -2419,32 +2437,83 @@ function VentaPage({ ctx }) {
             </div>
           )}
           <input style={{ ...G.inp(), marginBottom:10 }} placeholder="Nombre cliente (opcional)" value={cliente} onChange={e => setCliente(e.target.value)} />
-          <select style={{ ...G.inp(), marginBottom:10 }} value={metodoPago} onChange={e => setMetodoPago(e.target.value)}>
-            <option value="">Método de pago *</option>
-            {PAGOS.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-          {metodoPago === "Efectivo" && <input style={{ ...G.inp(), marginBottom:10 }} type="number" placeholder="Efectivo recibido" value={efectivoDado} onChange={e => setEfectivoDado(e.target.value)} />}
-          <div style={{ marginBottom:14 }}>
-            <div style={{ fontSize:12, color:"#999", marginBottom:6, fontWeight:600 }}>Descuento</div>
-            <div style={{ display:"flex", marginBottom:8 }}>
-              {[["monto","$ Monto"],["pct","% Porcentaje"]].map(([v,l]) => (
-                <button key={v} onClick={() => { setDescTipo(v); setDescValor(""); }} style={{ flex:1, padding:"7px", border:"1px solid #e5e7eb", cursor:"pointer", fontSize:12, fontWeight:descTipo===v?700:400, background:descTipo===v?"#111":"#fff", color:descTipo===v?"#fff":"#666", borderRadius:v==="monto"?"7px 0 0 7px":"0 7px 7px 0", borderLeft:v==="pct"?"none":undefined }}>{l}</button>
-              ))}
-            </div>
-            <input style={G.inp()} type="number" min={0} max={descTipo==="pct"?100:undefined} placeholder="0" value={descValor} onChange={e => setDescValor(e.target.value)} />
-          </div>
           <div style={{ borderTop:"1px solid #f0f0f0", paddingTop:12, marginBottom:14 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:5 }}><span style={{ color:"#999" }}>Subtotal</span><span>{fmtMoney(subtotal, config.moneda)}</span></div>
-            {descMonto > 0 && <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#dc2626", marginBottom:5 }}><span>Descuento</span><span>-{fmtMoney(descMonto, config.moneda)}</span></div>}
-            {metodoPago === "Efectivo" && +efectivoDado > 0 && <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#2563eb", marginBottom:5 }}><span>Cambio</span><span style={{ fontWeight:600 }}>{fmtMoney(cambio, config.moneda)}</span></div>}
-            <div style={{ display:"flex", justifyContent:"space-between", fontWeight:800, fontSize:17 }}><span>Total</span><span>{fmtMoney(total, config.moneda)}</span></div>
+            <div style={{ display:"flex", justifyContent:"space-between", fontWeight:800, fontSize:17 }}><span>Total</span><span>{fmtMoney(subtotal, config.moneda)}</span></div>
           </div>
-          <button disabled={guardandoVenta} onClick={() => { if (!caja.abierta) setShowCaja(true); else completarVenta(); }} style={{ ...G.btn(cart.length>0&&metodoPago&&!guardandoVenta?"dark":"light"), width:"100%", justifyContent:"center", padding:"13px", fontSize:14, cursor: guardandoVenta ? "wait" : "pointer" }}>
-            {guardandoVenta ? "Guardando..." : "Completar venta"}
+          <button
+            disabled={cart.length===0}
+            onClick={() => { if (!caja.abierta) { setShowCaja(true); return; } setShowCobro(true); }}
+            style={{ ...G.btn(cart.length>0?"dark":"light"), width:"100%", justifyContent:"center", padding:"13px", fontSize:14 }}
+          >
+            Cobrar
           </button>
           {cart.length > 0 && <button onClick={() => setCart([])} style={{ ...G.btn("ghost"), width:"100%", justifyContent:"center", marginTop:8, fontSize:12, color:"#999" }}>Vaciar carrito</button>}
         </div>
       </div>
+
+      {showCobro && (
+        <Modal title="Completar venta" subtitle={`Subtotal: ${fmtMoney(subtotal, config.moneda)}`} onClose={() => setShowCobro(false)} width={400}>
+          <div style={{ marginBottom:14 }}>
+            <div style={{ fontSize:12, color:"#999", marginBottom:6, fontWeight:600 }}>Descuento</div>
+            <div style={{ display:"flex", marginBottom:8 }}>
+              {[["pct","% Porcentaje"],["monto","$ Monto"]].map(([v,l]) => (
+                <button key={v} onClick={() => { setDescTipo(v); setDescValor(""); }} style={{ flex:1, padding:"7px", border:"1px solid #e5e7eb", cursor:"pointer", fontSize:12, fontWeight:descTipo===v?700:400, background:descTipo===v?"#111":"#fff", color:descTipo===v?"#fff":"#666", borderRadius:v==="pct"?"7px 0 0 7px":"0 7px 7px 0", borderLeft:v==="monto"?"none":undefined }}>{l}</button>
+              ))}
+            </div>
+            <input style={G.inp()} type="number" min={0} max={descTipo==="pct"?100:undefined} placeholder="0" value={descValor} onChange={e => setDescValor(e.target.value)} />
+          </div>
+
+          <div style={{ marginBottom:10 }}>
+            <div style={{ fontSize:12, color:"#999", marginBottom:6, fontWeight:600 }}>Método de pago</div>
+            <select style={G.inp()} value={metodoPago} onChange={e => setMetodoPago(e.target.value)}>
+              <option value="">Método de pago *</option>
+              {PAGOS.map(p => <option key={p} value={p}>{p}</option>)}
+              <option value="combinar">🔀 Combinar 2 pagos</option>
+            </select>
+          </div>
+
+          {metodoPago === "Efectivo" && (
+            <input style={{ ...G.inp(), marginBottom:10 }} type="number" placeholder="Monto recibido" value={efectivoDado} onChange={e => setEfectivoDado(e.target.value)} />
+          )}
+
+          {esCombinado && (
+            <div style={{ background:"#f9fafb", borderRadius:10, padding:10, marginBottom:10 }}>
+              <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+                <select style={{ ...G.inp(), flex:1 }} value={splitMetodo1} onChange={e => setSplitMetodo1(e.target.value)}>
+                  {PAGOS.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <input style={{ ...G.inp(), width:100 }} type="number" placeholder="Monto" value={splitMonto1} onChange={e => setSplitMonto1(e.target.value)} />
+              </div>
+              <div style={{ display:"flex", gap:8 }}>
+                <select style={{ ...G.inp(), flex:1 }} value={splitMetodo2} onChange={e => setSplitMetodo2(e.target.value)}>
+                  {PAGOS.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <input style={{ ...G.inp(), width:100 }} type="number" placeholder="Monto" value={splitMonto2} onChange={e => setSplitMonto2(e.target.value)} />
+              </div>
+              <p style={{ fontSize:11.5, color: splitValido ? "#888" : "#dc2626", margin:"8px 0 0" }}>
+                {splitValido ? "La suma de los dos montos tiene que dar el total." : `Falta ${fmtMoney(total - sumaSplit, config.moneda)} para llegar al total.`}
+              </p>
+            </div>
+          )}
+
+          <div style={{ borderTop:"1px solid #f0f0f0", paddingTop:12, marginBottom:14 }}>
+            {descMonto > 0 && <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#dc2626", marginBottom:5 }}><span>Descuento</span><span>-{fmtMoney(descMonto, config.moneda)}</span></div>}
+            <div style={{ display:"flex", justifyContent:"space-between", fontWeight:800, fontSize:17, marginBottom: (metodoPago === "Efectivo" && +efectivoDado > 0) ? 5 : 0 }}><span>Total</span><span>{fmtMoney(total, config.moneda)}</span></div>
+            {metodoPago === "Efectivo" && +efectivoDado > 0 && <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#16a34a", fontWeight:600 }}><span>Vuelto</span><span>{fmtMoney(cambio, config.moneda)}</span></div>}
+          </div>
+
+          <div style={{ display:"flex", gap:10 }}>
+            <button onClick={() => setShowCobro(false)} style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }}>Volver</button>
+            <button
+              disabled={!metodoPago || guardandoVenta || (esCombinado && !splitValido)}
+              onClick={completarVenta}
+              style={{ ...G.btn((metodoPago && !guardandoVenta && (!esCombinado || splitValido))?"dark":"light"), flex:1, justifyContent:"center", cursor: guardandoVenta ? "wait" : "pointer" }}
+            >
+              {guardandoVenta ? "Guardando..." : "Confirmar venta"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
