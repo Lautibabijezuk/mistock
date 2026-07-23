@@ -3103,7 +3103,28 @@ function EstadisticasPage({ ctx }) {
   const ingresos = vf.reduce((a,s) => a+s.total, 0);
   const ticket = vf.length > 0 ? ingresos / vf.length : 0;
 
-  const VISTAS = [{ v:"hora", l:"Ventas por hora" },{ v:"dia", l:"Ventas por día" },{ v:"mes", l:"Ventas por mes" },{ v:"anio", l:"Ventas por año" },{ v:"categoria", l:"Ventas por categoría" },{ v:"talla", l:"Ventas por talla" },{ v:"top", l:"Top productos" },{ v:"metodo", l:"Métodos de pago" }];
+  const VISTAS = [{ v:"hora", l:"Ventas por hora" },{ v:"dia", l:"Ventas por día" },{ v:"mes", l:"Ventas por mes" },{ v:"anio", l:"Ventas por año" },{ v:"categoria", l:"Ventas por categoría" },{ v:"talla", l:"Ventas por talla" },{ v:"top", l:"Productos más vendidos" },{ v:"top_menos", l:"Productos menos vendidos" },{ v:"metodo", l:"Métodos de pago" }];
+
+  // Ranking completo de productos: unidades vendidas + plata generada, en el rango de fechas elegido
+  const rankingProductos = useMemo(() => {
+    const porProducto = {}; // productoId -> { nombre, categoria, unidades, total }
+    vf.forEach(s => (s.items||[]).forEach(i => {
+      const key = i.productoId || i.nombre;
+      if (!porProducto[key]) {
+        const p = products.find(x => x.id === i.productoId);
+        porProducto[key] = { nombre: i.nombre, categoria: p?.categoria || "—", unidades: 0, total: 0 };
+      }
+      porProducto[key].unidades += i.cantidad;
+      porProducto[key].total += (i.precio||0) * i.cantidad;
+    }));
+    // Sumamos también los productos que NO tuvieron ninguna venta en el período (0 unidades)
+    products.forEach(p => {
+      if (!porProducto[p.id]) {
+        porProducto[p.id] = { nombre: p.nombre, categoria: p.categoria || "—", unidades: 0, total: 0 };
+      }
+    });
+    return Object.values(porProducto);
+  }, [vf, products]);
 
   const chartData = useMemo(() => {
     if (vista === "dia") { const m={}; vf.forEach(s=>{m[s.fecha]=(m[s.fecha]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f.slice(5),total:Math.round(t)})); }
@@ -3111,14 +3132,13 @@ function EstadisticasPage({ ctx }) {
     if (vista === "anio") { const m={}; vf.forEach(s=>{const k=s.fecha.slice(0,4);m[k]=(m[k]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f,total:Math.round(t)})); }
     if (vista === "hora") { const m={}; for(let h=0;h<24;h++)m[h]=0; vf.forEach(s=>{const d=new Date(s.fecha+"T12:00:00");m[d.getHours()]=(m[d.getHours()]||0)+s.total;}); return Object.entries(m).map(([h,t])=>({label:h+"hs",total:Math.round(t)})); }
     if (vista === "metodo") { const m={}; vf.forEach(s=>{m[s.metodoPago]=(m[s.metodoPago]||0)+s.total;}); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:Math.round(t)})); }
-    if (vista === "top") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{m[i.nombre]=(m[i.nombre]||0)+i.cantidad;})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([l,t])=>({label:l,total:t})); }
     if (vista === "categoria") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{const p=products.find(x=>x.id===i.productoId);const cat=p?.categoria||"Otro";m[cat]=(m[cat]||0)+i.precio*i.cantidad;})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:Math.round(t)})); }
     if (vista === "talla") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{const p=products.find(x=>x.id===i.productoId);if(p?.talle){m[p.talle]=(m[p.talle]||0)+i.cantidad;}})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:t})); }
     return [];
   }, [vf, vista, products]);
 
   const esPie = vista === "metodo" || vista === "categoria";
-  const labelY = vista === "top" || vista === "talla" || vista === "hora" ? "unidades" : "ventas";
+  const labelY = vista === "top" || vista === "top_menos" || vista === "talla" || vista === "hora" ? "unidades" : "ventas";
 
   return (
     <div className="app-page-pad" style={G.page}>
@@ -3129,7 +3149,7 @@ function EstadisticasPage({ ctx }) {
             <button key={p} onClick={() => setPresetRange(p)} style={{ padding:"6px 14px", borderRadius:7, border:"1px solid #e5e7eb", cursor:"pointer", fontSize:12, background:preset===p?"#111":"#fff", color:preset===p?"#fff":"#374151", fontWeight:preset===p?600:400 }}>{p}</button>
           ))}
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:16 }}>
           <div><label style={{ fontSize:11, color:"#999", display:"block", marginBottom:4 }}>Fecha inicio</label><input type="date" style={G.inp()} value={fechaIni} onChange={e => { setFechaIni(e.target.value); setPreset(""); }} /></div>
           <div><label style={{ fontSize:11, color:"#999", display:"block", marginBottom:4 }}>Fecha fin</label><input type="date" style={G.inp()} value={fechaFin} onChange={e => { setFechaFin(e.target.value); setPreset(""); }} /></div>
           <div><label style={{ fontSize:11, color:"#999", display:"block", marginBottom:4 }}>Vista</label>
@@ -3145,7 +3165,40 @@ function EstadisticasPage({ ctx }) {
         <StatCard icon={<TrendingUp size={19}/>} bg="#ede9fe" label="Ticket promedio" value={fmtMoney(ticket, config.moneda)} />
       </div>
       <div style={G.card()}>
-        {chartData.length === 0 ? (
+        {(vista === "top" || vista === "top_menos") ? (
+          rankingProductos.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"52px 0", color:"#bbb" }}><div style={{ marginBottom:10, opacity:0.25, color:"#aaa" }}><TrendingUp size={36}/></div><div>Todavía no cargaste productos</div></div>
+          ) : (
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13.5 }}>
+                <thead>
+                  <tr style={{ borderBottom:"1px solid #e5e7eb" }}>
+                    <th style={{ padding:"10px 12px", textAlign:"left", fontWeight:600, color:"#888", width:50 }}>#</th>
+                    <th style={{ padding:"10px 12px", textAlign:"left", fontWeight:600, color:"#888" }}>Producto</th>
+                    <th style={{ padding:"10px 12px", textAlign:"left", fontWeight:600, color:"#888" }}>Categoría</th>
+                    <th style={{ padding:"10px 12px", textAlign:"right", fontWeight:600, color:"#888" }}>Unidades vendidas</th>
+                    <th style={{ padding:"10px 12px", textAlign:"right", fontWeight:600, color:"#888" }}>Plata generada</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...rankingProductos]
+                    .sort((a, b) => vista === "top" ? b.unidades - a.unidades : a.unidades - b.unidades)
+                    .map((p, i) => (
+                      <tr key={i} style={{ borderBottom:"1px solid #f5f5f5" }}>
+                        <td style={{ padding:"10px 12px", color:"#aaa", fontWeight:600 }}>{i + 1}</td>
+                        <td style={{ padding:"10px 12px", fontWeight:600 }}>{p.nombre}</td>
+                        <td style={{ padding:"10px 12px", color:"#888" }}>{p.categoria}</td>
+                        <td style={{ padding:"10px 12px", textAlign:"right", fontWeight:700, color: p.unidades === 0 ? "#dc2626" : "#111" }}>
+                          {p.unidades === 0 ? "Sin ventas" : `${p.unidades} uds`}
+                        </td>
+                        <td style={{ padding:"10px 12px", textAlign:"right", color:"#888" }}>{fmtMoney(p.total, config.moneda)}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : chartData.length === 0 ? (
           <div style={{ textAlign:"center", padding:"52px 0", color:"#bbb" }}><div style={{ marginBottom:10, opacity:0.25, color:"#aaa" }}><TrendingUp size={36}/></div><div>No hay ventas en el rango seleccionado</div></div>
         ) : esPie ? (
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20, alignItems:"center" }}>
