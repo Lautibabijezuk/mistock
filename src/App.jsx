@@ -2078,7 +2078,7 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
               <div>{q ? `Sin resultados para "${q}"` : "No hay productos con stock"}</div>
             </div>
           ) : (
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:12 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
               {filtrados.map(p => {
                 const inCart = cart.filter(i => (i.productoId||i.id) === p.id);
                 const totalEnCarrito = inCart.reduce((a, i) => a + i.cantidad, 0);
@@ -2327,8 +2327,8 @@ function VentaPage({ ctx }) {
         <button style={G.btn("outline")} onClick={() => setShowCambio(true)}><RefreshCw size={14}/> Cambio</button>
       </div>
       <CajaBanner caja={caja} onAbrir={() => setShowCaja(true)} />
-      <div className="venta-grid" style={{ display:"grid", gridTemplateColumns:"1.3fr 1fr", gap:24, alignItems:"stretch" }}>
-        <div>
+      <div className="venta-grid" style={{ display:"flex", gap:24, alignItems:"stretch" }}>
+        <div style={{ flex:"1.3 1 0%", minWidth:0 }}>
           {/* Barra de búsqueda + botón de escanear */}
           <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
             <div
@@ -2347,14 +2347,14 @@ function VentaPage({ ctx }) {
             </button>
           </div>
 
-          {/* Accesos rápidos — últimos 4 productos más vendidos o más recientes */}
+          {/* Accesos rápidos — hasta 16 productos (4 filas de 4), el resto vía "Ver todos" */}
           {products.length > 0 && (
             <>
               <div style={{ fontSize:12, fontWeight:600, color:"#999", marginBottom:10, textTransform:"uppercase", letterSpacing:"0.5px" }}>Accesos rápidos</div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
                 {products
                   .filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v => +v > 0) : p.stock > 0)
-                  .slice(0, 4)
+                  .slice(0, 16)
                   .map(p => {
                     const inCart = cart.filter(i => (i.productoId||i.id) === p.id);
                     const totalEnCarrito = inCart.reduce((a, i) => a + i.cantidad, 0);
@@ -2406,7 +2406,7 @@ function VentaPage({ ctx }) {
             <Empty icon={<Package size={36}/>} text="No hay productos cargados" btnText="Ir a Inventario" onBtn={() => ctx.setPage("inventario")} />
           )}
         </div>
-        <div style={{ ...G.card({ padding:20 }), position:"sticky", top:20, display:"flex", flexDirection:"column" }}>
+        <div style={{ ...G.card({ padding:20 }), position:"sticky", top:20, display:"flex", flexDirection:"column", flex:"1 1 0%", minWidth:0 }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16, position:"relative" }}>
             <ShoppingCart size={18}/>
             <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>Carrito</h3>
@@ -6252,7 +6252,7 @@ export default function App() {
           .app-topbar-mobile { display: flex !important; }
           .app-overlay.open { display: block !important; }
           .app-sidebar-close { display: flex !important; }
-          .venta-grid { grid-template-columns: 1fr !important; }
+          .venta-grid { flex-direction: column !important; }
         }
         @media (max-width: 640px) {
           .app-page-pad { padding: 16px !important; }
