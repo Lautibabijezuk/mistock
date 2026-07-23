@@ -3253,7 +3253,7 @@ function EstadisticasPage({ ctx }) {
   }, [vf, vista, products]);
 
   const esPie = vista === "metodo";
-  const labelY = vista === "top" || vista === "top_menos" || vista === "talla" || vista === "color" || vista === "hora" ? "unidades" : "ventas";
+  const labelY = vista === "top" || vista === "top_menos" || vista === "talla" || vista === "color" ? "unidades" : "ventas";
 
   return (
     <div className="app-page-pad" style={G.page}>
