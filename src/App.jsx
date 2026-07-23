@@ -303,7 +303,14 @@ const CATS_POR_RUBRO = {
 };
 const CATS_PROD_FALLBACK = ["General","Producto","Servicio","Accesorios","Insumos","Otros"];
 const CATS_GASTO = ["Alquiler","Servicios","Sueldos","Mercadería","Marketing","Transporte","Mantenimiento","Impuestos","Otro"];
-const TALLES_PRESET = { "Ropa — XS al XXL": ["XS","S","M","L","XL","XXL"], "Calzado — 35 al 45": ["35","36","37","38","39","40","41","42","43","44","45"], "Niños — 2 al 16": ["2","4","6","8","10","12","14","16"], "Único": ["Único"] };
+const TALLES_PRESET = {
+  "Ropa — XS al XXL": ["XS","S","M","L","XL","XXL"],
+  "Jeans — Talle USA": ["26","28","30","32","34","36","38","40","42","44"],
+  "Jeans — Talle EU": ["36","38","40","42","44","46","48","50","52"],
+  "Calzado — 35 al 45": ["35","36","37","38","39","40","41","42","43","44","45"],
+  "Niños — 2 al 16": ["2","4","6","8","10","12","14","16"],
+  "Único": ["Único"],
+};
 const COLORES_DEFAULT = ["Azul Marino","Blanco","Negro","Rojo","Verde","Amarillo","Rosa","Gris","Beige","Marrón","Celeste","Violeta"];
 const PIE_COLORS = ["#111","#16a34a","#2563eb","#d97706","#dc2626","#7c3aed","#0891b2","#ea580c"];
 
@@ -3236,13 +3243,17 @@ function EstadisticasPage({ ctx }) {
             ))}</div>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={chartData} margin={{ top:4, right:8, left:8, bottom:4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" />
-              <XAxis dataKey="label" tick={{ fontSize:11, fill:"#bbb" }} />
-              <YAxis tick={{ fontSize:11, fill:"#bbb" }} tickFormatter={v => labelY==="ventas" ? `${config.moneda}${v>=1000?(v/1000).toFixed(0)+"k":v}` : v} />
-              <Tooltip formatter={v => [labelY==="ventas" ? fmtMoney(v, config.moneda) : v+" uds", ""]} labelStyle={{ fontSize:12 }} />
-              <Bar dataKey="total" fill="#111" radius={[4,4,0,0]} />
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={chartData} margin={{ top:8, right:8, left:8, bottom:4 }} barCategoryGap="28%">
+              <XAxis dataKey="label" tick={{ fontSize:12.5, fill:"#6b7280" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize:12.5, fill:"#6b7280" }} axisLine={false} tickLine={false} tickFormatter={v => labelY==="ventas" ? `${config.moneda}${v>=1000?(v/1000).toFixed(0)+"k":v}` : v} />
+              <Tooltip
+                cursor={{ fill:"rgba(0,0,0,0.03)" }}
+                contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }}
+                formatter={v => [labelY==="ventas" ? fmtMoney(v, config.moneda) : v+" uds", ""]}
+                labelStyle={{ fontSize:12, fontWeight:600 }}
+              />
+              <Bar dataKey="total" fill="#5EC9D1" radius={[10,10,0,0]} maxBarSize={64} />
             </BarChart>
           </ResponsiveContainer>
         )}
