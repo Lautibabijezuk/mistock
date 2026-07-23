@@ -2351,7 +2351,7 @@ function VentaPage({ ctx }) {
           {products.length > 0 && (
             <>
               <div style={{ fontSize:12, fontWeight:600, color:"#999", marginBottom:10, textTransform:"uppercase", letterSpacing:"0.5px" }}>Accesos rápidos</div>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
                 {products
                   .filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v => +v > 0) : p.stock > 0)
                   .slice(0, 4)
@@ -2395,10 +2395,10 @@ function VentaPage({ ctx }) {
                       </div>
                     );
                 })}
-                <button onClick={() => setShowBuscador(true)} style={{ border:"1px dashed #e5e7eb", borderRadius:9, background:"transparent", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6, fontSize:12.5, color:"#888", minHeight:100 }}>
-                  <Search size={13}/> Ver todos ({products.filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0).length})
-                </button>
               </div>
+              <button onClick={() => setShowBuscador(true)} style={{ ...G.btn("ghost"), width:"100%", justifyContent:"center", marginTop:12, fontSize:13, color:"#888", border:"1px dashed #e5e7eb", borderRadius:9, padding:"10px" }}>
+                <Search size={13}/> Ver todos los productos ({products.filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0).length} disponibles)
+              </button>
             </>
           )}
 
@@ -2406,7 +2406,7 @@ function VentaPage({ ctx }) {
             <Empty icon={<Package size={36}/>} text="No hay productos cargados" btnText="Ir a Inventario" onBtn={() => ctx.setPage("inventario")} />
           )}
         </div>
-        <div style={{ ...G.card({ padding:20 }), position:"sticky", top:20, display:"flex", flexDirection:"column", height:"100%", minHeight:460 }}>
+        <div style={{ ...G.card({ padding:20 }), position:"sticky", top:20, display:"flex", flexDirection:"column" }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16, position:"relative" }}>
             <ShoppingCart size={18}/>
             <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>Carrito</h3>
