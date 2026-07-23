@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, Component } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
-import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu } from "lucide-react";
+import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu, MoreVertical } from "lucide-react";
 import * as XLSX from "xlsx";
 
 // ═══════════════════════════════════════════════════════════
@@ -2146,6 +2146,7 @@ function VentaPage({ ctx }) {
   const [descValor, setDescValor] = useState("");
   const [efectivoDado, setEfectivoDado] = useState("");
   const [showCobro, setShowCobro] = useState(false);
+  const [showCartMenu, setShowCartMenu] = useState(false);
   const [splitMetodo1, setSplitMetodo1] = useState("Efectivo");
   const [splitMonto1, setSplitMonto1] = useState("");
   const [splitMetodo2, setSplitMetodo2] = useState("Tarjeta débito");
@@ -2394,10 +2395,10 @@ function VentaPage({ ctx }) {
                       </div>
                     );
                 })}
+                <button onClick={() => setShowBuscador(true)} style={{ border:"1px dashed #e5e7eb", borderRadius:9, background:"transparent", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6, fontSize:12.5, color:"#888", minHeight:100 }}>
+                  <Search size={13}/> Ver todos ({products.filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0).length})
+                </button>
               </div>
-              <button onClick={() => setShowBuscador(true)} style={{ ...G.btn("ghost"), width:"100%", justifyContent:"center", marginTop:12, fontSize:13, color:"#888", border:"1px dashed #e5e7eb", borderRadius:9, padding:"10px" }}>
-                <Search size={13}/> Ver todos los productos ({products.filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0).length} disponibles)
-              </button>
             </>
           )}
 
@@ -2406,10 +2407,27 @@ function VentaPage({ ctx }) {
           )}
         </div>
         <div style={{ ...G.card({ padding:20 }), position:"sticky", top:20, display:"flex", flexDirection:"column", height:"100%", minHeight:460 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16, position:"relative" }}>
             <ShoppingCart size={18}/>
             <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>Carrito</h3>
             {cart.length > 0 && <span style={{ marginLeft:"auto", background:"#f3f4f6", color:"#666", fontSize:11, padding:"2px 9px", borderRadius:20 }}>{cart.reduce((a,i) => a+i.cantidad, 0)} items</span>}
+            {cart.length > 0 && (
+              <div style={{ position:"relative" }}>
+                <button onClick={() => setShowCartMenu(v => !v)} style={{ background:"#f3f4f6", border:"none", borderRadius:8, width:28, height:28, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:"#666" }}>
+                  <MoreVertical size={15}/>
+                </button>
+                {showCartMenu && (
+                  <>
+                    <div onClick={() => setShowCartMenu(false)} style={{ position:"fixed", inset:0, zIndex:10 }}/>
+                    <div style={{ position:"absolute", top:32, right:0, background:"#fff", border:"1px solid #e5e7eb", borderRadius:9, boxShadow:"0 8px 24px rgba(0,0,0,0.1)", zIndex:11, minWidth:150 }}>
+                      <button onClick={() => { setCart([]); setShowCartMenu(false); }} style={{ width:"100%", textAlign:"left", padding:"10px 14px", background:"none", border:"none", cursor:"pointer", fontSize:13, color:"#dc2626", display:"flex", alignItems:"center", gap:8 }}>
+                        <Trash2 size={13}/> Vaciar carrito
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
           {cart.length === 0 ? (
             <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center", color:"#ccc", borderBottom:"1px solid #f5f5f5", marginBottom:16 }}>
@@ -2446,7 +2464,6 @@ function VentaPage({ ctx }) {
           >
             Cobrar
           </button>
-          {cart.length > 0 && <button onClick={() => setCart([])} style={{ ...G.btn("ghost"), width:"100%", justifyContent:"center", marginTop:8, fontSize:12, color:"#999" }}>Vaciar carrito</button>}
         </div>
       </div>
 
