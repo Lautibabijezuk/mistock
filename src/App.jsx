@@ -1949,8 +1949,12 @@ function DashboardPage({ ctx }) {
 // ── Selector de Talle para Nueva Venta ────────────────────
 function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
   const [talleSelec, setTalleSelec] = useState(null);
+  const [colorSelec, setColorSelec] = useState(null);
   const stockPorTalle = prod.stockPorTalle || {};
   const totalDisp = Object.values(stockPorTalle).reduce((a,v) => a+(+v||0), 0);
+  const tieneTalles = (prod.talles||[]).length > 0;
+  const tieneColores = (prod.colores||[]).length > 0;
+  const faltaElegir = (tieneTalles && !talleSelec) || (tieneColores && !colorSelec);
 
   return (
     <Modal title={prod.nombre} subtitle={prod.categoria} onClose={onClose} width={420}>
@@ -1959,47 +1963,59 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
       )}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
         <span style={{ fontWeight:800, fontSize:22, color:"#111" }}>{fmtMoney(prod.precio, moneda)}</span>
-        <span style={{ fontSize:12, color:"#888" }}>{totalDisp} unidades disponibles</span>
+        {tieneTalles && <span style={{ fontSize:12, color:"#888" }}>{totalDisp} unidades disponibles</span>}
       </div>
 
-      {/* Colores */}
-      {prod.colores?.length > 0 && (
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
-          {(prod.colores||[]).map(c => (
-            <span key={c} style={{ background:"#f3f4f6", borderRadius:20, padding:"4px 12px", fontSize:12, color:"#555", fontWeight:500 }}>{c}</span>
-          ))}
+      {/* Colores — seleccionable */}
+      {tieneColores && (
+        <div style={{ marginBottom:20 }}>
+          <div style={{ fontSize:13, fontWeight:600, color:"#666", marginBottom:10 }}>Seleccionar color:</div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {(prod.colores||[]).map(c => {
+              const selec = colorSelec === c;
+              return (
+                <button key={c} onClick={() => setColorSelec(c)} style={{
+                  background: selec ? "#111" : "#f3f4f6", borderRadius:20, padding:"7px 16px",
+                  fontSize:13, color: selec ? "#fff" : "#555", fontWeight: selec ? 700 : 500,
+                  border: selec ? "2px solid #111" : "2px solid transparent", cursor:"pointer", transition:"all .15s",
+                }}>{c}</button>
+              );
+            })}
+          </div>
         </div>
       )}
 
       {/* Talles */}
-      <div style={{ marginBottom:20 }}>
-        <div style={{ fontSize:13, fontWeight:600, color:"#666", marginBottom:10 }}>Seleccionar talle:</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8 }}>
-          {(prod.talles||[]).map(t => {
-            const cnt = stockPorTalle[t] || 0;
-            const agotado = cnt === 0;
-            const selec = talleSelec === t;
-            return (
-              <button key={t} onClick={() => !agotado && setTalleSelec(t)} style={{
-                borderRadius:10, border:`2px solid ${selec?"#111":agotado?"#f5f5f5":"#e5e7eb"}`,
-                padding:"10px 8px", cursor:agotado?"not-allowed":"pointer", textAlign:"center",
-                background: selec?"#111":agotado?"#fafafa":"#fff",
-                opacity: agotado ? 0.45 : 1, transition:"all .15s"
-              }}>
-                <div style={{ fontSize:13, fontWeight:700, color:selec?"#fff":agotado?"#bbb":"#111" }}>{t}</div>
-                <div style={{ fontSize:11, color:selec?"#ccc":agotado?"#ccc":"#888", marginTop:2 }}>{cnt} ud.</div>
-              </button>
-            );
-          })}
+      {tieneTalles && (
+        <div style={{ marginBottom:20 }}>
+          <div style={{ fontSize:13, fontWeight:600, color:"#666", marginBottom:10 }}>Seleccionar talle:</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8 }}>
+            {(prod.talles||[]).map(t => {
+              const cnt = stockPorTalle[t] || 0;
+              const agotado = cnt === 0;
+              const selec = talleSelec === t;
+              return (
+                <button key={t} onClick={() => !agotado && setTalleSelec(t)} style={{
+                  borderRadius:10, border:`2px solid ${selec?"#111":agotado?"#f5f5f5":"#e5e7eb"}`,
+                  padding:"10px 8px", cursor:agotado?"not-allowed":"pointer", textAlign:"center",
+                  background: selec?"#111":agotado?"#fafafa":"#fff",
+                  opacity: agotado ? 0.45 : 1, transition:"all .15s"
+                }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:selec?"#fff":agotado?"#bbb":"#111" }}>{t}</div>
+                  <div style={{ fontSize:11, color:selec?"#ccc":agotado?"#ccc":"#888", marginTop:2 }}>{cnt} ud.</div>
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       <button
-        style={{ ...G.btn(talleSelec ? "dark" : "light"), width:"100%", justifyContent:"center", padding:"13px", fontSize:15 }}
-        onClick={() => { if (talleSelec) { onSelect(talleSelec, stockPorTalle[talleSelec]); onClose(); } }}
-        disabled={!talleSelec}
+        style={{ ...G.btn(!faltaElegir ? "dark" : "light"), width:"100%", justifyContent:"center", padding:"13px", fontSize:15 }}
+        onClick={() => { if (!faltaElegir) { onSelect(talleSelec, tieneTalles ? stockPorTalle[talleSelec] : null, colorSelec); onClose(); } }}
+        disabled={faltaElegir}
       >
-        {talleSelec ? `Agregar talle ${talleSelec} al carrito` : "Seleccioná un talle"}
+        {faltaElegir ? (tieneTalles && !talleSelec ? "Seleccioná un talle" : "Seleccioná un color") : "Agregar al carrito"}
       </button>
     </Modal>
   );
@@ -2112,6 +2128,7 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
 function VentaPage({ ctx }) {
   const { config, caja, setCaja, products, setProducts, sales, setSales } = ctx;
   const esModa = RUBROS_CON_TALLES.includes(config.rubro);
+  const tieneColores = RUBROS_CON_COLORES.includes(config.rubro);
   const [search, setSearch] = useState("");
   const [showBuscador, setShowBuscador] = useState(false);
   const [cart, setCart] = useState([]);
@@ -2167,21 +2184,24 @@ function VentaPage({ ctx }) {
   const total = Math.max(0, subtotal - descMonto);
   const cambio = metodoPago === "Efectivo" && +efectivoDado > total ? +efectivoDado - total : 0;
 
-  const addToCart = (prod, talle = null, stockMax = null) => {
-    const cartKey = talle ? `${prod.id}__${talle}` : prod.id;
+  const addToCart = (prod, talle = null, stockMax = null, color = null) => {
+    const cartKey = [prod.id, talle, color].filter(Boolean).join("__") || prod.id;
     const maxStock = stockMax !== null ? stockMax : prod.stock;
+    const sufijo = [talle ? `T.${talle}` : null, color].filter(Boolean).join(" - ");
     setCart(prev => {
       const idx = prev.findIndex(i => i.cartKey === cartKey);
       if (idx >= 0) {
         if (prev[idx].cantidad >= maxStock) return prev;
         return prev.map((it, i) => i === idx ? { ...it, cantidad: it.cantidad + 1 } : it);
       }
-      return [...prev, { cartKey, id: prod.id, nombre: prod.nombre + (talle ? ` — T.${talle}` : ""), precio: prod.precio, cantidad: 1, stock: maxStock, talle, productoId: prod.id }];
+      return [...prev, { cartKey, id: prod.id, nombre: prod.nombre + (sufijo ? ` — ${sufijo}` : ""), precio: prod.precio, cantidad: 1, stock: maxStock, talle, color, productoId: prod.id }];
     });
   };
 
   const handleProdClick = (prod) => {
-    if (esModa && prod.talles?.length > 0 && prod.stockPorTalle) {
+    const tieneTallesProd = esModa && prod.talles?.length > 0 && prod.stockPorTalle;
+    const tieneColoresProd = tieneColores && prod.colores?.length > 0;
+    if (tieneTallesProd || tieneColoresProd) {
       setProdTalle(prod);
     } else {
       addToCart(prod);
@@ -2204,7 +2224,7 @@ function VentaPage({ ctx }) {
     try {
     const venta = {
       id: uid(), numero: sales.reduce((mx, s) => Math.max(mx, +s.numero || 0), 0) + 1, fecha: todayStr(), cliente, metodoPago,
-      items: cart.map(i => ({ productoId: i.productoId || i.id, nombre: i.nombre, cantidad: i.cantidad, precio: i.precio, talle: i.talle || null })),
+      items: cart.map(i => ({ productoId: i.productoId || i.id, nombre: i.nombre, cantidad: i.cantidad, precio: i.precio, talle: i.talle || null, color: i.color || null })),
       subtotal, descuento: descMonto, descuentoTipo: descTipo, total, efectivoDado: +efectivoDado || 0, cambio: Math.round(cambio)
     };
     const affectedIds = new Set(cart.map(i => i.productoId || i.id));
@@ -2256,7 +2276,7 @@ function VentaPage({ ctx }) {
       )}
       {comprobanteVer && <ComprobanteModal venta={comprobanteVer} config={config} onClose={() => setComprobanteVer(null)} />}
       {showCambio && <CambioProductosModal products={products} setProducts={setProducts} saveProducts={ctx.saveProducts} rubro={config.rubro} onClose={() => setShowCambio(false)} />}
-      {prodTalle && <TalleSelectorModal prod={prodTalle} moneda={config.moneda} onSelect={(talle, stock) => addToCart(prodTalle, talle, stock)} onClose={() => setProdTalle(null)} />}
+      {prodTalle && <TalleSelectorModal prod={prodTalle} moneda={config.moneda} onSelect={(talle, stock, color) => addToCart(prodTalle, talle, stock, color)} onClose={() => setProdTalle(null)} />}
       {escanerAbierto && (
         <EscanerModal
           titulo="Escanear producto"
@@ -3103,7 +3123,7 @@ function EstadisticasPage({ ctx }) {
   const ingresos = vf.reduce((a,s) => a+s.total, 0);
   const ticket = vf.length > 0 ? ingresos / vf.length : 0;
 
-  const VISTAS = [{ v:"hora", l:"Ventas por hora" },{ v:"dia", l:"Ventas por día" },{ v:"mes", l:"Ventas por mes" },{ v:"anio", l:"Ventas por año" },{ v:"categoria", l:"Ventas por categoría" },{ v:"talla", l:"Ventas por talla" },{ v:"top", l:"Productos más vendidos" },{ v:"top_menos", l:"Productos menos vendidos" },{ v:"metodo", l:"Métodos de pago" }];
+  const VISTAS = [{ v:"hora", l:"Ventas por hora" },{ v:"dia", l:"Ventas por día" },{ v:"mes", l:"Ventas por mes" },{ v:"anio", l:"Ventas por año" },{ v:"categoria", l:"Ventas por categoría" },{ v:"talla", l:"Ventas por talles" },{ v:"color", l:"Ventas por color" },{ v:"top", l:"Productos más vendidos" },{ v:"top_menos", l:"Productos menos vendidos" },{ v:"metodo", l:"Métodos de pago" }];
 
   // Ranking completo de productos: unidades vendidas + plata generada, en el rango de fechas elegido
   const rankingProductos = useMemo(() => {
@@ -3133,12 +3153,13 @@ function EstadisticasPage({ ctx }) {
     if (vista === "hora") { const m={}; for(let h=0;h<24;h++)m[h]=0; vf.forEach(s=>{const d=new Date(s.fecha+"T12:00:00");m[d.getHours()]=(m[d.getHours()]||0)+s.total;}); return Object.entries(m).map(([h,t])=>({label:h+"hs",total:Math.round(t)})); }
     if (vista === "metodo") { const m={}; vf.forEach(s=>{m[s.metodoPago]=(m[s.metodoPago]||0)+s.total;}); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:Math.round(t)})); }
     if (vista === "categoria") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{const p=products.find(x=>x.id===i.productoId);const cat=p?.categoria||"Otro";m[cat]=(m[cat]||0)+i.precio*i.cantidad;})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:Math.round(t)})); }
-    if (vista === "talla") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{const p=products.find(x=>x.id===i.productoId);if(p?.talle){m[p.talle]=(m[p.talle]||0)+i.cantidad;}})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:t})); }
+    if (vista === "talla") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{if(i.talle){m[i.talle]=(m[i.talle]||0)+i.cantidad;}})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:t})); }
+    if (vista === "color") { const m={}; vf.forEach(s=>(s.items||[]).forEach(i=>{if(i.color){m[i.color]=(m[i.color]||0)+i.cantidad;}})); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:t})); }
     return [];
   }, [vf, vista, products]);
 
   const esPie = vista === "metodo" || vista === "categoria";
-  const labelY = vista === "top" || vista === "top_menos" || vista === "talla" || vista === "hora" ? "unidades" : "ventas";
+  const labelY = vista === "top" || vista === "top_menos" || vista === "talla" || vista === "color" || vista === "hora" ? "unidades" : "ventas";
 
   return (
     <div className="app-page-pad" style={G.page}>
