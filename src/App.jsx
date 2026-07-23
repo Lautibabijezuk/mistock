@@ -132,7 +132,7 @@ const dbToVenta = r => ({
   descuento: parseFloat(r.descuento)||0, descuentoTipo: r.descuento_tipo,
   total: parseFloat(r.total)||0, efectivoDado: parseFloat(r.efectivo_dado)||0,
   cambio: parseFloat(r.cambio)||0, anulada: r.anulada||false, factura: r.factura||null,
-  pagosCombinados: r.pagos_combinados||null,
+  pagosCombinados: r.pagos_combinados||null, createdAt: r.created_at||null,
 });
 const ventaToDb = (v, negocioId) => ({
   id: v.id, negocio_id: negocioId, numero: v.numero, fecha: v.fecha,
@@ -3247,7 +3247,7 @@ function EstadisticasPage({ ctx }) {
     if (vista === "dia") { const m={}; vf.forEach(s=>{m[s.fecha]=(m[s.fecha]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f.slice(5),total:Math.round(t)})); }
     if (vista === "mes") { const m={}; vf.forEach(s=>{const k=s.fecha.slice(0,7);m[k]=(m[k]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f,total:Math.round(t)})); }
     if (vista === "anio") { const m={}; vf.forEach(s=>{const k=s.fecha.slice(0,4);m[k]=(m[k]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f,total:Math.round(t)})); }
-    if (vista === "hora") { const m={}; for(let h=0;h<24;h++)m[h]=0; vf.forEach(s=>{const d=new Date(s.fecha+"T12:00:00");m[d.getHours()]=(m[d.getHours()]||0)+s.total;}); return Object.entries(m).map(([h,t])=>({label:h+"hs",total:Math.round(t)})); }
+    if (vista === "hora") { const m={}; for(let h=0;h<24;h++)m[h]=0; vf.forEach(s=>{if(!s.createdAt) return; const d=new Date(s.createdAt); m[d.getHours()]=(m[d.getHours()]||0)+s.total;}); return Object.entries(m).map(([h,t])=>({label:h+"hs",total:Math.round(t)})); }
     if (vista === "metodo") { const m={}; vf.forEach(s=>{m[s.metodoPago]=(m[s.metodoPago]||0)+s.total;}); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:Math.round(t)})); }
     return [];
   }, [vf, vista, products]);
