@@ -3809,66 +3809,15 @@ function ConfigPage({ ctx }) {
         </div>
       </div>
 
-      {/* Facturación Electrónica */}
+      {/* Facturación Electrónica — Próximamente */}
       <div style={{ ...G.card({ marginBottom:24 }) }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
           <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>🏛️ Facturación Electrónica (AFIP/ARCA)</h3>
-          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-            <span style={{ fontSize:12, color:"#888" }}>{f.facturacionActiva ? "Activa" : "Inactiva"}</span>
-            <button onClick={() => u("facturacionActiva", !f.facturacionActiva)} style={{ width:44, height:24, borderRadius:20, border:"none", cursor:"pointer", background:f.facturacionActiva?"#16a34a":"#d1d5db", position:"relative", transition:"background .2s" }}>
-              <span style={{ position:"absolute", top:2, left:f.facturacionActiva?22:2, width:20, height:20, borderRadius:"50%", background:"#fff", transition:"left .2s", boxShadow:"0 1px 3px rgba(0,0,0,0.2)" }}/>
-            </button>
-          </div>
+          <span style={{ background:"#f4ecff", color:"#7c3aed", fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Próximamente</span>
         </div>
-        <p style={{ margin:"0 0 20px", fontSize:13, color:"#888" }}>
-          Completá tus datos fiscales para emitir facturas electrónicas al completar cada venta.
-          {!f.facturacionActiva && <span style={{ color:"#d97706", fontWeight:600 }}> (Desactivada)</span>}
+        <p style={{ margin:0, fontSize:13, color:"#888", lineHeight:1.5 }}>
+          Estamos preparando la emisión de facturas electrónicas con CAE, integrada a AFIP. Vas a poder activarla directamente desde acá apenas esté disponible.
         </p>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
-          <FieldRow label="CUIT del negocio *">
-            <input style={G.inp()} value={f.cuit||""} onChange={e => u("cuit", e.target.value)} placeholder="20-12345678-0" />
-          </FieldRow>
-          <FieldRow label="Razón social *">
-            <input style={G.inp()} value={f.razonSocial||""} onChange={e => u("razonSocial", e.target.value)} placeholder="Tu nombre o empresa" />
-          </FieldRow>
-          <FieldRow label="Tipo de contribuyente *">
-            <select style={G.inp()} value={f.tipoContrib||"monotributista"} onChange={e => { u("tipoContrib", e.target.value); u("condicionIVA", e.target.value==="monotributista"?"Monotributista":"Responsable Inscripto"); }}>
-              <option value="monotributista">Monotributista → emite Factura C</option>
-              <option value="responsable_inscripto">Responsable Inscripto → emite A o B</option>
-            </select>
-          </FieldRow>
-          <FieldRow label="Punto de venta (N°)">
-            <input style={G.inp()} value={f.puntoVenta||"0001"} onChange={e => u("puntoVenta", e.target.value)} placeholder="0001" maxLength={4} />
-          </FieldRow>
-        </div>
-        <div style={{ background:"#f9fafb", borderRadius:10, padding:"12px 16px", marginTop:12, fontSize:13, display:"flex", gap:16, alignItems:"center" }}>
-          <span style={{ fontWeight:600, color:"#666" }}>Emite:</span>
-          {(f.tipoContrib||"monotributista") === "monotributista" ? (
-            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-              <span style={{ background:"#111", color:"#fff", borderRadius:8, padding:"4px 14px", fontWeight:900, fontSize:18 }}>C</span>
-              <span style={{ color:"#666", fontSize:12 }}>Factura C — cualquier cliente</span>
-            </div>
-          ) : (
-            <>
-              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                <span style={{ background:"#111", color:"#fff", borderRadius:8, padding:"4px 12px", fontWeight:900, fontSize:16 }}>A</span>
-                <span style={{ color:"#666", fontSize:12 }}>Receptor RI</span>
-              </div>
-              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                <span style={{ background:"#555", color:"#fff", borderRadius:8, padding:"4px 12px", fontWeight:900, fontSize:16 }}>B</span>
-                <span style={{ color:"#666", fontSize:12 }}>Cons. Final</span>
-              </div>
-            </>
-          )}
-        </div>
-        {f.facturacionActiva && (!f.cuit || !f.razonSocial) && (
-          <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:10, padding:"10px 16px", marginTop:12, fontSize:13, color:"#dc2626" }}>
-            ⚠ Completá el CUIT y la Razón Social para activar la facturación.
-          </div>
-        )}
-        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", marginTop:12, fontSize:12, color:"#92400e" }}>
-          💡 La integración real con AFIP requiere un certificado digital y un backend. La UI está lista — cuando tengas el backend, conectamos la API y queda operativo.
-        </div>
       </div>
 
       <div style={{ display:"flex", gap:12 }}>
@@ -4387,7 +4336,7 @@ function LandingPage({ onIngresar }) {
   const funciones = [
     { t: "Control total del stock", d: "Alta y baja de productos, stock por talle y color, y alertas de faltantes automáticas.", ic: <Package size={24}/> },
     { t: "Ventas y ganancias visibles", d: "Cada venta queda registrada con precio, cantidad y margen. Sabés cuánto ganás por día.", ic: <TrendingUp size={24}/> },
-    { t: "Facturación AFIP lista", d: "Emití Factura A, B y C con CAE. Todo queda registrado y listo para tu contador.", ic: <Receipt size={24}/> },
+    { t: "Escaneo de códigos de barra", d: "Cargá y vendé más rápido escaneando con la cámara o un lector USB.", ic: <ScanLine size={24}/> },
     { t: "Ahorro de tiempo real", d: "Vendé en segundos, sin hacer cuentas mentales. Descontá stock y calculá vuelto solo.", ic: <Timer size={24}/> },
     { t: "Estadísticas que sirven", d: "Qué se vende, qué no, a qué hora y qué día. Decisiones con datos, no a ojo.", ic: <BarChart2 size={24}/> },
     { t: "Todo en la nube", d: "Acceso desde cualquier dispositivo con internet. Sin instalar, sin perder datos, siempre al día.", ic: <RefreshCw size={24}/> },
@@ -4430,7 +4379,7 @@ function LandingPage({ onIngresar }) {
               Menos planillas.<br/>Más ventas.
             </h1>
             <p style={{ fontSize: 18, lineHeight: 1.55, color: C.body, margin: "0 0 32px", maxWidth: 520 }}>
-              MiLocal reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás, controlás el stock y facturás a AFIP — todo desde un mismo lugar.
+              MiLocal reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás y controlás el stock — todo desde un mismo lugar.
             </p>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "14px 28px", fontFamily: font }}>¡Empezar gratis!</button>
@@ -4568,7 +4517,7 @@ function LandingPage({ onIngresar }) {
             </div>
           </div>
           <div style={{ marginBottom: 28 }}>
-            {["Ventas y tickets ilimitados", "Productos ilimitados", "Control de stock por talle y color", "Facturación AFIP (A, B y C)", "Estadísticas y reportes", "Remitos, proveedores y caja", "Acceso desde cualquier dispositivo", "Respaldo automático en la nube", "Soporte por WhatsApp"].map((f, i) => (
+            {["Ventas y tickets ilimitados", "Productos ilimitados", "Control de stock por talle y color", "Escáner de códigos de barra", "Estadísticas y reportes", "Remitos, proveedores y caja", "Acceso desde cualquier dispositivo", "Respaldo automático en la nube", "Soporte por WhatsApp"].map((f, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 11, fontSize: 15, color: C.ink }}>
                 <span style={{ color: C.green, display: "flex", flexShrink: 0 }}><CheckCircle2 size={17}/></span> {f}
               </div>
@@ -4745,7 +4694,7 @@ function LoginScreen({ onLogin, onVolver }) {
           <div style={{ marginTop: 36, display: "flex", flexDirection: "column", gap: 14 }}>
             {[
               "Ventas y stock en tiempo real",
-              "Facturación AFIP incluida",
+              "Escáner de códigos de barra",
               "Acceso desde cualquier dispositivo",
             ].map((t, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 14.5, color: "#e5e7eb" }}>
