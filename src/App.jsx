@@ -196,7 +196,7 @@ const addDays = (d, n) => { const dt = new Date(d + "T12:00:00"); dt.setDate(dt.
 const subDays = (d, n) => addDays(d, -n);
 const monthLabel = (ym) => { const [y, m] = ym.split("-"); return new Date(+y, +m - 1, 1).toLocaleDateString("es-AR", { month: "long", year: "numeric" }); };
 
-const RUBROS = ["👗 Ropa / Indumentaria","👟 Calzado","🏠 Bazar / Hogar","🍬 Kiosko / Despensa","🔧 Ferretería / Construcción","💊 Farmacia / Perfumería","💄 Perfumería / Cosmética","🧸 Juguetería","📚 Librería / Papelería","📱 Electrónica / Tecnología","🥬 Almacén / Verdulería","🐾 Pet Shop","🍷 Vinoteca / Bebidas","🥖 Panadería / Pastelería","🥩 Carnicería / Fiambrería","🕶️ Óptica","🎉 Regalería / Cotillón","🏪 Otro / General"];
+const RUBROS = ["👗 Ropa / Indumentaria","👟 Calzado","🏠 Bazar / Hogar","🍬 Kiosko / Despensa","🛒 Supermercado / Autoservicio","🔧 Ferretería / Construcción","💊 Farmacia / Perfumería","💄 Perfumería / Cosmética","🧸 Juguetería","📚 Librería / Papelería","📱 Electrónica / Tecnología","🥬 Almacén / Verdulería","🐾 Pet Shop","🍷 Vinoteca / Bebidas","🥖 Panadería / Pastelería","🥩 Carnicería / Fiambrería","🕶️ Óptica","🎉 Regalería / Cotillón","🌱 Vivero / Jardinería","🏪 Otro / General"];
 const PAGOS = ["Efectivo","Tarjeta débito","Tarjeta crédito","Transferencia","Mercado Pago","Otro"];
 // Categorías dinámicas por rubro
 const CATS_POR_RUBRO = {
@@ -285,6 +285,17 @@ const CATS_POR_RUBRO = {
   "🎉 Regalería / Cotillón": [
     "Globos","Decoración de Fiestas","Velas","Bolsas de Regalo","Papel de Regalo",
     "Cotillón Temático","Piñatas","Souvenirs","Otros"
+  ],
+  "🛒 Supermercado / Autoservicio": [
+    "Almacén (Conservas y Enlatados)","Granos y Legumbres","Lácteos y Huevos",
+    "Fiambres y Quesos","Panificados","Bebidas con Alcohol","Bebidas sin Alcohol",
+    "Limpieza del Hogar","Higiene Personal","Congelados","Golosinas y Snacks",
+    "Frutas y Verduras","Carnes","Bazar y Descartables","Otros"
+  ],
+  "🌱 Vivero / Jardinería": [
+    "Plantas","Macetas y Contenedores","Tierra y Sustratos","Fertilizantes y Abonos",
+    "Semillas","Herramientas de Jardín","Riego","Insecticidas y Fungicidas",
+    "Decoración de Jardín","Otros"
   ],
   "🏪 Otro / General": [
     "General","Producto","Servicio","Insumos","Equipamiento","Accesorios","Otros"
@@ -903,11 +914,13 @@ const CAMPOS_EXTRA_POR_RUBRO = {
   "🥩 Carnicería / Fiambrería": ["unidadMedida","vencimiento"],
   "🕶️ Óptica": ["marca","modelo"],
   "🎉 Regalería / Cotillón": ["marca"],
+  "🛒 Supermercado / Autoservicio": ["marca","vencimiento","codigoBarras"],
+  "🌱 Vivero / Jardinería": ["marca","vencimiento"],
   "🏪 Otro / General": [],
 };
 const LABELS_CAMPOS = { temporada:"Temporada", marca:"Marca", modelo:"Modelo", garantia:"Garantía", laboratorio:"Laboratorio", vencimiento:"Vencimiento", medida:"Medida", material:"Material", codigoBarras:"Código de barras", unidadMedida:"Unidad de medida", origen:"Origen", edadRecomendada:"Edad recomendada", editorial:"Editorial", especie:"Especie" };
 
-const RUBROS_CON_VENCIMIENTO = ["🍬 Kiosko / Despensa", "💊 Farmacia / Perfumería", "💄 Perfumería / Cosmética", "🥬 Almacén / Verdulería", "🐾 Pet Shop", "🍷 Vinoteca / Bebidas", "🥖 Panadería / Pastelería", "🥩 Carnicería / Fiambrería"];
+const RUBROS_CON_VENCIMIENTO = ["🍬 Kiosko / Despensa", "💊 Farmacia / Perfumería", "💄 Perfumería / Cosmética", "🥬 Almacén / Verdulería", "🐾 Pet Shop", "🍷 Vinoteca / Bebidas", "🥖 Panadería / Pastelería", "🥩 Carnicería / Fiambrería", "🛒 Supermercado / Autoservicio", "🌱 Vivero / Jardinería"];
 
 function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
   const esModa = RUBROS_CON_TALLES.includes(rubro);
