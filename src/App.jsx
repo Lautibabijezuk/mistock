@@ -2326,7 +2326,7 @@ function VentaPage({ ctx }) {
         <button style={G.btn("outline")} onClick={() => setShowCambio(true)}><RefreshCw size={14}/> Cambio</button>
       </div>
       <CajaBanner caja={caja} onAbrir={() => setShowCaja(true)} />
-      <div className="venta-grid" style={{ display:"grid", gridTemplateColumns:"1.3fr 1fr", gap:24, alignItems:"start" }}>
+      <div className="venta-grid" style={{ display:"grid", gridTemplateColumns:"1.3fr 1fr", gap:24, alignItems:"stretch" }}>
         <div>
           {/* Barra de búsqueda + botón de escanear */}
           <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
@@ -2405,20 +2405,20 @@ function VentaPage({ ctx }) {
             <Empty icon={<Package size={36}/>} text="No hay productos cargados" btnText="Ir a Inventario" onBtn={() => ctx.setPage("inventario")} />
           )}
         </div>
-        <div style={{ ...G.card({ padding:20 }), position:"sticky", top:20 }}>
+        <div style={{ ...G.card({ padding:20 }), position:"sticky", top:20, display:"flex", flexDirection:"column", height:"100%", minHeight:460 }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16 }}>
             <ShoppingCart size={18}/>
             <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>Carrito</h3>
             {cart.length > 0 && <span style={{ marginLeft:"auto", background:"#f3f4f6", color:"#666", fontSize:11, padding:"2px 9px", borderRadius:20 }}>{cart.reduce((a,i) => a+i.cantidad, 0)} items</span>}
           </div>
           {cart.length === 0 ? (
-            <div style={{ textAlign:"center", padding:"22px 0 18px", color:"#ccc", borderBottom:"1px solid #f5f5f5", marginBottom:16 }}>
+            <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center", color:"#ccc", borderBottom:"1px solid #f5f5f5", marginBottom:16 }}>
               <div style={{ marginBottom:6, opacity:0.25, color:"#aaa" }}><ShoppingBag size={30}/></div>
               <div style={{ fontSize:13, fontWeight:500, color:"#bbb" }}>Carrito vacío</div>
               <div style={{ fontSize:11, marginTop:2, color:"#ccc" }}>Selecciona productos</div>
             </div>
           ) : (
-            <div style={{ borderBottom:"1px solid #f5f5f5", marginBottom:14, maxHeight:230, overflowY:"auto" }}>
+            <div style={{ flex:1, borderBottom:"1px solid #f5f5f5", marginBottom:14, maxHeight:230, overflowY:"auto" }}>
               {cart.map(item => (
                 <div key={item.cartKey} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:"1px solid #f9f9f9" }}>
                   <div style={{ flex:1, minWidth:0 }}>
