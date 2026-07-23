@@ -112,6 +112,7 @@ const dbToProduct = r => ({
   laboratorio: r.laboratorio||'', medida: r.medida||'', material: r.material||'',
   codigoBarras: r.codigo_barras||'', unidadMedida: r.unidad_medida||'',
   origen: r.origen||'', edadRecomendada: r.edad_recomendada||'', editorial: r.editorial||'',
+  especie: r.especie||'',
 });
 const productToDb = (p, negocioId) => ({
   id: p.id, negocio_id: negocioId, nombre: p.nombre, descripcion: p.descripcion||'',
@@ -120,6 +121,10 @@ const productToDb = (p, negocioId) => ({
   talles: p.talles||[], colores: p.colores||[], stock_por_talle: p.stockPorTalle||{},
   imagen: p.imagen||'', marca: p.marca||'', temporada: p.temporada||'',
   vencimiento: p.vencimiento||'', codigo_barras: p.codigoBarras||null,
+  modelo: p.modelo||'', garantia: p.garantia||'', laboratorio: p.laboratorio||'',
+  medida: p.medida||'', material: p.material||'', unidad_medida: p.unidadMedida||'',
+  origen: p.origen||'', edad_recomendada: p.edadRecomendada||'', editorial: p.editorial||'',
+  especie: p.especie||'',
 });
 const dbToVenta = r => ({
   id: r.id, numero: r.numero, fecha: r.fecha, cliente: r.cliente,
@@ -191,7 +196,7 @@ const addDays = (d, n) => { const dt = new Date(d + "T12:00:00"); dt.setDate(dt.
 const subDays = (d, n) => addDays(d, -n);
 const monthLabel = (ym) => { const [y, m] = ym.split("-"); return new Date(+y, +m - 1, 1).toLocaleDateString("es-AR", { month: "long", year: "numeric" }); };
 
-const RUBROS = ["👗 Ropa / Indumentaria","🏠 Bazar / Hogar","🍬 Kiosko / Despensa","🔧 Ferretería / Construcción","💊 Farmacia / Perfumería","🧸 Juguetería","📚 Librería / Papelería","📱 Electrónica / Tecnología","🥬 Almacén / Verdulería","🏪 Otro / General"];
+const RUBROS = ["👗 Ropa / Indumentaria","👟 Calzado","🏠 Bazar / Hogar","🍬 Kiosko / Despensa","🔧 Ferretería / Construcción","💊 Farmacia / Perfumería","💄 Perfumería / Cosmética","🧸 Juguetería","📚 Librería / Papelería","📱 Electrónica / Tecnología","🥬 Almacén / Verdulería","🐾 Pet Shop","🍷 Vinoteca / Bebidas","🥖 Panadería / Pastelería","🥩 Carnicería / Fiambrería","🕶️ Óptica","🎉 Regalería / Cotillón","🏪 Otro / General"];
 const PAGOS = ["Efectivo","Tarjeta débito","Tarjeta crédito","Transferencia","Mercado Pago","Otro"];
 // Categorías dinámicas por rubro
 const CATS_POR_RUBRO = {
@@ -246,6 +251,40 @@ const CATS_POR_RUBRO = {
     "Panificados","Pastas y Arroces","Bebidas","Enlatados y Conservas",
     "Granos y Cereales","Condimentos y Salsas","Congelados","Limpieza",
     "Artículos de Higiene","Fiambres","Otros"
+  ],
+  "👟 Calzado": [
+    "Zapatillas","Zapatos de Vestir","Botas y Botinetas","Sandalias","Ojotas",
+    "Calzado Deportivo","Calzado Infantil","Pantuflas","Plantillas y Accesorios","Otros"
+  ],
+  "🐾 Pet Shop": [
+    "Alimento para Perros","Alimento para Gatos","Snacks y Premios","Accesorios",
+    "Higiene y Cuidado","Juguetes","Correas y Collares","Camas y Casas",
+    "Peceras y Acuarios","Aves y Roedores","Otros"
+  ],
+  "🍷 Vinoteca / Bebidas": [
+    "Vinos Tintos","Vinos Blancos","Vinos Rosados","Espumantes y Champagne",
+    "Cervezas","Whisky y Destilados","Vodka y Gin","Aperitivos","Licores",
+    "Sin Alcohol","Accesorios","Otros"
+  ],
+  "💄 Perfumería / Cosmética": [
+    "Perfumes","Maquillaje","Cuidado Facial","Cuidado Capilar","Cuidado Corporal",
+    "Esmaltes y Uñas","Accesorios de Belleza","Sets de Regalo","Otros"
+  ],
+  "🥖 Panadería / Pastelería": [
+    "Panes","Facturas y Medialunas","Tortas y Tartas","Galletitas","Pastelería Fina",
+    "Sándwiches","Bebidas","Productos sin TACC","Otros"
+  ],
+  "🥩 Carnicería / Fiambrería": [
+    "Vacuno","Cerdo","Pollo","Cordero","Achuras","Embutidos","Fiambres",
+    "Quesos","Congelados","Otros"
+  ],
+  "🕶️ Óptica": [
+    "Anteojos de Sol","Anteojos Recetados","Lentes de Contacto","Armazones",
+    "Accesorios","Estuches y Cadenas","Líquidos y Limpieza","Otros"
+  ],
+  "🎉 Regalería / Cotillón": [
+    "Globos","Decoración de Fiestas","Velas","Bolsas de Regalo","Papel de Regalo",
+    "Cotillón Temático","Piñatas","Souvenirs","Otros"
   ],
   "🏪 Otro / General": [
     "General","Producto","Servicio","Insumos","Equipamiento","Accesorios","Otros"
@@ -844,23 +883,31 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
 }
 
 // ── Nuevo Producto ─────────────────────────────────────────
-const RUBROS_CON_TALLES = ["👗 Ropa / Indumentaria"];
-const RUBROS_CON_COLORES = ["👗 Ropa / Indumentaria", "🏠 Bazar / Hogar", "🧸 Juguetería"];
+const RUBROS_CON_TALLES = ["👗 Ropa / Indumentaria", "👟 Calzado"];
+const RUBROS_CON_COLORES = ["👗 Ropa / Indumentaria", "🏠 Bazar / Hogar", "🧸 Juguetería", "👟 Calzado"];
 const CAMPOS_EXTRA_POR_RUBRO = {
   "👗 Ropa / Indumentaria": ["temporada"],
+  "👟 Calzado": ["marca"],
   "📱 Electrónica / Tecnología": ["marca","modelo","garantia"],
   "💊 Farmacia / Perfumería": ["laboratorio","vencimiento"],
+  "💄 Perfumería / Cosmética": ["marca","vencimiento"],
   "🔧 Ferretería / Construcción": ["marca","medida","material"],
   "🍬 Kiosko / Despensa": ["marca","vencimiento","codigoBarras"],
   "🥬 Almacén / Verdulería": ["unidadMedida","vencimiento","origen"],
   "🏠 Bazar / Hogar": ["marca","material"],
   "🧸 Juguetería": ["marca","edadRecomendada"],
   "📚 Librería / Papelería": ["marca","editorial"],
+  "🐾 Pet Shop": ["marca","especie","vencimiento"],
+  "🍷 Vinoteca / Bebidas": ["marca","origen","vencimiento"],
+  "🥖 Panadería / Pastelería": ["unidadMedida","vencimiento"],
+  "🥩 Carnicería / Fiambrería": ["unidadMedida","vencimiento"],
+  "🕶️ Óptica": ["marca","modelo"],
+  "🎉 Regalería / Cotillón": ["marca"],
   "🏪 Otro / General": [],
 };
-const LABELS_CAMPOS = { temporada:"Temporada", marca:"Marca", modelo:"Modelo", garantia:"Garantía", laboratorio:"Laboratorio", vencimiento:"Vencimiento", medida:"Medida", material:"Material", codigoBarras:"Código de barras", unidadMedida:"Unidad de medida", origen:"Origen", edadRecomendada:"Edad recomendada", editorial:"Editorial" };
+const LABELS_CAMPOS = { temporada:"Temporada", marca:"Marca", modelo:"Modelo", garantia:"Garantía", laboratorio:"Laboratorio", vencimiento:"Vencimiento", medida:"Medida", material:"Material", codigoBarras:"Código de barras", unidadMedida:"Unidad de medida", origen:"Origen", edadRecomendada:"Edad recomendada", editorial:"Editorial", especie:"Especie" };
 
-const RUBROS_CON_VENCIMIENTO = ["🍬 Kiosko / Despensa", "💊 Farmacia / Perfumería", "🥬 Almacén / Verdulería"];
+const RUBROS_CON_VENCIMIENTO = ["🍬 Kiosko / Despensa", "💊 Farmacia / Perfumería", "💄 Perfumería / Cosmética", "🥬 Almacén / Verdulería", "🐾 Pet Shop", "🍷 Vinoteca / Bebidas", "🥖 Panadería / Pastelería", "🥩 Carnicería / Fiambrería"];
 
 function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
   const esModa = RUBROS_CON_TALLES.includes(rubro);
@@ -869,20 +916,24 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
   const [error, setError] = useState("");
   const [escanerAbierto, setEscanerAbierto] = useState(false);
 
+  // Calzado arranca con numeración 35-45, el resto de rubros con talles usa XS-XXL
+  const tallesDefault = rubro === "👟 Calzado" ? ["35","36","37","38","39","40","41","42","43","44","45"] : ["XS","S","M","L","XL","XXL"];
+  const stockPorTalleDefault = Object.fromEntries(tallesDefault.map(t => [t, 0]));
+
   const [f, setF] = useState(() => {
     const defaults = {
       nombre:"", descripcion:"", categoria:"", sku:"", precio:"", costo:"", imagen:"",
-      talles: esModa ? ["XS","S","M","L","XL","XXL"] : [],
-      stockPorTalle: esModa ? { XS:0, S:0, M:0, L:0, XL:0, XXL:0 } : {},
+      talles: esModa ? tallesDefault : [],
+      stockPorTalle: esModa ? stockPorTalleDefault : {},
       colores:[], talleCustom:"", colorCustom:"", stockMinimo:3, stock:0,
       temporada:"", marca:"", modelo:"", garantia:"", laboratorio:"", vencimiento:"",
-      medida:"", material:"", codigoBarras:"", unidadMedida:"", origen:"", edadRecomendada:"", editorial:""
+      medida:"", material:"", codigoBarras:"", unidadMedida:"", origen:"", edadRecomendada:"", editorial:"", especie:""
     };
     if (!prod) return defaults;
     // Deep copy + merge with defaults for missing fields
     const base = { ...defaults, ...JSON.parse(JSON.stringify(prod)) };
     // Ensure arrays exist
-    if (!Array.isArray(base.talles)) base.talles = esModa ? ["XS","S","M","L","XL","XXL"] : [];
+    if (!Array.isArray(base.talles)) base.talles = esModa ? tallesDefault : [];
     if (!Array.isArray(base.colores)) base.colores = [];
     if (!base.stockPorTalle || typeof base.stockPorTalle !== "object") base.stockPorTalle = {};
     // Init stockPorTalle for talles that don't have it
