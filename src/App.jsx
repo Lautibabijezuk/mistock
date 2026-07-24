@@ -2078,7 +2078,7 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
               <div>{q ? `Sin resultados para "${q}"` : "No hay productos con stock"}</div>
             </div>
           ) : (
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
+            <div className="buscador-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
               {filtrados.map(p => {
                 const inCart = cart.filter(i => (i.productoId||i.id) === p.id);
                 const totalEnCarrito = inCart.reduce((a, i) => a + i.cantidad, 0);
@@ -2351,7 +2351,7 @@ function VentaPage({ ctx }) {
           {products.length > 0 && (
             <>
               <div style={{ fontSize:12, fontWeight:600, color:"#999", marginBottom:10, textTransform:"uppercase", letterSpacing:"0.5px" }}>Accesos rápidos</div>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
+              <div className="accesos-rapidos-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
                 {products
                   .filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v => +v > 0) : p.stock > 0)
                   .slice(0, 16)
@@ -2406,7 +2406,7 @@ function VentaPage({ ctx }) {
             <Empty icon={<Package size={36}/>} text="No hay productos cargados" btnText="Ir a Inventario" onBtn={() => ctx.setPage("inventario")} />
           )}
         </div>
-        <div style={{ ...G.card({ padding:20 }), position:"sticky", top:20, display:"flex", flexDirection:"column", flex:"1 1 0%", minWidth:0 }}>
+        <div className="venta-carrito-panel" style={{ ...G.card({ padding:20 }), position:"sticky", top:20, display:"flex", flexDirection:"column", flex:"1 1 0%", minWidth:0 }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16, position:"relative" }}>
             <ShoppingCart size={18}/>
             <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>Carrito</h3>
@@ -6253,10 +6253,13 @@ export default function App() {
           .app-overlay.open { display: block !important; }
           .app-sidebar-close { display: flex !important; }
           .venta-grid { flex-direction: column !important; }
+          .venta-carrito-panel { position: static !important; }
+          .accesos-rapidos-grid, .buscador-grid { grid-template-columns: repeat(3,1fr) !important; }
         }
         @media (max-width: 640px) {
           .app-page-pad { padding: 16px !important; }
           .app-main table { display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+          .accesos-rapidos-grid, .buscador-grid { grid-template-columns: repeat(2,1fr) !important; }
         }
       `}</style>
       <div style={{ display:"flex", fontFamily:"'DM Sans', system-ui, -apple-system, sans-serif", minHeight:"100vh", background:"var(--bg-page)" }}>
