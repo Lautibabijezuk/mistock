@@ -5706,63 +5706,69 @@ function AccesoBloqueadoScreen({ config, onSuscribir, onLogout }) {
     catch (e) { alert("Error: " + e.message); setLoading(false); }
   };
 
+  const C = {
+    ink: "#0a0a0a", body: "#4b5563", mut: "#9ca3af", line: "#e5e7eb",
+    bg: "#ffffff", bgSoft: "#f9fafb",
+    purple: "#9238FF", purpleDark: "#7a1de6", purpleSoft: "#f4ecff",
+  };
+  const font = "'DM Sans', system-ui, -apple-system, sans-serif";
+
   return (
-    <div style={{
-      minHeight: "100vh", background: "#f9fafb", display: "flex",
-      alignItems: "center", justifyContent: "center", padding: 20,
-      fontFamily: "'Segoe UI', system-ui, sans-serif"
-    }}>
-      <div style={{
-        background: "#fff", borderRadius: 16, padding: "48px 44px", maxWidth: 480, width: "100%",
-        boxShadow: "0 20px 60px rgba(0,0,0,0.08)", textAlign: "center"
-      }}>
-        <div style={{
-          width: 64, height: 64, borderRadius: 16, background: "#fef3c7", color: "#d97706",
-          display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px"
-        }}>
-          <Lock size={32}/>
-        </div>
-        <h1 style={{ fontSize: 24, fontWeight: 800, margin: "0 0 12px", color: "#111", letterSpacing: "-0.5px" }}>
-          {isTrial ? "Tu prueba gratis terminó" :
-           isCancelled ? "Tu suscripción está cancelada" :
-           "Servicio suspendido por falta de pago"}
-        </h1>
-        <p style={{ fontSize: 15, color: "#4b5563", lineHeight: 1.6, margin: "0 0 28px" }}>
-          {isTrial ? "Suscribite ahora para seguir usando MiLocal. Tus datos y productos están intactos, los recuperás al reactivar." :
-           isCancelled ? "Reactivá tu suscripción cuando quieras y volvés a tener acceso a todos tus datos." :
-           "No pudimos procesar tu último cobro y ya pasó el período de gracia de 3 días. Actualizá tu método de pago para reactivar tu cuenta."}
-        </p>
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: font }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap'); .abs-btn:hover:not(:disabled) { background: ${C.purpleDark} !important; }`}</style>
 
-        <div style={{
-          background: "#f9fafb", borderRadius: 10, padding: "18px 20px", marginBottom: 24, textAlign: "left"
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <span style={{ fontSize: 13, color: "#6b7280" }}>Plan</span>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>MiLocal — Completo</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 13, color: "#6b7280" }}>Precio</span>
-            <span style={{ fontSize: 15, fontWeight: 800 }}>$30.000<span style={{ fontWeight: 400, fontSize: 12, color: "#6b7280" }}>/mes</span></span>
-          </div>
+      <div style={{ width: "100%", maxWidth: 420 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center", marginBottom: 28 }}>
+          <img src="/milocal-icon.png" alt="MiLocal" style={{ width: 36, height: 36, borderRadius: 8 }}/>
+          <span style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.5px", color: C.ink }}>MiLocal</span>
         </div>
 
-        <button onClick={handleSuscribir} disabled={loading} style={{
-          width: "100%", background: "#111", color: "#fff", border: "none", borderRadius: 10,
-          padding: "14px", fontSize: 15, fontWeight: 700, cursor: loading ? "wait" : "pointer",
-          marginBottom: 12
-        }}>
-          {loading ? "Un momento..." : "Suscribirme por $30.000/mes"}
-        </button>
-        <button onClick={onLogout} style={{
-          width: "100%", background: "transparent", color: "#6b7280", border: "none",
-          padding: "10px", fontSize: 13, cursor: "pointer"
-        }}>
-          Cerrar sesión
-        </button>
+        <div style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 14, padding: "40px 36px", textAlign: "center" }}>
+          <div style={{ width: 56, height: 56, borderRadius: 14, background: C.purpleSoft, color: C.purple, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
+            <Lock size={26}/>
+          </div>
+          <h1 style={{ fontSize: 23, fontWeight: 700, margin: "0 0 10px", color: C.ink, letterSpacing: "-0.5px" }}>
+            {isTrial ? "Tu prueba gratis terminó" :
+             isCancelled ? "Tu suscripción está cancelada" :
+             "Servicio suspendido por falta de pago"}
+          </h1>
+          <p style={{ fontSize: 14.5, color: C.body, lineHeight: 1.6, margin: "0 0 26px" }}>
+            {isTrial ? "Suscribite ahora para seguir usando MiLocal. Tus datos y productos están intactos, los recuperás al reactivar." :
+             isCancelled ? "Reactivá tu suscripción cuando quieras y volvés a tener acceso a todos tus datos." :
+             "No pudimos procesar tu último cobro y ya pasó el período de gracia de 3 días. Actualizá tu método de pago para reactivar tu cuenta."}
+          </p>
 
-        <p style={{ fontSize: 12, color: "#9ca3af", marginTop: 20, lineHeight: 1.5 }}>
-          Con tu suscripción tenés acceso completo al sistema. Podés cancelar cuando quieras.
-        </p>
+          <div style={{ background: C.bgSoft, borderRadius: 10, padding: "16px 18px", marginBottom: 22, textAlign: "left" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 9 }}>
+              <span style={{ fontSize: 13, color: C.mut }}>Plan</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>MiLocal — Completo</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 13, color: C.mut }}>Precio</span>
+              <span style={{ fontSize: 16, fontWeight: 700, color: C.ink }}>$30.000<span style={{ fontWeight: 400, fontSize: 12.5, color: C.mut }}>/mes</span></span>
+            </div>
+          </div>
+
+          <button
+            className="abs-btn"
+            onClick={handleSuscribir}
+            disabled={loading}
+            style={{
+              width: "100%", background: C.purple, color: "#fff", border: "none", borderRadius: 4,
+              padding: "14px", fontSize: 15, fontWeight: 600, cursor: loading ? "wait" : "pointer",
+              marginBottom: 12, fontFamily: font, transition: "background .15s",
+            }}
+          >
+            {loading ? "Un momento..." : "Suscribirme por $30.000/mes"}
+          </button>
+          <button onClick={onLogout} style={{ width: "100%", background: "transparent", color: C.mut, border: "none", padding: "8px", fontSize: 13, cursor: "pointer", fontFamily: font }}>
+            Cerrar sesión
+          </button>
+
+          <p style={{ fontSize: 12, color: C.mut, marginTop: 18, lineHeight: 1.5 }}>
+            Con tu suscripción tenés acceso completo al sistema. Podés cancelar cuando quieras.
+          </p>
+        </div>
       </div>
     </div>
   );
