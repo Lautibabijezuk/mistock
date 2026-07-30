@@ -2609,6 +2609,7 @@ function procesarTiendanube(hdrs, dataRows, cats) {
     // Construir stockPorTalle y colores desde cada fila
     const stockPorTalle = {};
     const coloresSet = new Set();
+    let totalStock = 0; // acumulamos SIEMPRE, tenga o no talle detectado
 
     rows.forEach(row => {
       const p1nom = get(row, "Nombre de propiedad 1").toLowerCase();
@@ -2631,13 +2632,14 @@ function procesarTiendanube(hdrs, dataRows, cats) {
       else if (p3nom === "color" || p3nom === "colour") color = p3val;
 
       if (color) coloresSet.add(color);
+      // Siempre sumamos el stock leído, tenga o no talle esta fila
+      totalStock += stockVal;
       if (talle) {
         stockPorTalle[talle] = (stockPorTalle[talle] || 0) + stockVal;
       }
     });
 
     const talles = Object.keys(stockPorTalle);
-    const totalStock = Object.values(stockPorTalle).reduce((a, v) => a + v, 0);
 
     if (!nombre || precio <= 0) return null;
     return {
