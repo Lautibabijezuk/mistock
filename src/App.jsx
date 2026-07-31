@@ -714,7 +714,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
       const llevaItems = lleva.filter(i => i.id === p.id);
       if (!devItems.length && !llevaItems.length) return p;
       let upd = { ...p };
-      if (esModa && upd.stockPorTalle) {
+      if (esModa && upd.stockPorTalle && Object.keys(upd.stockPorTalle).length > 0) {
         const spt = { ...upd.stockPorTalle };
         devItems.forEach(it => { if (it.talle) spt[it.talle] = (spt[it.talle]||0) + it.cantidad; });
         llevaItems.forEach(it => { if (it.talle) spt[it.talle] = Math.max(0, (spt[it.talle]||0) - it.cantidad); });
@@ -790,7 +790,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
     const filtrados = products
       .filter(p => {
         if (soloConStock) {
-          const tieneStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0;
+          const tieneStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0;
           if (!tieneStock) return false;
         }
         return !search || p.nombre.toLowerCase().includes(search.toLowerCase()) || (p.sku||"").toLowerCase().includes(search.toLowerCase());
@@ -813,7 +813,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
             {filtrados.length > 0 ? (
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, maxHeight:320, overflowY:"auto" }}>
                 {filtrados.map(p => {
-                  const totalStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
+                  const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
                   const inList = list.filter(i => i.id === p.id).reduce((a,i)=>a+i.cantidad,0);
                   return (
                     <div key={p.id} onClick={() => handleSelectProd(p, side)}
@@ -1386,7 +1386,7 @@ function RemitoModal({ proveedores, products, setProducts, saveProducts, rubro, 
       const items = f.items.filter(i => i.id === p.id);
       if (!items.length) return p;
       let upd = { ...p };
-      if (esModa && upd.stockPorTalle) {
+      if (esModa && upd.stockPorTalle && Object.keys(upd.stockPorTalle).length > 0) {
         const spt = { ...upd.stockPorTalle };
         items.forEach(it => {
           if (it.talle) {
@@ -1486,7 +1486,7 @@ function RemitoModal({ proveedores, products, setProducts, saveProducts, rubro, 
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:12, maxHeight:340, overflowY:"auto" }}>
             {filtProd.map(p => {
               const tieneTalles = esModa && (p.talles||[]).length > 0;
-              const totalStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
+              const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
               const enRemito = f.items.filter(i => i.id === p.id).reduce((a,i)=>a+i.cantidad,0);
               return (
                 <div key={p.id} onClick={() => tieneTalles ? setProdPendiente(p) : addProdSimple(p)}
@@ -2037,7 +2037,7 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
   useEffect(() => { setTimeout(() => inputRef.current?.focus(), 50); }, []);
 
   const filtrados = products.filter(p => {
-    const tieneStock = esModa && p.stockPorTalle
+    const tieneStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
       ? Object.values(p.stockPorTalle).some(v => +v > 0)
       : p.stock > 0;
     if (!tieneStock) return false;
@@ -2082,7 +2082,7 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
               {filtrados.map(p => {
                 const inCart = cart.filter(i => (i.productoId||i.id) === p.id);
                 const totalEnCarrito = inCart.reduce((a, i) => a + i.cantidad, 0);
-                const totalStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
+                const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
                 return (
                   <div key={p.id} onClick={() => onSelect(p)}
                     style={{ background:"#fff", border:`1.5px solid ${totalEnCarrito>0?"#111":"#ebebeb"}`, borderRadius:14, overflow:"hidden", cursor:"pointer", boxShadow:"0 2px 6px rgba(0,0,0,0.05)", transition:"border-color .15s" }}>
@@ -2163,7 +2163,7 @@ function VentaPage({ ctx }) {
   const buscarPorCodigo = /^\d{8,}$/.test(search.trim());
 
   const prods = products.filter(p => {
-    const tieneStock = esModa && p.stockPorTalle
+    const tieneStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
       ? Object.values(p.stockPorTalle).some(v => +v > 0)
       : p.stock > 0;
     if (!tieneStock) return false;
@@ -2183,7 +2183,7 @@ function VentaPage({ ctx }) {
       return;
     }
     // Verificar stock
-    const tieneStock = esModa && encontrado.stockPorTalle
+    const tieneStock = esModa && encontrado.stockPorTalle && Object.keys(encontrado.stockPorTalle).length > 0
       ? Object.values(encontrado.stockPorTalle).some(v => +v > 0)
       : encontrado.stock > 0;
     if (!tieneStock) {
@@ -2353,12 +2353,12 @@ function VentaPage({ ctx }) {
               <div style={{ fontSize:12, fontWeight:600, color:"#999", marginBottom:10, textTransform:"uppercase", letterSpacing:"0.5px" }}>Accesos rápidos</div>
               <div className="accesos-rapidos-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
                 {products
-                  .filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v => +v > 0) : p.stock > 0)
+                  .filter(p => esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).some(v => +v > 0) : p.stock > 0)
                   .slice(0, 16)
                   .map(p => {
                     const inCart = cart.filter(i => (i.productoId||i.id) === p.id);
                     const totalEnCarrito = inCart.reduce((a, i) => a + i.cantidad, 0);
-                    const totalStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).reduce((a,v) => a+(+v||0),0) : p.stock;
+                    const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v) => a+(+v||0),0) : p.stock;
                     return (
                       <div key={p.id} onClick={() => handleProdClick(p)}
                         style={{ background:"#fff", border:`1.5px solid ${totalEnCarrito>0?"#111":"#ebebeb"}`, borderRadius:14, overflow:"hidden", cursor:"pointer", boxShadow:"0 2px 6px rgba(0,0,0,0.05)", transition:"border-color .15s" }}>
@@ -2397,7 +2397,7 @@ function VentaPage({ ctx }) {
                 })}
               </div>
               <button onClick={() => setShowBuscador(true)} style={{ ...G.btn("ghost"), width:"100%", justifyContent:"center", marginTop:12, fontSize:13, color:"#888", border:"1px dashed #e5e7eb", borderRadius:9, padding:"10px" }}>
-                <Search size={13}/> Ver todos los productos ({products.filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0).length} disponibles)
+                <Search size={13}/> Ver todos los productos ({products.filter(p => esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0).length} disponibles)
               </button>
             </>
           )}
@@ -3054,7 +3054,7 @@ function InventarioPage({ ctx }) {
           : <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:16 }}>
             {filtered.map(p => {
               const esModa = RUBROS_CON_TALLES.includes(config.rubro);
-              const totalStock = esModa && p.stockPorTalle
+              const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
                 ? Object.values(p.stockPorTalle).reduce((a,v) => a+(+v||0), 0)
                 : p.stock;
               const color1 = p.colores?.[0];
