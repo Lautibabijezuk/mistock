@@ -2610,13 +2610,18 @@ function procesarTiendanube(hdrs, dataRows, cats) {
     const stockPorTalle = {};
     const coloresSet = new Set();
     let totalStock = 0; // acumulamos SIEMPRE, tenga o no talle detectado
+    let tieneStockIlimitado = false; // Tiendanube: celda de Stock vacía = "sin límite" (no es 0)
 
     rows.forEach(row => {
       const p1nom = get(row, "Nombre de propiedad 1").toLowerCase();
       const p1val = get(row, "Valor de propiedad 1");
       const p2nom = get(row, "Nombre de propiedad 2").toLowerCase();
       const p2val = get(row, "Valor de propiedad 2");
-      const stockVal = Math.round(parseNumero(get(row, "Stock")));
+      const stockCruda = get(row, "Stock");
+      // Celda vacía en Tiendanube = stock ilimitado (no es lo mismo que "0" explícito)
+      const esIlimitado = stockCruda === "";
+      const stockVal = esIlimitado ? 999 : Math.round(parseNumero(stockCruda));
+      if (esIlimitado) tieneStockIlimitado = true;
 
       // Detectar talle y color independientemente del orden de las propiedades
       let talle = "", color = "";
@@ -2645,7 +2650,8 @@ function procesarTiendanube(hdrs, dataRows, cats) {
     return {
       id: uid(), nombre, precio, costo, categoria, sku, descripcion, marca,
       stock: totalStock, stockMinimo: 3,
-      talles, stockPorTalle, colores: [...coloresSet], imagen: ""
+      talles, stockPorTalle, colores: [...coloresSet], imagen: "",
+      _stockIlimitado: tieneStockIlimitado, // solo para avisar en la vista previa, no se guarda en la base
     };
   }).filter(Boolean);
 }
@@ -2865,13 +2871,23 @@ function ImportarExcelModal({ cats, onImport, onClose }) {
                         <td style={{ padding:"9px 14px", color:"#888" }}>{p.categoria}</td>
                         <td style={{ padding:"9px 14px", color:"#555", fontSize:11 }}>{p.talles.join(", ") || "—"}</td>
                         <td style={{ padding:"9px 14px", color:"#555", fontSize:11 }}>{p.colores.join(", ") || "—"}</td>
-                        <td style={{ padding:"9px 14px", fontWeight:600, color: p.stock > 0 ? "#16a34a" : "#aaa" }}>{p.stock}</td>
+                        <td style={{ padding:"9px 14px", fontWeight:600, color: p.stock > 0 ? "#16a34a" : "#aaa" }}>
+                          {p.stock}
+                          {p._stockIlimitado && (
+                            <span style={{ display:"block", fontSize:10, fontWeight:500, color:"#9238FF" }}>sin límite en TN</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               {tiendanubePreview.length > 8 && <div style={{ fontSize:12, color:"#888", marginBottom:12, textAlign:"center" }}>+ {tiendanubePreview.length - 8} productos más</div>}
+              {tiendanubePreview.some(p => p._stockIlimitado) && (
+                <div style={{ background:"#f4ecff", border:"1px solid #ddd0fb", borderRadius:10, padding:"10px 16px", marginBottom:12, fontSize:13, color:"#6b21a8" }}>
+                  🎁 Algunos productos tenían "stock sin límite" en Tiendanube (celda vacía) — les pusimos 999 como valor provisorio. Revisá esos productos después de importar y cargá el stock real que tenés físicamente.
+                </div>
+              )}
               {tiendanubePreview.every(p => p.stock === 0) && (
                 <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", marginBottom:12, fontSize:13, color:"#92400e" }}>
                   ⚠ Todos los productos tienen stock 0 — normal si no gestionás stock en Tiendanube. Podés actualizar el stock desde Inventario después de importar.
