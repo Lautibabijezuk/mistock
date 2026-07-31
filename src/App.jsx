@@ -3419,15 +3419,25 @@ function EstadisticasPage({ ctx }) {
 }
 
 function FinanzasPage({ ctx }) {
-  const { config, sales, gastos, setGastos } = ctx;
+  const { config, sales, gastos, setGastos, products } = ctx;
   const [mes, setMes] = useState(todayStr().slice(0, 7));
   const [showModal, setShowModal] = useState(false);
   const [tipoInicial, setTipoInicial] = useState("variable");
-  const ingresos = sales.filter(s => !s.anulada && s.fecha.startsWith(mes)).reduce((a,s) => a+s.total, 0);
+  const ventasDelMes = sales.filter(s => !s.anulada && s.fecha.startsWith(mes));
+  const ingresos = ventasDelMes.reduce((a,s) => a+s.total, 0);
+  // Costo de mercadería vendida: por cada ítem vendido, su costo actual del producto × cantidad
+  const costoMercaderia = ventasDelMes.reduce((acc, s) => {
+    const costoVenta = (s.items||[]).reduce((a, i) => {
+      const prod = products.find(p => p.id === (i.productoId || i.id));
+      return a + (prod?.costo || 0) * i.cantidad;
+    }, 0);
+    return acc + costoVenta;
+  }, 0);
   const gastosFijos = gastos.filter(g => g.tipo === "fijo");
   const gastosVar = gastos.filter(g => g.tipo === "variable" && (g.fecha||"").startsWith(mes));
   const totalFijos = gastosFijos.reduce((a,g) => a+g.monto, 0), totalVar = gastosVar.reduce((a,g) => a+g.monto, 0);
-  const ganancia = ingresos - totalFijos - totalVar;
+  const gananciaBruta = ingresos - costoMercaderia;
+  const ganancia = gananciaBruta - totalFijos - totalVar;
   const delGasto = async (id) => { setGastos(prev => prev.filter(g => g.id !== id)); await ctx.deleteGasto(id); };
 
   return (
@@ -3443,8 +3453,14 @@ function FinanzasPage({ ctx }) {
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:14, marginBottom:24 }}>
         <StatCard icon={<TrendingUp size={19}/>} bg="#dcfce7" label="Ingresos del mes" value={fmtMoney(ingresos, config.moneda)} />
+        <StatCard icon={<Package size={19}/>} bg="#fee2e2" label="Costo de mercadería vendida" value={fmtMoney(costoMercaderia, config.moneda)} />
         <StatCard icon={<ClipboardList size={19}/>} bg="#fef3c7" label="Gastos fijos" value={fmtMoney(totalFijos, config.moneda)} />
         <StatCard icon={<Receipt size={19}/>} bg="#dbeafe" label="Gastos variables" value={fmtMoney(totalVar, config.moneda)} />
+        <div style={{ ...G.card(), background:"#f9fafb" }}>
+          <div style={{ marginBottom:10 }}><TrendingUp size={19} color="#555"/></div>
+          <div style={{ fontSize:22, fontWeight:800, color:"#333" }}>{fmtMoney(gananciaBruta, config.moneda)}</div>
+          <div style={{ fontSize:13, color:"#666", marginTop:4 }}>Ganancia bruta</div>
+        </div>
         <div style={{ ...G.card(), background:ganancia>=0?"#f0fdf4":"#fef2f2" }}>
           <div style={{ marginBottom:10 }}>{ganancia>=0?<TrendingUp size={19} color="#16a34a"/>:<TrendingUp size={19} color="#dc2626" style={{transform:"rotate(180deg)"}}/>}</div>
           <div style={{ fontSize:24, fontWeight:800, color:ganancia>=0?"#16a34a":"#dc2626" }}>{fmtMoney(ganancia, config.moneda)}</div>
@@ -4765,6 +4781,53 @@ function LandingPage({ onIngresar }) {
             ))}
           </div>
           <button onClick={onIngresar} className="btn-primary" style={{ width: "100%", background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "15px", fontFamily: font }}>¡Empezar ahora!</button>
+        </div>
+      </section>
+
+      {/* ── TESTIMONIOS ── */}
+      <section style={{ background: C.bg, padding: "90px 0", borderTop: `1px solid ${C.line}` }}>
+        <div style={{ ...wrap }}>
+          <div style={{ textAlign: "center", marginBottom: 56 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Lo que dicen nuestros clientes</div>
+            <h2 style={{ fontSize: 42, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: 0 }}>Emprendedores que ya lo usan</h2>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 24 }}>
+            {[
+              {
+                texto: "Antes llevaba el stock en cuadernos y planillas, y siempre terminaba vendiendo productos que ya no tenía. Con MiLocal puedo controlar las ventas, el stock y la caja desde un solo lugar. Me ordenó muchísimo el negocio y ahora sé exactamente qué productos tengo que volver a comprar.",
+                nombre: "Sofía",
+                rol: "Emprendedora de belleza",
+                rubro: "Cosmética",
+                inicial: "S",
+              },
+              {
+                texto: "MiLocal me ayudó a dejar de manejar todo de memoria. Ahora puedo ver cuáles son los productos que más vendo, cuánto facturé en el mes y qué mercadería está por terminarse. Es fácil de usar y me permite tomar mejores decisiones para mi emprendimiento.",
+                nombre: "Martín",
+                rol: "Dueño de un local de accesorios",
+                rubro: "Tecnología",
+                inicial: "M",
+              },
+              {
+                texto: "Desde que usamos MiLocal tenemos mucho más control sobre el negocio. Podemos registrar cada venta, revisar el stock rápidamente y ver cómo viene el local sin tener que estar presentes todo el día. Nos ahorra tiempo y nos permite trabajar de una manera mucho más profesional.",
+                nombre: "Cliente MiLocal",
+                rol: "Dueño de comercio",
+                rubro: "Retail",
+                inicial: "M",
+              },
+            ].map((t, i) => (
+              <div key={i} style={{ background: C.bgSoft, border: `1px solid ${C.line}`, borderRadius: 14, padding: "28px 26px", display: "flex", flexDirection: "column" }}>
+                <p style={{ fontSize: 14.5, lineHeight: 1.65, color: C.body, margin: "0 0 22px", flex: 1 }}>“{t.texto}”</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 40, height: 40, borderRadius: "50%", background: C.purpleSoft, color: C.purple, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 15, flexShrink: 0 }}>{t.inicial}</div>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13.5, color: C.ink }}>{t.nombre}</div>
+                    <div style={{ fontSize: 12.5, color: C.mut }}>{t.rol}</div>
+                  </div>
+                  <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 600, color: C.purple, background: C.purpleSoft, padding: "4px 10px", borderRadius: 20 }}>{t.rubro}</span>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
