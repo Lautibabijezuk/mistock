@@ -3438,10 +3438,24 @@ function CalculadoraPreciosPage({ ctx }) {
     efectivo:   { label: "Efectivo / Transferencia", pct: 0 },
     debito:     { label: "Débito (QR)", pct: 1 },
     credito1:   { label: "Crédito 1 pago", pct: 4.5 },
-    cuotas:     { label: "Crédito en cuotas sin interés", pct: 9 },
     otro:       { label: "Otro / personalizado", pct: 0 },
   };
   const [comisionPct, setComisionPct] = useState(String(COMISIONES_PRESET.credito1.pct));
+
+  const [usaCuotas, setUsaCuotas] = useState(false);
+  const [cantCuotas, setCantCuotas] = useState("3");
+  const CUOTAS_PRESET = {
+    "3":  { label: "3 cuotas sin interés", pct: 8 },
+    "6":  { label: "6 cuotas sin interés", pct: 13 },
+    "9":  { label: "9 cuotas sin interés", pct: 16 },
+    "12": { label: "12 cuotas sin interés", pct: 19 },
+  };
+  const [cuotasPct, setCuotasPct] = useState(String(CUOTAS_PRESET["3"].pct));
+
+  const handleCantCuotasChange = (v) => {
+    setCantCuotas(v);
+    setCuotasPct(String(CUOTAS_PRESET[v].pct));
+  };
 
   const handleMedioPagoChange = (v) => {
     setMedioPago(v);
@@ -3455,7 +3469,8 @@ function CalculadoraPreciosPage({ ctx }) {
   const pctIIBB = usaIIBB ? (+iibbPct || 0) : 0;
   const pctIVA = usaIVA ? (+ivaPct || 0) : 0;
   const pctComision = usaComision ? (+comisionPct || 0) : 0;
-  const pctTotalDescuentos = pctIIBB + pctIVA + pctComision;
+  const pctCuotas = usaCuotas ? (+cuotasPct || 0) : 0;
+  const pctTotalDescuentos = pctIIBB + pctIVA + pctComision + pctCuotas;
 
   // Fórmula: para que después de descontar % del PRECIO FINAL siga quedando "baseDeseada" neto,
   // hay que "inflar" el precio: precio = baseDeseada / (1 - %totalDescuentos)
@@ -3465,7 +3480,8 @@ function CalculadoraPreciosPage({ ctx }) {
   const montoIIBB = precioFinal * (pctIIBB / 100);
   const montoIVA = precioFinal * (pctIVA / 100);
   const montoComision = precioFinal * (pctComision / 100);
-  const totalDescuentos = montoIIBB + montoIVA + montoComision;
+  const montoCuotas = precioFinal * (pctCuotas / 100);
+  const totalDescuentos = montoIIBB + montoIVA + montoComision + montoCuotas;
   const margenRealPct = costoNum > 0 ? (gananciaDeseada / costoNum) * 100 : 0;
 
   const inputStyle = { ...G.inp() };
@@ -3538,6 +3554,19 @@ function CalculadoraPreciosPage({ ctx }) {
                 </div>
               </div>
             )}
+
+            {toggleRow(usaCuotas, setUsaCuotas, "Ofrecer cuotas sin interés")}
+            {usaCuotas && (
+              <div style={{ padding:"10px 0 14px 48px" }}>
+                <select style={{ ...inputStyle, marginBottom:8 }} value={cantCuotas} onChange={e => handleCantCuotasChange(e.target.value)}>
+                  {Object.entries(CUOTAS_PRESET).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+                <div>
+                  <input style={{ ...inputStyle, maxWidth:120 }} type="number" min={0} step="0.1" value={cuotasPct} onChange={e => setCuotasPct(e.target.value)} />
+                  <span style={{ fontSize:12, color:"#aaa", marginLeft:8 }}>% adicional a la comisión — se suma aparte, revisalo en tu panel de Mercado Pago</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -3571,6 +3600,11 @@ function CalculadoraPreciosPage({ ctx }) {
               {usaComision && (
                 <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
                   <span style={{ color:"#666" }}>Comisión pasarela ({comisionPct}%)</span><span style={{ fontWeight:600, color:"#dc2626" }}>+{fmtMoney(montoComision, moneda)}</span>
+                </div>
+              )}
+              {usaCuotas && (
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
+                  <span style={{ color:"#666" }}>Cuotas sin interés ({cuotasPct}%)</span><span style={{ fontWeight:600, color:"#dc2626" }}>+{fmtMoney(montoCuotas, moneda)}</span>
                 </div>
               )}
               <div style={{ display:"flex", justifyContent:"space-between", fontSize:16, fontWeight:800, padding:"12px 0 0" }}>
