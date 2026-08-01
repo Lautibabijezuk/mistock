@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, Component } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
-import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu, MoreVertical, Calculator } from "lucide-react";
+import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu, MoreVertical, Calculator, Target } from "lucide-react";
 import * as XLSX from "xlsx";
 
 // ═══════════════════════════════════════════════════════════
@@ -3215,6 +3215,172 @@ function HistorialPage({ ctx }) {
             ))}</tbody>
           </table>
         }
+      </div>
+    </div>
+  );
+}
+
+function ProyeccionPage({ ctx }) {
+  const { config, sales } = ctx;
+  const moneda = config.moneda;
+
+  const hoy = new Date();
+  const anioActual = hoy.getFullYear(), mesActual = hoy.getMonth(); // 0-indexed
+  const mesActualStr = todayStr().slice(0, 7); // "YYYY-MM"
+  const diaHoy = hoy.getDate();
+  const diasDelMes = new Date(anioActual, mesActual + 1, 0).getDate();
+  const diasRestantes = Math.max(1, diasDelMes - diaHoy);
+
+  const ventasValidas = sales.filter(s => !s.anulada);
+
+  // Ventas del mes en curso
+  const ventasMesActual = ventasValidas.filter(s => s.fecha.startsWith(mesActualStr));
+  const totalMesActual = ventasMesActual.reduce((a, s) => a + s.total, 0);
+
+  // Ticket promedio: sobre los últimos 90 días (más representativo que "todo el historial")
+  const hace90 = new Date(hoy); hace90.setDate(hace90.getDate() - 90);
+  const hace90Str = hace90.toISOString().slice(0, 10);
+  const ventasRecientes = ventasValidas.filter(s => s.fecha >= hace90Str);
+  const ticketPromedio = ventasRecientes.length > 0
+    ? ventasRecientes.reduce((a, s) => a + s.total, 0) / ventasRecientes.length
+    : (ventasValidas.length > 0 ? ventasValidas.reduce((a,s)=>a+s.total,0) / ventasValidas.length : 0);
+
+  // ── Curva histórica: % acumulado del mes alcanzado en cada día, promediado entre meses anteriores completos ──
+  const mesesAnteriores = {}; // "YYYY-MM" -> { totalMes, porDia: {1: acumulado, 2: acumulado...} }
+  ventasValidas.forEach(s => {
+    const mesVenta = s.fecha.slice(0, 7);
+    if (mesVenta >= mesActualStr) return; // excluir mes actual y futuros
+    const dia = parseInt(s.fecha.slice(8, 10), 10);
+    if (!mesesAnteriores[mesVenta]) mesesAnteriores[mesVenta] = { total: 0, porDia: {} };
+    mesesAnteriores[mesVenta].total += s.total;
+    mesesAnteriores[mesVenta].porDia[dia] = (mesesAnteriores[mesVenta].porDia[dia] || 0) + s.total;
+  });
+  const mesesKeys = Object.keys(mesesAnteriores).sort().slice(-3); // hasta 3 meses anteriores más recientes
+  const tieneHistorial = mesesKeys.length >= 2;
+
+  // Para cada mes anterior, curva acumulada de % por día del mes
+  let curvaPromedio = null; // { [dia]: % acumulado promedio }
+  if (tieneHistorial) {
+    const curvasPorMes = mesesKeys.map(mk => {
+      const { total, porDia } = mesesAnteriores[mk];
+      const [y, m] = mk.split("-").map(Number);
+      const diasEseMes = new Date(y, m, 0).getDate();
+      let acumulado = 0;
+      const curva = {};
+      for (let d = 1; d <= diasEseMes; d++) {
+        acumulado += porDia[d] || 0;
+        curva[d] = total > 0 ? (acumulado / total) * 100 : 0;
+      }
+      return curva;
+    });
+    curvaPromedio = {};
+    for (let d = 1; d <= 31; d++) {
+      const valores = curvasPorMes.map(c => c[d]).filter(v => v !== undefined);
+      if (valores.length > 0) curvaPromedio[d] = valores.reduce((a,v)=>a+v,0) / valores.length;
+    }
+  }
+
+  // ── Proyección de fin de mes ──
+  let proyeccion, metodoProyeccion;
+  if (tieneHistorial && curvaPromedio && curvaPromedio[diaHoy] > 1) {
+    const pctHoy = curvaPromedio[diaHoy] / 100;
+    proyeccion = totalMesActual / pctHoy;
+    metodoProyeccion = "curva";
+  } else {
+    proyeccion = diaHoy > 0 ? (totalMesActual / diaHoy) * diasDelMes : 0;
+    metodoProyeccion = "lineal";
+  }
+
+  // ── Slider de meta ──
+  const metaSugeridaDefault = Math.max(Math.round(proyeccion / 100000) * 100000, 100000);
+  const [meta, setMeta] = useState(metaSugeridaDefault);
+  const metaMax = Math.max(metaSugeridaDefault * 3, 500000);
+
+  const faltante = Math.max(0, meta - totalMesActual);
+  const ventasNecesariasTotal = ticketPromedio > 0 ? Math.ceil(meta / ticketPromedio) : 0;
+  const ventasHechas = ventasMesActual.length;
+  const ventasNecesariasRestantes = ticketPromedio > 0 ? Math.ceil(faltante / ticketPromedio) : 0;
+  const promedioDiarioNecesario = faltante / diasRestantes;
+  const ventasDiariasNecesarias = ticketPromedio > 0 ? (promedioDiarioNecesario / ticketPromedio) : 0;
+  const progresoPct = meta > 0 ? Math.min(100, (totalMesActual / meta) * 100) : 0;
+  const vasABien = proyeccion >= meta;
+
+  return (
+    <div className="app-page-pad" style={G.page}>
+      <div style={{ marginBottom:24 }}>
+        <h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Proyección</h1>
+        <p style={{ margin:0, color:"#888", fontSize:14 }}>Definí una meta para el mes y mirá cómo viene tu ritmo de ventas</p>
+      </div>
+
+      <div className="proyeccion-grid" style={{ display:"grid", gridTemplateColumns:"200px 1fr", gap:28, alignItems:"stretch" }}>
+        {/* ── Barra vertical de meta ── */}
+        <div style={{ ...G.card(), display:"flex", flexDirection:"column", alignItems:"center", padding:"28px 16px" }}>
+          <div style={{ fontSize:12, fontWeight:600, color:"#999", marginBottom:6, textAlign:"center" }}>META DEL MES</div>
+          <div style={{ fontSize:20, fontWeight:800, marginBottom:18, textAlign:"center", color:"#9238FF" }}>{fmtMoney(meta, moneda)}</div>
+          <div style={{ flex:1, display:"flex", alignItems:"center", minHeight:260 }}>
+            <input
+              type="range"
+              min={100000}
+              max={metaMax}
+              step={50000}
+              value={meta}
+              onChange={e => setMeta(+e.target.value)}
+              style={{
+                WebkitAppearance: "slider-vertical",
+                width: 8,
+                height: 260,
+                accentColor: "#9238FF",
+                cursor: "pointer",
+              }}
+            />
+          </div>
+          <div style={{ fontSize:11, color:"#bbb", marginTop:14, textAlign:"center" }}>Arrastrá para ajustar</div>
+        </div>
+
+        {/* ── Info principal ── */}
+        <div>
+          {/* Progreso actual vs meta */}
+          <div style={{ ...G.card(), marginBottom:16 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:10 }}>
+              <span style={{ fontSize:14, fontWeight:600, color:"#666" }}>Progreso del mes</span>
+              <span style={{ fontSize:13, color:"#999" }}>Día {diaHoy} de {diasDelMes}</span>
+            </div>
+            <div style={{ height:14, background:"#f3f4f6", borderRadius:20, overflow:"hidden", marginBottom:10 }}>
+              <div style={{ height:"100%", width:`${progresoPct}%`, background: progresoPct >= 100 ? "#16a34a" : "#9238FF", borderRadius:20, transition:"width .3s ease" }}/>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13 }}>
+              <span style={{ color:"#666" }}>Llevás <b style={{ color:"#111" }}>{fmtMoney(totalMesActual, moneda)}</b> ({progresoPct.toFixed(0)}%)</span>
+              <span style={{ color:"#666" }}>Faltan <b style={{ color:"#111" }}>{fmtMoney(faltante, moneda)}</b></span>
+            </div>
+          </div>
+
+          {/* Qué necesitás para llegar */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:16 }}>
+            <StatCard icon={<ShoppingCart size={19}/>} bg="#f4ecff" label="Ventas necesarias (total mes)" value={ticketPromedio > 0 ? `${ventasNecesariasTotal} ventas` : "—"} />
+            <StatCard icon={<Target size={19}/>} bg="#dbeafe" label="Te faltan" value={ticketPromedio > 0 ? `${ventasNecesariasRestantes} ventas` : "—"} />
+            <StatCard icon={<TrendingUp size={19}/>} bg="#dcfce7" label="Ritmo diario necesario" value={ticketPromedio > 0 ? `${Math.ceil(ventasDiariasNecesarias)} ventas/día` : "—"} />
+            <StatCard icon={<DollarSign size={19}/>} bg="#fef3c7" label="Ticket promedio" value={fmtMoney(ticketPromedio, moneda)} />
+          </div>
+
+          {/* Proyección de fin de mes */}
+          <div style={{ ...G.card(), background: vasABien ? "#f0fdf4" : "#fef2f2" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+              <TrendingUp size={18} color={vasABien ? "#16a34a" : "#dc2626"}/>
+              <h3 style={{ margin:0, fontSize:15, fontWeight:700 }}>Proyección de fin de mes</h3>
+            </div>
+            <div style={{ fontSize:28, fontWeight:800, color: vasABien ? "#16a34a" : "#dc2626", margin:"8px 0 6px" }}>{fmtMoney(proyeccion, moneda)}</div>
+            <p style={{ margin:0, fontSize:13.5, color:"#555", lineHeight:1.5 }}>
+              {vasABien
+                ? `Con tu ritmo actual, vas a superar tu meta de ${fmtMoney(meta, moneda)}. 🎉`
+                : `Con tu ritmo actual, vas a quedar ${fmtMoney(meta - proyeccion, moneda)} por debajo de tu meta.`}
+            </p>
+            <p style={{ margin:"10px 0 0", fontSize:11.5, color:"#999" }}>
+              {metodoProyeccion === "curva"
+                ? `Calculado según tu patrón histórico de ventas (comparando el día ${diaHoy} con meses anteriores).`
+                : `Proyección lineal simple (necesitamos al menos 2 meses de historial para ajustar por patrones estacionales de tu negocio).`}
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -6490,6 +6656,7 @@ export default function App() {
     { id:"inventario", label:"Productos e Inventario", icon:<Package size={16}/> },
     { id:"historial", label:"Historial", icon:<Clock size={16}/> },
     { id:"estadisticas", label:"Estadísticas", icon:<TrendingUp size={16}/> },
+    { id:"proyeccion", label:"Proyección", icon:<Target size={16}/> },
     { id:"finanzas", label:"Finanzas", icon:<DollarSign size={16}/> },
     { id:"calculadora", label:"Calculadora de precios", icon:<Calculator size={16}/> },
     { id:"remitos", label:"Remitos", icon:<FileText size={16}/> },
@@ -6513,6 +6680,7 @@ export default function App() {
     inventario:<InventarioPage ctx={ctx}/>,
     historial:<HistorialPage ctx={ctx}/>,
     estadisticas:<EstadisticasPage ctx={ctx}/>,
+    proyeccion:<ProyeccionPage ctx={ctx}/>,
     finanzas:<FinanzasPage ctx={ctx}/>,
     calculadora:<CalculadoraPreciosPage ctx={ctx}/>,
     remitos:<RemitosPage ctx={ctx}/>,
@@ -6546,6 +6714,7 @@ export default function App() {
           .app-overlay.open { display: block !important; }
           .app-sidebar-close { display: flex !important; }
           .venta-grid { flex-direction: column !important; }
+          .proyeccion-grid { grid-template-columns: 1fr !important; }
           .venta-carrito-panel { position: static !important; }
           .accesos-rapidos-grid, .buscador-grid { grid-template-columns: repeat(3,1fr) !important; }
         }
