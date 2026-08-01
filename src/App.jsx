@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, Component } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
-import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu, MoreVertical } from "lucide-react";
+import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu, MoreVertical, Calculator } from "lucide-react";
 import * as XLSX from "xlsx";
 
 // ═══════════════════════════════════════════════════════════
@@ -3418,6 +3418,176 @@ function EstadisticasPage({ ctx }) {
   );
 }
 
+function CalculadoraPreciosPage({ ctx }) {
+  const { config } = ctx;
+  const moneda = config.moneda;
+
+  const [costo, setCosto] = useState("");
+  const [margenTipo, setMargenTipo] = useState("pct"); // pct | monto
+  const [margenValor, setMargenValor] = useState("40");
+
+  const [usaIIBB, setUsaIIBB] = useState(false);
+  const [iibbPct, setIibbPct] = useState("3");
+
+  const [usaIVA, setUsaIVA] = useState(false);
+  const [ivaPct, setIvaPct] = useState("21");
+
+  const [usaComision, setUsaComision] = useState(false);
+  const [medioPago, setMedioPago] = useState("credito1");
+  const COMISIONES_PRESET = {
+    efectivo:   { label: "Efectivo / Transferencia", pct: 0 },
+    debito:     { label: "Débito (QR)", pct: 1 },
+    credito1:   { label: "Crédito 1 pago", pct: 4.5 },
+    cuotas:     { label: "Crédito en cuotas sin interés", pct: 9 },
+    otro:       { label: "Otro / personalizado", pct: 0 },
+  };
+  const [comisionPct, setComisionPct] = useState(String(COMISIONES_PRESET.credito1.pct));
+
+  const handleMedioPagoChange = (v) => {
+    setMedioPago(v);
+    if (v !== "otro") setComisionPct(String(COMISIONES_PRESET[v].pct));
+  };
+
+  const costoNum = +costo || 0;
+  const gananciaDeseada = margenTipo === "pct" ? costoNum * ((+margenValor || 0) / 100) : (+margenValor || 0);
+  const baseDeseada = costoNum + gananciaDeseada; // lo que el emprendedor quiere quedarse limpio
+
+  const pctIIBB = usaIIBB ? (+iibbPct || 0) : 0;
+  const pctIVA = usaIVA ? (+ivaPct || 0) : 0;
+  const pctComision = usaComision ? (+comisionPct || 0) : 0;
+  const pctTotalDescuentos = pctIIBB + pctIVA + pctComision;
+
+  // Fórmula: para que después de descontar % del PRECIO FINAL siga quedando "baseDeseada" neto,
+  // hay que "inflar" el precio: precio = baseDeseada / (1 - %totalDescuentos)
+  const divisor = 1 - (pctTotalDescuentos / 100);
+  const precioFinal = costoNum > 0 && divisor > 0 ? baseDeseada / divisor : 0;
+
+  const montoIIBB = precioFinal * (pctIIBB / 100);
+  const montoIVA = precioFinal * (pctIVA / 100);
+  const montoComision = precioFinal * (pctComision / 100);
+  const totalDescuentos = montoIIBB + montoIVA + montoComision;
+  const margenRealPct = costoNum > 0 ? (gananciaDeseada / costoNum) * 100 : 0;
+
+  const inputStyle = { ...G.inp() };
+  const toggleRow = (checked, onChange, label) => (
+    <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer", padding:"12px 0", borderBottom:"1px solid #f5f5f5" }}>
+      <div onClick={() => onChange(!checked)} style={{ width:38, height:22, borderRadius:20, background: checked ? "#9238FF" : "#e5e7eb", position:"relative", transition:"background .15s", flexShrink:0 }}>
+        <div style={{ position:"absolute", top:2, left: checked ? 18 : 2, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left .15s", boxShadow:"0 1px 3px rgba(0,0,0,0.2)" }}/>
+      </div>
+      <span style={{ fontSize:14, fontWeight:500, color:"#333" }}>{label}</span>
+    </label>
+  );
+
+  return (
+    <div className="app-page-pad" style={G.page}>
+      <div style={{ marginBottom:24 }}>
+        <h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Calculadora de precios</h1>
+        <p style={{ margin:0, color:"#888", fontSize:14 }}>Encontrá el precio ideal considerando tu margen, impuestos y comisiones de cobro</p>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:24, alignItems:"start" }}>
+        {/* ── Columna izquierda: inputs ── */}
+        <div>
+          <div style={{ ...G.card(), marginBottom:16 }}>
+            <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Costo y margen</h3>
+            <FieldRow label="Costo del producto">
+              <input style={inputStyle} type="number" min={0} placeholder="0" value={costo} onChange={e => setCosto(e.target.value)} />
+            </FieldRow>
+            <div style={{ marginTop:14 }}>
+              <label style={G.label}>Ganancia deseada</label>
+              <div style={{ display:"flex", gap:8 }}>
+                <div style={{ display:"flex", border:"1px solid #e5e7eb", borderRadius:8, overflow:"hidden", flexShrink:0 }}>
+                  {[["pct","%"],["monto",moneda]].map(([v,l]) => (
+                    <button key={v} onClick={() => setMargenTipo(v)} style={{ padding:"9px 14px", border:"none", cursor:"pointer", fontSize:13, fontWeight:margenTipo===v?700:400, background:margenTipo===v?"#111":"#fff", color:margenTipo===v?"#fff":"#666" }}>{l}</button>
+                  ))}
+                </div>
+                <input style={{ ...inputStyle, flex:1 }} type="number" min={0} value={margenValor} onChange={e => setMargenValor(e.target.value)} />
+              </div>
+            </div>
+          </div>
+
+          <div style={{ ...G.card(), marginBottom:16 }}>
+            <h3 style={{ margin:"0 0 4px", fontSize:15, fontWeight:700 }}>¿Qué querés incluir en el precio?</h3>
+            <p style={{ margin:"0 0 4px", fontSize:12.5, color:"#aaa" }}>Activá solo lo que te aplica a vos. Los porcentajes son editables.</p>
+
+            {toggleRow(usaIIBB, setUsaIIBB, "Ingresos Brutos (IIBB)")}
+            {usaIIBB && (
+              <div style={{ padding:"10px 0 14px 48px" }}>
+                <input style={{ ...inputStyle, maxWidth:120 }} type="number" min={0} step="0.1" value={iibbPct} onChange={e => setIibbPct(e.target.value)} />
+                <span style={{ fontSize:12, color:"#aaa", marginLeft:8 }}>% — varía según tu provincia y actividad, confirmalo con tu contador</span>
+              </div>
+            )}
+
+            {toggleRow(usaIVA, setUsaIVA, "IVA (Responsable Inscripto)")}
+            {usaIVA && (
+              <div style={{ padding:"10px 0 14px 48px" }}>
+                <input style={{ ...inputStyle, maxWidth:120 }} type="number" min={0} step="0.1" value={ivaPct} onChange={e => setIvaPct(e.target.value)} />
+                <span style={{ fontSize:12, color:"#aaa", marginLeft:8 }}>% — no marques esto si sos monotributista</span>
+              </div>
+            )}
+
+            {toggleRow(usaComision, setUsaComision, "Comisión de pasarela de pago")}
+            {usaComision && (
+              <div style={{ padding:"10px 0 14px 48px" }}>
+                <select style={{ ...inputStyle, marginBottom:8 }} value={medioPago} onChange={e => handleMedioPagoChange(e.target.value)}>
+                  {Object.entries(COMISIONES_PRESET).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+                <div>
+                  <input style={{ ...inputStyle, maxWidth:120 }} type="number" min={0} step="0.1" value={comisionPct} onChange={e => setComisionPct(e.target.value)} />
+                  <span style={{ fontSize:12, color:"#aaa", marginLeft:8 }}>% — las tasas reales varían según tu cuenta y volumen, revisalas en tu panel de Mercado Pago</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Columna derecha: resultado ── */}
+        <div style={{ position:"sticky", top:20 }}>
+          <div style={{ ...G.card(), background:"#f9fafb", marginBottom:16, textAlign:"center", padding:"32px 24px" }}>
+            <div style={{ fontSize:13, color:"#888", fontWeight:600, marginBottom:8, textTransform:"uppercase", letterSpacing:"0.5px" }}>Precio de venta sugerido</div>
+            <div style={{ fontSize:44, fontWeight:800, color:"#111", letterSpacing:"-1.5px" }}>{costoNum > 0 ? fmtMoney(precioFinal, moneda) : "—"}</div>
+            {costoNum > 0 && <div style={{ fontSize:13, color:"#9238FF", fontWeight:600, marginTop:6 }}>Ganancia real: {fmtMoney(gananciaDeseada, moneda)} ({margenRealPct.toFixed(0)}% sobre costo)</div>}
+          </div>
+
+          {costoNum > 0 && (
+            <div style={{ ...G.card() }}>
+              <h3 style={{ margin:"0 0 14px", fontSize:14, fontWeight:700, color:"#666" }}>Desglose</h3>
+              <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
+                <span style={{ color:"#666" }}>Costo del producto</span><span style={{ fontWeight:600 }}>{fmtMoney(costoNum, moneda)}</span>
+              </div>
+              <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
+                <span style={{ color:"#666" }}>Ganancia deseada</span><span style={{ fontWeight:600, color:"#16a34a" }}>+{fmtMoney(gananciaDeseada, moneda)}</span>
+              </div>
+              {usaIIBB && (
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
+                  <span style={{ color:"#666" }}>Ingresos Brutos ({iibbPct}%)</span><span style={{ fontWeight:600, color:"#dc2626" }}>+{fmtMoney(montoIIBB, moneda)}</span>
+                </div>
+              )}
+              {usaIVA && (
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
+                  <span style={{ color:"#666" }}>IVA ({ivaPct}%)</span><span style={{ fontWeight:600, color:"#dc2626" }}>+{fmtMoney(montoIVA, moneda)}</span>
+                </div>
+              )}
+              {usaComision && (
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
+                  <span style={{ color:"#666" }}>Comisión pasarela ({comisionPct}%)</span><span style={{ fontWeight:600, color:"#dc2626" }}>+{fmtMoney(montoComision, moneda)}</span>
+                </div>
+              )}
+              <div style={{ display:"flex", justifyContent:"space-between", fontSize:16, fontWeight:800, padding:"12px 0 0" }}>
+                <span>Precio final</span><span>{fmtMoney(precioFinal, moneda)}</span>
+              </div>
+            </div>
+          )}
+
+          <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"12px 16px", marginTop:16, fontSize:12.5, color:"#92400e", lineHeight:1.5 }}>
+            💡 Esta calculadora es una guía orientativa. Los porcentajes de impuestos y comisiones varían según tu situación fiscal y tu cuenta de cobro — consultá con tu contador y con tu panel de Mercado Pago para confirmar los valores exactos.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FinanzasPage({ ctx }) {
   const { config, sales, gastos, setGastos, products } = ctx;
   const [mes, setMes] = useState(todayStr().slice(0, 7));
@@ -6287,6 +6457,7 @@ export default function App() {
     { id:"historial", label:"Historial", icon:<Clock size={16}/> },
     { id:"estadisticas", label:"Estadísticas", icon:<TrendingUp size={16}/> },
     { id:"finanzas", label:"Finanzas", icon:<DollarSign size={16}/> },
+    { id:"calculadora", label:"Calculadora de precios", icon:<Calculator size={16}/> },
     { id:"remitos", label:"Remitos", icon:<FileText size={16}/> },
     { id:"suscripcion", label:"Suscripción", icon:<DollarSign size={16}/> },
     { id:"config", label:"Configuración", icon:<Settings size={16}/> },
@@ -6309,6 +6480,7 @@ export default function App() {
     historial:<HistorialPage ctx={ctx}/>,
     estadisticas:<EstadisticasPage ctx={ctx}/>,
     finanzas:<FinanzasPage ctx={ctx}/>,
+    calculadora:<CalculadoraPreciosPage ctx={ctx}/>,
     remitos:<RemitosPage ctx={ctx}/>,
     suscripcion:<SuscripcionPage config={config} onSuscribir={handleSuscribir} onCancelar={handleCancelar}/>,
     config:<ConfigPage ctx={ctx}/>
