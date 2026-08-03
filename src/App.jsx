@@ -3593,7 +3593,26 @@ function CalculadoraPreciosPage({ ctx }) {
   const [margenValor, setMargenValor] = useState("40");
 
   const [usaIIBB, setUsaIIBB] = useState(false);
-  const [iibbPct, setIibbPct] = useState("3");
+  const PROVINCIAS_IIBB = {
+    caba:       { label: "CABA", pct: 3 },
+    baires:     { label: "Buenos Aires", pct: 3.5 },
+    cordoba:    { label: "Córdoba", pct: 3 },
+    santafe:    { label: "Santa Fe", pct: 3.5 },
+    mendoza:    { label: "Mendoza", pct: 3 },
+    tucuman:    { label: "Tucumán", pct: 3.5 },
+    entrerios:  { label: "Entre Ríos", pct: 3.5 },
+    salta:      { label: "Salta", pct: 3.5 },
+    chaco:      { label: "Chaco", pct: 3 },
+    lapampa:    { label: "La Pampa", pct: 3 },
+    otra:       { label: "Otra provincia / no estoy seguro", pct: 3.5 },
+  };
+  const [provinciaIIBB, setProvinciaIIBB] = useState("baires");
+  const [iibbPct, setIibbPct] = useState(String(PROVINCIAS_IIBB.baires.pct));
+
+  const handleProvinciaChange = (v) => {
+    setProvinciaIIBB(v);
+    setIibbPct(String(PROVINCIAS_IIBB[v].pct));
+  };
 
   const [usaIVA, setUsaIVA] = useState(false);
   const [ivaPct, setIvaPct] = useState("21");
@@ -3695,8 +3714,13 @@ function CalculadoraPreciosPage({ ctx }) {
             {toggleRow(usaIIBB, setUsaIIBB, "Ingresos Brutos (IIBB)")}
             {usaIIBB && (
               <div style={{ padding:"10px 0 14px 48px" }}>
-                <input style={{ ...inputStyle, maxWidth:120 }} type="number" min={0} step="0.1" value={iibbPct} onChange={e => setIibbPct(e.target.value)} />
-                <span style={{ fontSize:12, color:"#aaa", marginLeft:8 }}>% — varía según tu provincia y actividad, confirmalo con tu contador</span>
+                <select style={{ ...inputStyle, marginBottom:8 }} value={provinciaIIBB} onChange={e => handleProvinciaChange(e.target.value)}>
+                  {Object.entries(PROVINCIAS_IIBB).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+                <div>
+                  <input style={{ ...inputStyle, maxWidth:120 }} type="number" min={0} step="0.1" value={iibbPct} onChange={e => setIibbPct(e.target.value)} />
+                  <span style={{ fontSize:12, color:"#aaa", marginLeft:8 }}>% — valor de referencia general para comercio minorista. Puede variar según tu actividad específica y el nivel de facturación — confirmalo con tu contador o el organismo de rentas de tu provincia</span>
+                </div>
               </div>
             )}
 
@@ -3755,7 +3779,7 @@ function CalculadoraPreciosPage({ ctx }) {
               </div>
               {usaIIBB && (
                 <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
-                  <span style={{ color:"#666" }}>Ingresos Brutos ({iibbPct}%)</span><span style={{ fontWeight:600, color:"#dc2626" }}>+{fmtMoney(montoIIBB, moneda)}</span>
+                  <span style={{ color:"#666" }}>Ingresos Brutos — {PROVINCIAS_IIBB[provinciaIIBB].label} ({iibbPct}%)</span><span style={{ fontWeight:600, color:"#dc2626" }}>+{fmtMoney(montoIIBB, moneda)}</span>
                 </div>
               )}
               {usaIVA && (
