@@ -1848,11 +1848,11 @@ function DashboardPage({ ctx }) {
         <StatCard icon={<Package size={19}/>} bg="#dbeafe" label="Unidades en stock" value={totalStock} />
         <StatCard icon={<AlertTriangle size={19}/>} bg="#fef3c7" label="Stock bajo" value={stockBajoCount} textColor={stockBajoCount > 0 ? "#d97706" : "#111"} />
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20, marginBottom:20 }}>
+      <div className="dashboard-cards-2col" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20, marginBottom:20 }}>
         <div style={G.card()}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <h3 style={{ margin:0, fontSize:15, fontWeight:700 }}>Ventas recientes</h3>
-            <button onClick={() => setPage("historial")} style={{ background:"none", border:"none", color:"#666", fontSize:12, cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>Ver todas <ChevronRight size={13}/></button>
+            <button onClick={() => setPage("historial")} className="dc-link" style={{ background:"none", border:"none", color:"#666", fontSize:12, cursor:"pointer", display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>Ver todas <ChevronRight size={13}/></button>
           </div>
           {recientes.length === 0 ? (
             <div style={{ textAlign:"center", padding:"28px 0", color:"#bbb" }}>
@@ -1861,16 +1861,16 @@ function DashboardPage({ ctx }) {
               <button onClick={() => setPage("venta")} style={{ background:"none", border:"none", color:"#111", fontSize:13, fontWeight:700, cursor:"pointer", marginTop:4 }}>Registrar primera venta</button>
             </div>
           ) : recientes.map(s => (
-            <div key={s.id} style={{ display:"flex", justifyContent:"space-between", padding:"9px 0", borderBottom:"1px solid #f5f5f5" }}>
-              <div><div style={{ fontWeight:600, fontSize:13 }}>{s.cliente || "Cliente"}</div><div style={{ color:"#aaa", fontSize:11 }}>{fmtDate(s.fecha)} · {s.metodoPago}</div></div>
-              <div style={{ fontWeight:700, color:"#16a34a", fontSize:13 }}>{fmtMoney(s.total, config.moneda)}</div>
+            <div key={s.id} style={{ display:"flex", justifyContent:"space-between", padding:"9px 0", borderBottom:"1px solid #f5f5f5", gap:8 }}>
+              <div style={{ minWidth:0, overflow:"hidden" }}><div className="dc-row-title" style={{ fontWeight:600, fontSize:13, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.cliente || "Cliente"}</div><div className="dc-row-meta" style={{ color:"#aaa", fontSize:11, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtDate(s.fecha)} · {s.metodoPago}</div></div>
+              <div className="dc-row-amount" style={{ fontWeight:700, color:"#16a34a", fontSize:13, flexShrink:0, whiteSpace:"nowrap" }}>{fmtMoney(s.total, config.moneda)}</div>
             </div>
           ))}
         </div>
         <div style={G.card()}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <h3 style={{ margin:0, fontSize:15, fontWeight:700 }}>Alertas de stock</h3>
-            <button onClick={() => setPage("inventario")} style={{ background:"none", border:"none", color:"#666", fontSize:12, cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>Ver productos <ChevronRight size={13}/></button>
+            <button onClick={() => setPage("inventario")} className="dc-link" style={{ background:"none", border:"none", color:"#666", fontSize:12, cursor:"pointer", display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>Ver productos <ChevronRight size={13}/></button>
           </div>
           {alertas.length === 0 ? (
             <div style={{ textAlign:"center", padding:"28px 0", color:"#bbb" }}>
@@ -1879,38 +1879,38 @@ function DashboardPage({ ctx }) {
               <div style={{ fontSize:12, color:"#bbb", marginTop:2 }}>No hay productos con stock bajo</div>
             </div>
           ) : alertas.map(p => (
-            <div key={p.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 0", borderBottom:"1px solid #f5f5f5" }}>
-              <div style={{ fontWeight:500, fontSize:13 }}>{p.nombre}</div>
-              <StockBadge stock={p.stock} min={p.stockMinimo} />
+            <div key={p.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 0", borderBottom:"1px solid #f5f5f5", gap:8 }}>
+              <div className="dc-row-title" style={{ fontWeight:500, fontSize:13, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.nombre}</div>
+              <div style={{ flexShrink:0 }}><StockBadge stock={p.stock} min={p.stockMinimo} /></div>
             </div>
           ))}
         </div>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20 }}>
+      <div className="dashboard-cards-2col" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20 }}>
         <div style={G.card()}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
             <h3 style={{ margin:0, fontSize:15, fontWeight:700, display:"flex", alignItems:"center", gap:6 }}><Flame size={15} color="#f97316"/>Productos Calientes</h3>
-            <span style={{ fontSize:12, color:"#aaa" }}>Últimos 15 días</span>
+            <span className="dc-label" style={{ fontSize:12, color:"#aaa", flexShrink:0 }}>Últimos 15 días</span>
           </div>
           {calientes.length === 0 ? <div style={{ textAlign:"center", padding:"24px 0", color:"#bbb", fontSize:13 }}><div style={{ marginBottom:8, opacity:0.25, color:"#aaa" }}><Package size={32}/></div>Sin ventas recientes</div> :
             calientes.map(({ prod, qty }) => (
-              <div key={prod.id} style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid #f5f5f5", fontSize:13 }}>
-                <div style={{ fontWeight:500 }}>{prod.nombre}</div>
-                <span style={{ color:"#16a34a", fontWeight:700 }}>{qty} vendidos</span>
+              <div key={prod.id} style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid #f5f5f5", fontSize:13, gap:8 }}>
+                <div className="dc-row-title" style={{ fontWeight:500, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{prod.nombre}</div>
+                <span className="dc-row-amount" style={{ color:"#16a34a", fontWeight:700, flexShrink:0, whiteSpace:"nowrap" }}>{qty} vendidos</span>
               </div>
             ))}
         </div>
         <div style={G.card()}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
             <h3 style={{ margin:0, fontSize:15, fontWeight:700, display:"flex", alignItems:"center", gap:6 }}><Snowflake size={15} color="#60a5fa"/>Productos Fríos</h3>
-            <span style={{ fontSize:12, color:"#aaa" }}>Últimos 30 días</span>
+            <span className="dc-label" style={{ fontSize:12, color:"#aaa", flexShrink:0 }}>Últimos 30 días</span>
           </div>
           {frios.length === 0
             ? <div style={{ textAlign:"center", padding:"24px 0", color:"#bbb", fontSize:13 }}><div style={{ marginBottom:8, opacity:0.25, color:"#aaa" }}><Package size={32}/></div>No hay productos con stock</div>
             : frios.map(({ prod, qty }) => (
-              <div key={prod.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid #f5f5f5", fontSize:13 }}>
-                <div style={{ fontWeight:500 }}>{prod.nombre}</div>
-                <span style={{ color: qty === 0 ? "#ef4444" : "#f59e0b", fontWeight:700 }}>
+              <div key={prod.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid #f5f5f5", fontSize:13, gap:8 }}>
+                <div className="dc-row-title" style={{ fontWeight:500, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{prod.nombre}</div>
+                <span className="dc-row-amount" style={{ color: qty === 0 ? "#ef4444" : "#f59e0b", fontWeight:700, flexShrink:0, whiteSpace:"nowrap" }}>
                   {qty === 0 ? "Sin ventas" : `${qty} vendidos`}
                 </span>
               </div>
@@ -3067,7 +3067,7 @@ function InventarioPage({ ctx }) {
       <div>
         {filtered.length === 0
           ? <Empty text={products.length===0?"No hay productos aún":"No se encontraron productos"} btnText="Agregar primer producto" onBtn={() => setShowModal(true)} />
-          : <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:16 }}>
+          : <div className="inventario-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:16 }}>
             {filtered.map(p => {
               const esModa = RUBROS_CON_TALLES.includes(config.rubro);
               const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
@@ -6733,7 +6733,7 @@ export default function App() {
         @media (max-width: 900px) {
           .app-sidebar { transform: translateX(-100%); transition: transform .25s ease; }
           .app-sidebar.open { transform: translateX(0); box-shadow: 4px 0 24px rgba(0,0,0,0.15); }
-          .app-main { margin-left: 0 !important; padding-top: 58px; }
+          .app-main { margin-left: 0 !important; padding-top: 58px; overflow-x: hidden; }
           .app-topbar-mobile { display: flex !important; }
           .app-overlay.open { display: block !important; }
           .app-sidebar-close { display: flex !important; }
@@ -6741,11 +6741,20 @@ export default function App() {
           .proyeccion-grid { grid-template-columns: 1fr !important; }
           .venta-carrito-panel { position: static !important; }
           .accesos-rapidos-grid, .buscador-grid { grid-template-columns: repeat(3,1fr) !important; }
+          .inventario-grid { grid-template-columns: repeat(3,1fr) !important; }
         }
         @media (max-width: 640px) {
           .app-page-pad { padding: 16px !important; }
           .app-main table { display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
           .accesos-rapidos-grid, .buscador-grid { grid-template-columns: repeat(2,1fr) !important; }
+          .inventario-grid { grid-template-columns: repeat(2,1fr) !important; }
+          .dashboard-cards-2col h3 { font-size: 13px !important; }
+          .dashboard-cards-2col > div { padding: 14px 12px !important; }
+          .dashboard-cards-2col .dc-row-title { font-size: 11.5px !important; }
+          .dashboard-cards-2col .dc-row-meta { font-size: 9.5px !important; }
+          .dashboard-cards-2col .dc-row-amount { font-size: 11.5px !important; }
+          .dashboard-cards-2col .dc-link { font-size: 10.5px !important; }
+          .dashboard-cards-2col .dc-label { font-size: 10px !important; }
         }
       `}</style>
       <div style={{ display:"flex", fontFamily:"'DM Sans', system-ui, -apple-system, sans-serif", minHeight:"100vh", background:"var(--bg-page)" }}>
