@@ -3294,7 +3294,15 @@ function ProyeccionPage({ ctx }) {
   // ── Slider de meta ──
   const metaSugeridaDefault = Math.max(Math.round(proyeccion / 100000) * 100000, 100000);
   const [meta, setMeta] = useState(metaSugeridaDefault);
-  const metaMax = Math.max(metaSugeridaDefault * 3, 500000);
+  const [metaTexto, setMetaTexto] = useState(metaSugeridaDefault.toLocaleString("es-AR"));
+  // El techo del slider se extiende solo si el usuario tipea/arrastra más allá — "sin límite" en la práctica
+  const metaMax = Math.max(metaSugeridaDefault * 3, 500000, meta * 1.3);
+
+  const actualizarMeta = (valor) => {
+    const v = Math.max(0, Math.round(valor));
+    setMeta(v);
+    setMetaTexto(v.toLocaleString("es-AR"));
+  };
 
   const faltante = Math.max(0, meta - totalMesActual);
   const ventasNecesariasTotal = ticketPromedio > 0 ? Math.ceil(meta / ticketPromedio) : 0;
@@ -3304,6 +3312,14 @@ function ProyeccionPage({ ctx }) {
   const ventasDiariasNecesarias = ticketPromedio > 0 ? (promedioDiarioNecesario / ticketPromedio) : 0;
   const progresoPct = meta > 0 ? Math.min(100, (totalMesActual / meta) * 100) : 0;
   const vasABien = proyeccion >= meta;
+
+  // ── Camino alternativo: mantener el ritmo de ventas (cantidad) y subir el ticket promedio en vez de vender más veces ──
+  const ritmoVentasPorDia = diaHoy > 0 ? ventasHechas / diaHoy : 0;
+  const ventasEsperadasRestantes = Math.round(ritmoVentasPorDia * diasRestantes);
+  const ventasTotalesEsperadas = ventasHechas + ventasEsperadasRestantes;
+  const hayDatosParaAlternativa = ventasTotalesEsperadas > 0;
+  const ticketNecesarioMismoRitmo = hayDatosParaAlternativa ? meta / ventasTotalesEsperadas : 0;
+  const subaTicketPct = (hayDatosParaAlternativa && ticketPromedio > 0) ? ((ticketNecesarioMismoRitmo / ticketPromedio) - 1) * 100 : 0;
 
   return (
     <div className="app-page-pad" style={G.page}>
@@ -3316,15 +3332,35 @@ function ProyeccionPage({ ctx }) {
         {/* ── Barra vertical de meta ── */}
         <div style={{ ...G.card(), display:"flex", flexDirection:"column", alignItems:"center", padding:"28px 16px" }}>
           <div style={{ fontSize:12, fontWeight:600, color:"#999", marginBottom:6, textAlign:"center" }}>META DEL MES</div>
-          <div style={{ fontSize:20, fontWeight:800, marginBottom:18, textAlign:"center", color:"#9238FF" }}>{fmtMoney(meta, moneda)}</div>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={metaTexto}
+            onFocus={e => { setMetaTexto(String(meta)); e.target.select(); }}
+            onChange={e => {
+              const raw = e.target.value.replace(/[^\d]/g, "");
+              setMetaTexto(raw);
+            }}
+            onBlur={() => {
+              const v = Math.max(0, Math.round(+metaTexto || 0));
+              setMeta(v);
+              setMetaTexto(v.toLocaleString("es-AR"));
+            }}
+            onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+            style={{
+              fontSize:20, fontWeight:800, marginBottom:18, textAlign:"center", color:"#9238FF",
+              border:"none", borderBottom:"1px dashed #ddd0fb", background:"transparent", width:"100%",
+              padding:"2px 4px", fontFamily:"inherit", outline:"none",
+            }}
+          />
           <div style={{ flex:1, display:"flex", alignItems:"center", minHeight:260 }}>
             <input
               type="range"
-              min={100000}
+              min={0}
               max={metaMax}
-              step={50000}
+              step={10000}
               value={meta}
-              onChange={e => setMeta(+e.target.value)}
+              onChange={e => actualizarMeta(+e.target.value)}
               style={{
                 WebkitAppearance: "slider-vertical",
                 width: 8,
@@ -3334,7 +3370,7 @@ function ProyeccionPage({ ctx }) {
               }}
             />
           </div>
-          <div style={{ fontSize:11, color:"#bbb", marginTop:14, textAlign:"center" }}>Arrastrá para ajustar</div>
+          <div style={{ fontSize:11, color:"#bbb", marginTop:14, textAlign:"center" }}>Arrastrá o escribí el número</div>
         </div>
 
         {/* ── Info principal ── */}
@@ -3379,6 +3415,39 @@ function ProyeccionPage({ ctx }) {
                 ? `Calculado según tu patrón histórico de ventas (comparando el día ${diaHoy} con meses anteriores).`
                 : `Proyección lineal simple (necesitamos al menos 2 meses de historial para ajustar por patrones estacionales de tu negocio).`}
             </p>
+          </div>
+
+          {/* Distintos caminos para llegar a la meta */}
+          <div style={{ ...G.card(), marginTop:16 }}>
+            <h3 style={{ margin:"0 0 4px", fontSize:15, fontWeight:700, display:"flex", alignItems:"center", gap:6 }}><Target size={16} color="#9238FF"/>Caminos para llegar a tu meta</h3>
+            <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Vender más veces no es la única forma — subir el ticket promedio también te lleva al mismo lugar.</p>
+
+            <div style={{ background:"#f9fafb", borderRadius:10, padding:"14px 16px", marginBottom:10 }}>
+              <div style={{ fontSize:12.5, fontWeight:700, color:"#666", marginBottom:4 }}>🛒 Camino 1 — Más ventas, mismo ticket</div>
+              <p style={{ margin:0, fontSize:13, color:"#333", lineHeight:1.5 }}>
+                Hacé <b>{ventasNecesariasRestantes} ventas más</b> este mes, manteniendo tu ticket promedio actual de <b>{fmtMoney(ticketPromedio, moneda)}</b>.
+              </p>
+            </div>
+
+            <div style={{ background:"#f4ecff", borderRadius:10, padding:"14px 16px" }}>
+              <div style={{ fontSize:12.5, fontWeight:700, color:"#7c3aed", marginBottom:4 }}>💰 Camino 2 — Mismo ritmo de ventas, más ticket</div>
+              {!hayDatosParaAlternativa ? (
+                <p style={{ margin:0, fontSize:13, color:"#666" }}>Todavía no hay suficientes ventas este mes para calcular este camino.</p>
+              ) : subaTicketPct > 1 ? (
+                <>
+                  <p style={{ margin:"0 0 6px", fontSize:13, color:"#333", lineHeight:1.5 }}>
+                    Si seguís vendiendo al ritmo actual (unas <b>{ventasTotalesEsperadas} ventas</b> en todo el mes), tu ticket promedio necesitaría subir a <b>{fmtMoney(ticketNecesarioMismoRitmo, moneda)}</b> (+{subaTicketPct.toFixed(0)}% respecto a hoy).
+                  </p>
+                  <p style={{ margin:0, fontSize:12, color:"#7c3aed" }}>
+                    💡 Subilo vendiendo más unidades por compra (combos, productos complementarios) o productos de mayor valor.
+                  </p>
+                </>
+              ) : (
+                <p style={{ margin:0, fontSize:13, color:"#333", lineHeight:1.5 }}>
+                  Con tu ritmo de ventas actual (unas <b>{ventasTotalesEsperadas} ventas</b> este mes), ya vas camino a alcanzar tu meta sin necesidad de subir el ticket promedio. 🎉
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </div>
