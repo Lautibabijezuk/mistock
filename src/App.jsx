@@ -489,10 +489,10 @@ function FieldRow({ label, children, half }) {
   );
 }
 
-function StatCard({ icon, bg, label, value, badge, textColor }) {
+function StatCard({ icon, bg, label, value, badge, textColor, badgeBg, badgeColor }) {
   return (
     <div style={{ ...G.card(), position:"relative", minWidth:0 }}>
-      {badge && <span style={{ position:"absolute", top:14, right:14, background:"#f0fdf4", color:"#16a34a", fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20, border:"1px solid #bbf7d0" }}>{badge}</span>}
+      {badge && <span style={{ position:"absolute", top:14, right:14, background:badgeBg||"#f0fdf4", color:badgeColor||"#16a34a", fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20, border:`1px solid ${badgeColor||"#bbf7d0"}33` }}>{badge}</span>}
       <div style={{ width:38, height:38, borderRadius:10, background:bg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:19, marginBottom:14 }}>{icon}</div>
       <div style={{ fontSize:26, fontWeight:700, color:textColor||"#111" }}>{value}</div>
       <div style={{ fontSize:13, color:"#999", marginTop:4 }}>{label}</div>
@@ -3462,6 +3462,9 @@ function EstadisticasPage({ ctx }) {
   const [fechaFin, setFechaFin] = useState(hoy);
   const [preset, setPreset] = useState("Últimos 30 días");
   const [vista, setVista] = useState("dia");
+  const [comparar, setComparar] = useState(false);
+  const [fechaIni2, setFechaIni2] = useState(subDays(subDays(hoy, 30), 30));
+  const [fechaFin2, setFechaFin2] = useState(subDays(hoy, 31));
 
   const setPresetRange = (p) => { setPreset(p); const n = todayStr(); if(p==="Hoy"){setFechaIni(n);setFechaFin(n);}else if(p==="Últimos 7 días"){setFechaIni(subDays(n,7));setFechaFin(n);}else if(p==="Este mes"){setFechaIni(n.slice(0,7)+"-01");setFechaFin(n);}else if(p==="Últimos 30 días"){setFechaIni(subDays(n,30));setFechaFin(n);}else if(p==="Este año"){setFechaIni(n.slice(0,4)+"-01-01");setFechaFin(n);} };
 
@@ -3469,7 +3472,16 @@ function EstadisticasPage({ ctx }) {
   const ingresos = vf.reduce((a,s) => a+s.total, 0);
   const ticket = vf.length > 0 ? ingresos / vf.length : 0;
 
-  const VISTAS = [{ v:"hora", l:"Ventas por hora" },{ v:"dia", l:"Ventas por día" },{ v:"mes", l:"Ventas por mes" },{ v:"anio", l:"Ventas por año" },{ v:"categoria", l:"Ventas por categoría" },{ v:"talla", l:"Ventas por talles" },{ v:"color", l:"Ventas por color" },{ v:"top", l:"Productos más vendidos" },{ v:"top_menos", l:"Productos menos vendidos" },{ v:"metodo", l:"Métodos de pago" }];
+  // Período de comparación (opcional)
+  const vf2 = comparar ? sales.filter(s => !s.anulada && s.fecha >= fechaIni2 && s.fecha <= fechaFin2) : [];
+  const ingresos2 = vf2.reduce((a,s) => a+s.total, 0);
+  const ticket2 = vf2.length > 0 ? ingresos2 / vf2.length : 0;
+  const delta = (actual, anterior) => anterior > 0 ? ((actual - anterior) / anterior) * 100 : (actual > 0 ? 100 : 0);
+  const deltaIngresos = delta(ingresos, ingresos2);
+  const deltaVentas = delta(vf.length, vf2.length);
+  const deltaTicket = delta(ticket, ticket2);
+
+  const VISTAS = [{ v:"hora", l:"Ventas por hora" },{ v:"dia", l:"Ventas por día" },{ v:"mes", l:"Ventas por mes" },{ v:"anio", l:"Ventas por año" },{ v:"categoria", l:"Ventas por categoría" },{ v:"talla", l:"Ventas por talles" },{ v:"color", l:"Ventas por color" },{ v:"top", l:"Productos más vendidos" },{ v:"top_menos", l:"Productos menos vendidos" },{ v:"metodo", l:"Métodos de pago" },{ v:"productos_venta", l:"Productos por venta" },{ v:"ticket_dia", l:"Ticket promedio (por día)" },{ v:"unidades_totales", l:"Unidades totales vendidas" },{ v:"dia_semana", l:"Ventas por día de la semana" },{ v:"stock_valorizado", l:"Stock valorizado" }];
 
   // Ranking completo de productos: unidades vendidas + plata generada, en el rango de fechas elegido
   const rankingProductos = useMemo(() => {
@@ -3519,11 +3531,54 @@ function EstadisticasPage({ ctx }) {
     if (vista === "anio") { const m={}; vf.forEach(s=>{const k=s.fecha.slice(0,4);m[k]=(m[k]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f,total:Math.round(t)})); }
     if (vista === "hora") { const m={}; for(let h=0;h<24;h++)m[h]=0; vf.forEach(s=>{if(!s.createdAt) return; const d=new Date(s.createdAt); m[d.getHours()]=(m[d.getHours()]||0)+s.total;}); return Object.entries(m).map(([h,t])=>({label:h+"hs",total:Math.round(t)})); }
     if (vista === "metodo") { const m={}; vf.forEach(s=>{m[s.metodoPago]=(m[s.metodoPago]||0)+s.total;}); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:Math.round(t)})); }
+    if (vista === "productos_venta") {
+      const porDia = {}; // fecha -> { unidades, ventas }
+      vf.forEach(s => {
+        if (!porDia[s.fecha]) porDia[s.fecha] = { unidades:0, ventas:0 };
+        porDia[s.fecha].unidades += (s.items||[]).reduce((a,i)=>a+i.cantidad,0);
+        porDia[s.fecha].ventas += 1;
+      });
+      return Object.entries(porDia).sort().map(([f,d]) => ({ label:f.slice(5), total: d.ventas > 0 ? +(d.unidades/d.ventas).toFixed(1) : 0 }));
+    }
+    if (vista === "ticket_dia") {
+      const porDia = {};
+      vf.forEach(s => {
+        if (!porDia[s.fecha]) porDia[s.fecha] = { ingresos:0, ventas:0 };
+        porDia[s.fecha].ingresos += s.total;
+        porDia[s.fecha].ventas += 1;
+      });
+      return Object.entries(porDia).sort().map(([f,d]) => ({ label:f.slice(5), total: d.ventas > 0 ? Math.round(d.ingresos/d.ventas) : 0 }));
+    }
+    if (vista === "unidades_totales") {
+      const m = {};
+      vf.forEach(s => { m[s.fecha] = (m[s.fecha]||0) + (s.items||[]).reduce((a,i)=>a+i.cantidad,0); });
+      return Object.entries(m).sort().map(([f,t]) => ({ label:f.slice(5), total:t }));
+    }
+    if (vista === "dia_semana") {
+      const DIAS = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+      const m = {}; DIAS.forEach(d => m[d] = 0);
+      vf.forEach(s => { const d = DIAS[new Date(s.fecha+"T12:00:00").getDay()]; m[d] += s.total; });
+      // Orden Lunes a Domingo
+      const orden = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"];
+      return orden.map(d => ({ label:d, total:Math.round(m[d]) }));
+    }
     return [];
   }, [vf, vista, products]);
 
+  // Stock valorizado: no depende del rango de fechas, es una foto del inventario actual
+  const stockValorizado = useMemo(() => {
+    let valorCosto = 0, valorVenta = 0, unidades = 0;
+    products.forEach(p => {
+      const stockReal = p.stock || 0;
+      valorCosto += (p.costo || 0) * stockReal;
+      valorVenta += (p.precio || 0) * stockReal;
+      unidades += stockReal;
+    });
+    return { valorCosto, valorVenta, unidades, gananciaPotencial: valorVenta - valorCosto };
+  }, [products]);
+
   const esPie = vista === "metodo";
-  const labelY = vista === "top" || vista === "top_menos" || vista === "talla" || vista === "color" ? "unidades" : "ventas";
+  const labelY = vista === "top" || vista === "top_menos" || vista === "talla" || vista === "color" || vista === "unidades_totales" ? "unidades" : vista === "productos_venta" ? "productos" : "ventas";
 
   return (
     <div className="app-page-pad" style={G.page}>
@@ -3543,14 +3598,48 @@ function EstadisticasPage({ ctx }) {
             </select>
           </div>
         </div>
+
+        <div style={{ borderTop:"1px solid #f0f0f0", marginTop:16, paddingTop:14 }}>
+          <label style={{ display:"flex", alignItems:"center", gap:9, cursor:"pointer", width:"fit-content" }}>
+            <div onClick={() => setComparar(v => !v)} style={{ width:36, height:20, borderRadius:20, background: comparar ? "#9238FF" : "#e5e7eb", position:"relative", transition:"background .15s", flexShrink:0 }}>
+              <div style={{ position:"absolute", top:2, left: comparar ? 18 : 2, width:16, height:16, borderRadius:"50%", background:"#fff", transition:"left .15s", boxShadow:"0 1px 3px rgba(0,0,0,0.2)" }}/>
+            </div>
+            <span style={{ fontSize:13, fontWeight:500, color:"#333" }}>Comparar con otro período</span>
+          </label>
+          {comparar && (
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:16, marginTop:14 }}>
+              <div><label style={{ fontSize:11, color:"#999", display:"block", marginBottom:4 }}>Desde</label><input type="date" style={G.inp()} value={fechaIni2} onChange={e => setFechaIni2(e.target.value)} /></div>
+              <div><label style={{ fontSize:11, color:"#999", display:"block", marginBottom:4 }}>Hasta</label><input type="date" style={G.inp()} value={fechaFin2} onChange={e => setFechaFin2(e.target.value)} /></div>
+            </div>
+          )}
+        </div>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
-        <StatCard icon={<DollarSign size={19}/>} bg="#dcfce7" label="Ingresos totales" value={fmtMoney(ingresos, config.moneda)} />
-        <StatCard icon={<ShoppingBag size={19}/>} bg="#dbeafe" label="Ventas realizadas" value={vf.length} />
-        <StatCard icon={<TrendingUp size={19}/>} bg="#ede9fe" label="Ticket promedio" value={fmtMoney(ticket, config.moneda)} />
+        <StatCard icon={<DollarSign size={19}/>} bg="#dcfce7" label="Ingresos totales" value={fmtMoney(ingresos, config.moneda)}
+          badge={comparar ? `${deltaIngresos>=0?"↑":"↓"} ${Math.abs(deltaIngresos).toFixed(0)}%` : undefined}
+          badgeBg={deltaIngresos>=0?"#f0fdf4":"#fef2f2"} badgeColor={deltaIngresos>=0?"#16a34a":"#dc2626"} />
+        <StatCard icon={<ShoppingBag size={19}/>} bg="#dbeafe" label="Ventas realizadas" value={vf.length}
+          badge={comparar ? `${deltaVentas>=0?"↑":"↓"} ${Math.abs(deltaVentas).toFixed(0)}%` : undefined}
+          badgeBg={deltaVentas>=0?"#f0fdf4":"#fef2f2"} badgeColor={deltaVentas>=0?"#16a34a":"#dc2626"} />
+        <StatCard icon={<TrendingUp size={19}/>} bg="#ede9fe" label="Ticket promedio" value={fmtMoney(ticket, config.moneda)}
+          badge={comparar ? `${deltaTicket>=0?"↑":"↓"} ${Math.abs(deltaTicket).toFixed(0)}%` : undefined}
+          badgeBg={deltaTicket>=0?"#f0fdf4":"#fef2f2"} badgeColor={deltaTicket>=0?"#16a34a":"#dc2626"} />
       </div>
+      {comparar && (
+        <p style={{ margin:"-14px 0 20px", fontSize:12, color:"#999" }}>Comparado con el {fmtDate(fechaIni2)} — {fmtDate(fechaFin2)} ({fmtMoney(ingresos2, config.moneda)}, {vf2.length} ventas)</p>
+      )}
       <div style={G.card()}>
-        {["categoria","talla","color"].includes(vista) ? (
+        {vista === "stock_valorizado" ? (
+          <div>
+            <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Esta vista es una foto de tu inventario actual — no depende del rango de fechas elegido arriba.</p>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:14, marginBottom:6 }}>
+              <StatCard icon={<Package size={19}/>} bg="#dbeafe" label="Unidades en stock" value={stockValorizado.unidades} />
+              <StatCard icon={<DollarSign size={19}/>} bg="#fee2e2" label="Valor a costo" value={fmtMoney(stockValorizado.valorCosto, config.moneda)} />
+              <StatCard icon={<TrendingUp size={19}/>} bg="#dcfce7" label="Valor a precio de venta" value={fmtMoney(stockValorizado.valorVenta, config.moneda)} />
+              <StatCard icon={<Target size={19}/>} bg="#f4ecff" label="Ganancia potencial si vendés todo" value={fmtMoney(stockValorizado.gananciaPotencial, config.moneda)} />
+            </div>
+          </div>
+        ) : ["categoria","talla","color"].includes(vista) ? (
           rankingDimension.length === 0 ? (
             <div style={{ textAlign:"center", padding:"52px 0", color:"#bbb" }}>
               <div style={{ marginBottom:10, opacity:0.25, color:"#aaa" }}><TrendingUp size={36}/></div>
@@ -3641,7 +3730,7 @@ function EstadisticasPage({ ctx }) {
               <Tooltip
                 cursor={{ fill:"rgba(0,0,0,0.03)" }}
                 contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }}
-                formatter={v => [labelY==="ventas" ? fmtMoney(v, config.moneda) : v+" uds", ""]}
+                formatter={v => [labelY==="ventas" ? fmtMoney(v, config.moneda) : labelY==="productos" ? v+" por venta" : v+" uds", ""]}
                 labelStyle={{ fontSize:12, fontWeight:600 }}
               />
               <Bar dataKey="total" fill="#111" radius={[10,10,0,0]} maxBarSize={64} />
