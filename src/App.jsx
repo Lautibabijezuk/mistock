@@ -3296,10 +3296,10 @@ function ProyeccionPage({ ctx }) {
   const [meta, setMeta] = useState(metaSugeridaDefault);
   const [metaTexto, setMetaTexto] = useState(metaSugeridaDefault.toLocaleString("es-AR"));
   // El techo del slider se extiende solo si el usuario tipea/arrastra más allá — "sin límite" en la práctica
-  const metaMax = Math.max(metaSugeridaDefault * 3, 500000, meta * 1.3);
+  const metaMax = 100000000; // tope fijo: $100.000.000
 
   const actualizarMeta = (valor) => {
-    const v = Math.max(0, Math.round(valor));
+    const v = Math.min(metaMax, Math.max(0, Math.round(valor)));
     setMeta(v);
     setMetaTexto(v.toLocaleString("es-AR"));
   };
@@ -3342,7 +3342,7 @@ function ProyeccionPage({ ctx }) {
               setMetaTexto(raw);
             }}
             onBlur={() => {
-              const v = Math.max(0, Math.round(+metaTexto || 0));
+              const v = Math.min(metaMax, Math.max(0, Math.round(+metaTexto || 0)));
               setMeta(v);
               setMetaTexto(v.toLocaleString("es-AR"));
             }}
