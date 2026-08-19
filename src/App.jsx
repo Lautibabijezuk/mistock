@@ -6011,6 +6011,7 @@ function AdminPage({ onVolver }) {
   const [confirmCancelar, setConfirmCancelar] = useState(null); // negocio a confirmar cancelación
   const [sugerencias, setSugerencias] = useState([]);
   const [filtroSugerencias, setFiltroSugerencias] = useState("nueva");
+  const [tabAdmin, setTabAdmin] = useState("inicio");
 
   const cargar = async () => {
     try {
@@ -6138,6 +6139,25 @@ function AdminPage({ onVolver }) {
         <button onClick={onVolver} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:8, padding:"9px 18px", cursor:"pointer", fontSize:14, fontFamily:"inherit", fontWeight:500 }}>← Volver a MiLocal</button>
       </div>
 
+      {/* Pestañas */}
+      <div style={{ display:"flex", gap:6, marginBottom:24, borderBottom:"1px solid #e5e7eb" }}>
+        {[
+          { id:"inicio", label:"Inicio" },
+          { id:"sugerencias", label:"Sugerencias", badge: sugerencias.filter(s => s.estado === "nueva").length || null },
+        ].map(t => (
+          <button key={t.id} onClick={() => setTabAdmin(t.id)} style={{
+            background:"none", border:"none", borderBottom: tabAdmin===t.id ? "2px solid #9238FF" : "2px solid transparent",
+            color: tabAdmin===t.id ? "#9238FF" : "#888", fontWeight: tabAdmin===t.id ? 700 : 500,
+            fontSize:14, padding:"10px 16px", cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", gap:6, marginBottom:-1,
+          }}>
+            {t.label}
+            {t.badge && <span style={{ background:"#dc2626", color:"#fff", fontSize:10.5, fontWeight:700, padding:"1px 7px", borderRadius:20 }}>{t.badge}</span>}
+          </button>
+        ))}
+      </div>
+
+      {tabAdmin === "inicio" && (
+      <>
       {/* KPIs */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:14, marginBottom:24 }}>
         {[
@@ -6153,60 +6173,6 @@ function AdminPage({ onVolver }) {
             <div style={{ fontSize:24, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
           </div>
         ))}
-      </div>
-
-      {/* Sugerencias de mejora */}
-      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px", marginBottom:24 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:10 }}>
-          <h3 style={{ margin:0, fontSize:16, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
-            💡 Sugerencias de mejora
-            {sugerencias.filter(s => s.estado === "nueva").length > 0 && (
-              <span style={{ background:"#dc2626", color:"#fff", fontSize:11, fontWeight:700, padding:"2px 9px", borderRadius:20 }}>{sugerencias.filter(s => s.estado === "nueva").length} nuevas</span>
-            )}
-          </h3>
-          <select value={filtroSugerencias} onChange={e => setFiltroSugerencias(e.target.value)} style={{ padding:"7px 12px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:13 }}>
-            <option value="Todas">Todas</option>
-            <option value="nueva">Nuevas</option>
-            <option value="revisada">Revisadas</option>
-            <option value="implementada">Implementadas</option>
-          </select>
-        </div>
-
-        {sugerencias.filter(s => filtroSugerencias === "Todas" || s.estado === filtroSugerencias).length === 0 ? (
-          <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>No hay sugerencias {filtroSugerencias !== "Todas" ? `en estado "${filtroSugerencias}"` : "todavía"}.</div>
-        ) : (
-          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-            {sugerencias.filter(s => filtroSugerencias === "Todas" || s.estado === filtroSugerencias).map(s => {
-              const catColor = { "Mejora":"#7c3aed", "Nueva función":"#2563eb", "Bug":"#dc2626", "Otro":"#6b7280" }[s.categoria] || "#6b7280";
-              const estColor = { nueva:{bg:"#fee2e2",c:"#dc2626"}, revisada:{bg:"#fef3c7",c:"#92400e"}, implementada:{bg:"#dcfce7",c:"#15803d"} }[s.estado];
-              return (
-                <div key={s.id} style={{ border:"1px solid #f0f0f0", borderRadius:10, padding:"14px 16px" }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:6, flexWrap:"wrap" }}>
-                    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                      <span style={{ fontWeight:600, fontSize:13.5 }}>{s.negocioNombre}</span>
-                      <span style={{ fontSize:10.5, fontWeight:700, color:catColor, background:catColor+"18", padding:"2px 8px", borderRadius:20 }}>{s.categoria}</span>
-                      <span style={{ fontSize:10.5, fontWeight:700, color:estColor.c, background:estColor.bg, padding:"2px 8px", borderRadius:20 }}>{s.estado}</span>
-                    </div>
-                    <span style={{ fontSize:11, color:"#aaa", flexShrink:0 }}>{new Date(s.created_at).toLocaleDateString("es-AR")}</span>
-                  </div>
-                  <p style={{ margin:"0 0 10px", fontSize:13.5, color:"#333", lineHeight:1.5 }}>{s.texto}</p>
-                  <div style={{ display:"flex", gap:6 }}>
-                    {s.estado !== "revisada" && (
-                      <button onClick={() => marcarSugerencia(s.id, "revisada")} disabled={procesando === s.id+"revisada"} style={{ background:"#fef3c7", color:"#92400e", border:"none", borderRadius:6, padding:"5px 10px", fontSize:11.5, fontWeight:600, cursor:"pointer" }}>
-                        {procesando === s.id+"revisada" ? "..." : "Marcar revisada"}
-                      </button>
-                    )}
-                    {s.estado !== "implementada" && (
-                      <button onClick={() => marcarSugerencia(s.id, "implementada")} disabled={procesando === s.id+"implementada"} style={{ background:"#dcfce7", color:"#15803d", border:"none", borderRadius:6, padding:"5px 10px", fontSize:11.5, fontWeight:600, cursor:"pointer" }}>
-                        {procesando === s.id+"implementada" ? "..." : "✓ Implementada"}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
 
       {/* Filtros */}
@@ -6307,6 +6273,63 @@ function AdminPage({ onVolver }) {
           </table>
         </div>
       </div>
+      </>
+      )}
+
+      {tabAdmin === "sugerencias" && (
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:10 }}>
+          <h3 style={{ margin:0, fontSize:16, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
+            💡 Sugerencias de mejora
+            {sugerencias.filter(s => s.estado === "nueva").length > 0 && (
+              <span style={{ background:"#dc2626", color:"#fff", fontSize:11, fontWeight:700, padding:"2px 9px", borderRadius:20 }}>{sugerencias.filter(s => s.estado === "nueva").length} nuevas</span>
+            )}
+          </h3>
+          <select value={filtroSugerencias} onChange={e => setFiltroSugerencias(e.target.value)} style={{ padding:"7px 12px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:13 }}>
+            <option value="Todas">Todas</option>
+            <option value="nueva">Nuevas</option>
+            <option value="revisada">Revisadas</option>
+            <option value="implementada">Implementadas</option>
+          </select>
+        </div>
+
+        {sugerencias.filter(s => filtroSugerencias === "Todas" || s.estado === filtroSugerencias).length === 0 ? (
+          <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>No hay sugerencias {filtroSugerencias !== "Todas" ? `en estado "${filtroSugerencias}"` : "todavía"}.</div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {sugerencias.filter(s => filtroSugerencias === "Todas" || s.estado === filtroSugerencias).map(s => {
+              const catColor = { "Mejora":"#7c3aed", "Nueva función":"#2563eb", "Bug":"#dc2626", "Otro":"#6b7280" }[s.categoria] || "#6b7280";
+              const estColor = { nueva:{bg:"#fee2e2",c:"#dc2626"}, revisada:{bg:"#fef3c7",c:"#92400e"}, implementada:{bg:"#dcfce7",c:"#15803d"} }[s.estado];
+              return (
+                <div key={s.id} style={{ border:"1px solid #f0f0f0", borderRadius:10, padding:"14px 16px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:6, flexWrap:"wrap" }}>
+                    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                      <span style={{ fontWeight:600, fontSize:13.5 }}>{s.negocioNombre}</span>
+                      <span style={{ fontSize:10.5, fontWeight:700, color:catColor, background:catColor+"18", padding:"2px 8px", borderRadius:20 }}>{s.categoria}</span>
+                      <span style={{ fontSize:10.5, fontWeight:700, color:estColor.c, background:estColor.bg, padding:"2px 8px", borderRadius:20 }}>{s.estado}</span>
+                    </div>
+                    <span style={{ fontSize:11, color:"#aaa", flexShrink:0 }}>{new Date(s.created_at).toLocaleDateString("es-AR")}</span>
+                  </div>
+                  <p style={{ margin:"0 0 10px", fontSize:13.5, color:"#333", lineHeight:1.5 }}>{s.texto}</p>
+                  <div style={{ display:"flex", gap:6 }}>
+                    {s.estado !== "revisada" && (
+                      <button onClick={() => marcarSugerencia(s.id, "revisada")} disabled={procesando === s.id+"revisada"} style={{ background:"#fef3c7", color:"#92400e", border:"none", borderRadius:6, padding:"5px 10px", fontSize:11.5, fontWeight:600, cursor:"pointer" }}>
+                        {procesando === s.id+"revisada" ? "..." : "Marcar revisada"}
+                      </button>
+                    )}
+                    {s.estado !== "implementada" && (
+                      <button onClick={() => marcarSugerencia(s.id, "implementada")} disabled={procesando === s.id+"implementada"} style={{ background:"#dcfce7", color:"#15803d", border:"none", borderRadius:6, padding:"5px 10px", fontSize:11.5, fontWeight:600, cursor:"pointer" }}>
+                        {procesando === s.id+"implementada" ? "..." : "✓ Implementada"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      )}
 
       {/* Modal de confirmación para quitar el mes regalado */}
       {confirmCancelar && (
@@ -6893,8 +6916,9 @@ export default function App() {
   const deleteGasto = async (id) => { if (sb._negocioId) await sb.del("gastos", id); };
 
   const saveSugerencia = async (texto, categoria) => {
-    if (!sb._negocioId) return;
-    await sb.insert("sugerencias", { id: uid(), negocio_id: sb._negocioId, texto, categoria: categoria || "Mejora" });
+    if (!sb._negocioId) throw new Error("No hay negocio activo");
+    const row = await sb.insert("sugerencias", { id: uid(), negocio_id: sb._negocioId, texto, categoria: categoria || "Mejora" });
+    if (!row) throw new Error("No se pudo guardar la sugerencia");
   };
 
   // ── Guardar proveedor en Supabase ────────────────────────
