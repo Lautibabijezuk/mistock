@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, Component } from "react";
 import { Html5Qrcode } from "html5-qrcode";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
 import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu, MoreVertical, Calculator, Target } from "lucide-react";
 import * as XLSX from "xlsx";
 
@@ -6010,6 +6010,7 @@ function AdminPage({ onVolver }) {
   const [procesando, setProcesando] = useState(null); // id del negocio con acción en curso
   const [confirmCancelar, setConfirmCancelar] = useState(null); // negocio a confirmar cancelación
   const [sugerencias, setSugerencias] = useState([]);
+  const [ventasAdmin, setVentasAdmin] = useState([]);
   const [filtroSugerencias, setFiltroSugerencias] = useState("nueva");
   const [tabAdmin, setTabAdmin] = useState("resumen");
 
@@ -6025,6 +6026,7 @@ function AdminPage({ onVolver }) {
       setResumen(data.resumen);
       setNegocios(data.negocios || []);
       setSugerencias(data.sugerencias || []);
+      setVentasAdmin(data.ventas || []);
     } catch (e) {
       setError(e.message || "Error de conexión");
     }
@@ -6148,6 +6150,91 @@ function AdminPage({ onVolver }) {
   const cuentasAtrasadas = negocios.filter(n => n.subscription_status === "past_due");
   const cuentasSinActividad = negocios.filter(n => n.subscription_status === "trial" && (n.productos || 0) === 0);
 
+  // ── Engagement / retención (calculado con ventas reales de todos los negocios) ──
+  const toYMD = (d) => d.toISOString().split("T")[0];
+  const hoyYMD = toYMD(new Date());
+  const hace7dias = new Date(); hace7dias.setDate(hace7dias.getDate() - 7);
+  const hace14dias = new Date(); hace14dias.setDate(hace14dias.getDate() - 14);
+  const hace30dias = new Date(); hace30dias.setDate(hace30dias.getDate() - 30);
+
+  const dau = new Set(ventasAdmin.filter(v => v.fecha === hoyYMD).map(v => v.negocio_id)).size;
+  const wau = new Set(ventasAdmin.filter(v => new Date(v.fecha) >= hace7dias).map(v => v.negocio_id)).size;
+  const mau = new Set(ventasAdmin.filter(v => new Date(v.fecha) >= hace30dias).map(v => v.negocio_id)).size;
+
+  // Frecuencia de uso: promedio de días distintos con venta por negocio, últimos 7 días
+  const diasActivosPorNegocio = {};
+  ventasAdmin.filter(v => new Date(v.fecha) >= hace7dias).forEach(v => {
+    if (!diasActivosPorNegocio[v.negocio_id]) diasActivosPorNegocio[v.negocio_id] = new Set();
+    diasActivosPorNegocio[v.negocio_id].add(v.fecha);
+  });
+  const negociosConActividad7d = Object.keys(diasActivosPorNegocio);
+  const frecuenciaPromedio = negociosConActividad7d.length > 0
+    ? negociosConActividad7d.reduce((a, id) => a + diasActivosPorNegocio[id].size, 0) / negociosConActividad7d.length
+    : 0;
+
+  // Usuarios en riesgo: activos/trial/atrasados sin vender hace más de 14 días (o nunca vendieron, con +14 días de antigüedad)
+  const ultimaVentaPorNegocio = {};
+  ventasAdmin.forEach(v => {
+    if (!ultimaVentaPorNegocio[v.negocio_id] || v.fecha > ultimaVentaPorNegocio[v.negocio_id]) ultimaVentaPorNegocio[v.negocio_id] = v.fecha;
+  });
+  const negociosEnRiesgo = negocios.filter(n => {
+    if (!["active","trial","past_due"].includes(n.subscription_status)) return false;
+    const diasDesdeRegistro = (new Date() - new Date(n.created_at)) / 86400000;
+    if (diasDesdeRegistro < 14) return false;
+    const ultimaVenta = ultimaVentaPorNegocio[n.id];
+    if (!ultimaVenta) return true;
+    const diasDesdeUltimaVenta = (new Date() - new Date(ultimaVenta+"T12:00:00")) / 86400000;
+    return diasDesdeUltimaVenta > 14;
+  });
+
+  // Curva de retención: % de cuentas que siguen vendiendo a los N días de haberse registrado
+  const calcularRetencion = (dias) => {
+    const elegibles = negocios.filter(n => (new Date() - new Date(n.created_at)) / 86400000 >= dias);
+    if (elegibles.length === 0) return null;
+    const siguenActivos = elegibles.filter(n => {
+      const objetivo = new Date(n.created_at); objetivo.setDate(objetivo.getDate() + dias);
+      const desde = new Date(objetivo); desde.setDate(desde.getDate() - 3);
+      const hasta = new Date(objetivo); hasta.setDate(hasta.getDate() + 3);
+      return ventasAdmin.some(v => v.negocio_id === n.id && new Date(v.fecha) >= desde && new Date(v.fecha) <= hasta);
+    }).length;
+    return { dias, pct: (siguenActivos/elegibles.length)*100, base: elegibles.length };
+  };
+  const curvaRetencion = [1,7,14,30].map(calcularRetencion).filter(Boolean);
+
+  // Horarios pico (con created_at real de cada venta)
+  const ventasPorHora = Array(24).fill(0);
+  ventasAdmin.forEach(v => { if (v.created_at) ventasPorHora[new Date(v.created_at).getHours()]++; });
+  const horariosPicoData = ventasPorHora.map((cant, h) => ({ label: `${h}hs`, total: cant }));
+
+  // Funnel de onboarding
+  const funnel = [
+    { label: "Se registraron", value: negocios.length },
+    { label: "Cargaron productos", value: negocios.filter(n => (n.productos||0) > 0).length },
+    { label: "Hicieron una venta", value: negocios.filter(n => (n.ventas||0) > 0).length },
+    { label: "Se suscribieron", value: negocios.filter(n => n.subscription_status === "active" || n.subscription_started_at).length },
+  ];
+
+  // Nuevos vs. recurrentes por día (últimos 14 días) — "nuevo" = negocio que vendió por primera vez ese día
+  const primeraVentaPorNegocio = {};
+  [...ventasAdmin].sort((a,b) => a.fecha.localeCompare(b.fecha)).forEach(v => { if (!primeraVentaPorNegocio[v.negocio_id]) primeraVentaPorNegocio[v.negocio_id] = v.fecha; });
+  const hace14diasYMD = toYMD(hace14dias);
+  const nuevosVsRecPorDia = {};
+  ventasAdmin.filter(v => v.fecha >= hace14diasYMD).forEach(v => {
+    if (!nuevosVsRecPorDia[v.fecha]) nuevosVsRecPorDia[v.fecha] = { nuevos:new Set(), recurrentes:new Set() };
+    if (primeraVentaPorNegocio[v.negocio_id] === v.fecha) nuevosVsRecPorDia[v.fecha].nuevos.add(v.negocio_id);
+    else nuevosVsRecPorDia[v.fecha].recurrentes.add(v.negocio_id);
+  });
+  const nuevosVsRecData = Object.entries(nuevosVsRecPorDia).sort().map(([f,d]) => ({ label:f.slice(5), nuevos:d.nuevos.size, recurrentes:d.recurrentes.size }));
+
+  // Crecimiento de cuentas por mes (para el gráfico de Resumen)
+  const crecimientoPorMes = {};
+  negocios.forEach(n => { const mes=(n.created_at||"").slice(0,7); if (mes) crecimientoPorMes[mes]=(crecimientoPorMes[mes]||0)+1; });
+  const NOMBRES_MES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+  const crecimientoData = Object.entries(crecimientoPorMes).sort().map(([mes,cant]) => ({ label: NOMBRES_MES[+mes.split("-")[1]-1], total: cant }));
+
+  // LTV estimado (ARPU / tasa de cancelación, aproximación estándar de SaaS)
+  const ltv = churnPct > 0 ? arpu / (churnPct/100) : null;
+
   return (
     <div style={{ minHeight:"100vh", background:"#f9fafb", fontFamily:"'DM Sans',system-ui,sans-serif", padding:"28px 32px" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');`}</style>
@@ -6165,6 +6252,7 @@ function AdminPage({ onVolver }) {
         {[
           { id:"resumen", label:"Resumen" },
           { id:"cuentas", label:"Cuentas" },
+          { id:"engagement", label:"Engagement" },
           { id:"finanzas", label:"Finanzas" },
           { id:"recomendaciones", label:"Recomendaciones" },
           { id:"sugerencias", label:"Sugerencias", badge: sugerencias.filter(s => s.estado === "nueva").length || null },
@@ -6209,6 +6297,30 @@ function AdminPage({ onVolver }) {
             <div style={{ fontSize:12, color:"#aaa", marginTop:4 }}>{k.sub}</div>
           </div>
         ))}
+      </div>
+
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+        <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Crecimiento de cuentas</h3>
+        <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Nuevos registros por mes</p>
+        {crecimientoData.length < 2 ? (
+          <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Necesitamos más de un mes de datos para mostrar la tendencia.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <AreaChart data={crecimientoData} margin={{ top:8, right:8, left:0, bottom:4 }}>
+              <defs>
+                <linearGradient id="gradCrecimiento" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#9238FF" stopOpacity={0.28}/>
+                  <stop offset="100%" stopColor="#9238FF" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f0f0f0"/>
+              <XAxis dataKey="label" tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false}/>
+              <YAxis tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false} allowDecimals={false}/>
+              <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [v, "cuentas nuevas"]}/>
+              <Area type="monotone" dataKey="total" stroke="#9238FF" strokeWidth={2.5} fill="url(#gradCrecimiento)"/>
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
       </div>
       </>
       )}
@@ -6316,14 +6428,15 @@ function AdminPage({ onVolver }) {
       </>
       )}
 
-      {tabAdmin === "finanzas" && (
+      {tabAdmin === "engagement" && (
       <>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:14, marginBottom:20 }}>
+      {/* DAU / WAU / MAU */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
         {[
-          { label: "MRR", value: fmtMoney(resumen.mrr, "$"), sub:"mensual recurrente", bg:"#dcfce7", color:"#15803d" },
-          { label: "ARR", value: fmtMoney(arr, "$"), sub:"anual proyectado", bg:"#ede9fe", color:"#7c3aed" },
-          { label: "ARPU", value: fmtMoney(arpu, "$"), sub:"ingreso por cuenta activa", bg:"#f4ecff", color:"#9238FF" },
-          { label: "Cuentas pagadoras", value: resumen.active, sub:"activas y pagando", bg:"#dbeafe", color:"#1e40af" },
+          { label:"DAU", sub:"cuentas activas hoy", value: dau, bg:"#dcfce7", color:"#15803d" },
+          { label:"WAU", sub:"cuentas activas esta semana", value: wau, bg:"#dbeafe", color:"#1e40af" },
+          { label:"MAU", sub:"cuentas activas este mes", value: mau, bg:"#ede9fe", color:"#7c3aed" },
+          { label:"Frecuencia de uso", sub:"días activos/semana (prom.)", value: frecuenciaPromedio.toFixed(1), bg:"#f4ecff", color:"#9238FF" },
         ].map((k,i) => (
           <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
             <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
@@ -6333,24 +6446,137 @@ function AdminPage({ onVolver }) {
         ))}
       </div>
 
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(360px,1fr))", gap:16, marginBottom:20 }}>
+        {/* Curva de retención */}
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Curva de retención</h3>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>% de cuentas que siguen vendiendo X días después de registrarse</p>
+          {curvaRetencion.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Todavía no hay cuentas con suficiente antigüedad para calcular esto.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={curvaRetencion.map(r => ({ label:`Día ${r.dias}`, total:+r.pct.toFixed(0) }))} margin={{ top:8, right:8, left:0, bottom:4 }}>
+                <XAxis dataKey="label" tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false}/>
+                <YAxis tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false} tickFormatter={v=>`${v}%`}/>
+                <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [`${v}%`, "retención"]}/>
+                <Bar dataKey="total" fill="#9238FF" radius={[8,8,0,0]} maxBarSize={56}/>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Horarios pico */}
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Horarios pico de actividad</h3>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Ventas registradas por hora del día, en toda la plataforma</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={horariosPicoData} margin={{ top:8, right:8, left:0, bottom:4 }}>
+              <XAxis dataKey="label" tick={{ fontSize:10.5, fill:"#999" }} axisLine={false} tickLine={false} interval={2}/>
+              <YAxis tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false} allowDecimals={false}/>
+              <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [v, "ventas"]}/>
+              <Bar dataKey="total" fill="#111" radius={[6,6,0,0]} maxBarSize={18}/>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(360px,1fr))", gap:16, marginBottom:20 }}>
+        {/* Funnel de onboarding */}
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Funnel de onboarding</h3>
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {funnel.map((f,i) => {
+              const pctDelTotal = funnel[0].value > 0 ? (f.value/funnel[0].value)*100 : 0;
+              return (
+                <div key={i}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
+                    <span style={{ color:"#333" }}>{f.label}</span>
+                    <span style={{ fontWeight:700 }}>{f.value} <span style={{ color:"#aaa", fontWeight:500 }}>({pctDelTotal.toFixed(0)}%)</span></span>
+                  </div>
+                  <div style={{ background:"#f3f4f6", borderRadius:20, height:10, overflow:"hidden" }}>
+                    <div style={{ background:`linear-gradient(90deg, #9238FF, #7c3aed)`, height:"100%", width:`${pctDelTotal}%`, borderRadius:20 }}/>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Nuevos vs recurrentes */}
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Cuentas nuevas vs. recurrentes</h3>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Que vendieron cada día, últimos 14 días</p>
+          {nuevosVsRecData.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>No hay ventas en los últimos 14 días.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={nuevosVsRecData} margin={{ top:8, right:8, left:0, bottom:4 }}>
+                <XAxis dataKey="label" tick={{ fontSize:10.5, fill:"#999" }} axisLine={false} tickLine={false}/>
+                <YAxis tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false} allowDecimals={false}/>
+                <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }}/>
+                <Bar dataKey="recurrentes" stackId="a" fill="#c4b5fd" name="Recurrentes" radius={[0,0,0,0]}/>
+                <Bar dataKey="nuevos" stackId="a" fill="#9238FF" name="Nuevas" radius={[6,6,0,0]}/>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      {/* Usuarios en riesgo */}
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+        <h3 style={{ margin:"0 0 4px", fontSize:15, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
+          ⚠️ Cuentas en riesgo
+          {negociosEnRiesgo.length > 0 && <span style={{ background:"#dc2626", color:"#fff", fontSize:11, fontWeight:700, padding:"2px 9px", borderRadius:20 }}>{negociosEnRiesgo.length}</span>}
+        </h3>
+        <p style={{ margin:"0 0 14px", fontSize:12.5, color:"#999" }}>Sin ninguna venta en los últimos 14 días</p>
+        {negociosEnRiesgo.length === 0 ? (
+          <div style={{ textAlign:"center", padding:"20px 0", color:"#aaa", fontSize:13 }}>Ninguna cuenta está en riesgo ahora mismo. 🎉</div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {negociosEnRiesgo.map(n => (
+              <div key={n.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 14px", background:"#fef2f2", borderRadius:8, fontSize:13 }}>
+                <span style={{ fontWeight:600 }}>{n.nombre}</span>
+                <span style={{ color:"#999" }}>{ultimaVentaPorNegocio[n.id] ? `Última venta: ${fmtFecha(ultimaVentaPorNegocio[n.id])}` : "Nunca vendió"}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      </>
+      )}
+
+      {tabAdmin === "finanzas" && (
+      <>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:14, marginBottom:20 }}>
+        {[
+          { label: "MRR", value: fmtMoney(resumen.mrr, "$"), sub:"mensual recurrente", bg:"#dcfce7", color:"#15803d" },
+          { label: "ARR", value: fmtMoney(arr, "$"), sub:"anual proyectado", bg:"#ede9fe", color:"#7c3aed" },
+          { label: "ARPU", value: fmtMoney(arpu, "$"), sub:"ingreso por cuenta activa", bg:"#f4ecff", color:"#9238FF" },
+          { label: "LTV estimado", value: ltv ? fmtMoney(ltv, "$") : "—", sub:"ARPU ÷ tasa de cancelación", bg:"#fef3c7", color:"#92400e" },
+          { label: "Cuentas pagadoras", value: resumen.active, sub:"activas y pagando", bg:"#dbeafe", color:"#1e40af" },
+        ].map((k,i) => (
+          <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+            <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
+            <div style={{ fontSize:26, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:12, color:"#aaa", marginTop:4 }}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+      {!ltv && <p style={{ margin:"-12px 0 20px", fontSize:12, color:"#aaa" }}>El LTV se calcula cuando haya al menos una cuenta cancelada — todavía no hay suficientes datos para estimarlo.</p>}
+
       <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px", marginBottom:20 }}>
         <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Ingreso mensual por rubro</h3>
         {ingresoPorRubroArr.length === 0 ? (
           <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Todavía no hay cuentas activas pagando.</div>
         ) : (
-          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-            {ingresoPorRubroArr.map(([rubro, monto]) => (
-              <div key={rubro}>
-                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
-                  <span style={{ color:"#333" }}>{rubro}</span>
-                  <span style={{ fontWeight:700 }}>{fmtMoney(monto, "$")}</span>
-                </div>
-                <div style={{ background:"#f3f4f6", borderRadius:20, height:8, overflow:"hidden" }}>
-                  <div style={{ background:"#9238FF", height:"100%", width:`${(monto/resumen.mrr)*100}%`, borderRadius:20 }}/>
-                </div>
-              </div>
-            ))}
-          </div>
+          <ResponsiveContainer width="100%" height={Math.max(180, ingresoPorRubroArr.length * 42)}>
+            <BarChart data={ingresoPorRubroArr.map(([rubro,monto]) => ({ label:rubro, total:monto }))} layout="vertical" margin={{ top:4, right:24, left:4, bottom:4 }}>
+              <XAxis type="number" tick={{ fontSize:11, fill:"#999" }} axisLine={false} tickLine={false} tickFormatter={v => `$${v>=1000?(v/1000).toFixed(0)+"k":v}`}/>
+              <YAxis type="category" dataKey="label" tick={{ fontSize:12.5, fill:"#333" }} axisLine={false} tickLine={false} width={150}/>
+              <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [fmtMoney(v,"$"), "ingreso"]}/>
+              <Bar dataKey="total" fill="#9238FF" radius={[0,8,8,0]} maxBarSize={26}/>
+            </BarChart>
+          </ResponsiveContainer>
         )}
       </div>
 
