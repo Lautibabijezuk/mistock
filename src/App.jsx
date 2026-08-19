@@ -504,6 +504,67 @@ function StatCard({ icon, bg, label, value, badge, textColor, badgeBg, badgeColo
 // MODALS
 // ═══════════════════════════════════════════════════════════
 
+function SugerenciaModal({ onSave, onClose }) {
+  const [texto, setTexto] = useState("");
+  const [categoria, setCategoria] = useState("Mejora");
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+
+  const handleEnviar = async () => {
+    if (!texto.trim() || enviando) return;
+    setEnviando(true);
+    try {
+      await onSave(texto.trim(), categoria);
+      setEnviado(true);
+      setTimeout(onClose, 1500);
+    } catch (e) {
+      alert("No se pudo enviar, intentá de nuevo.");
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <Modal title="💡 Sugerir una mejora" subtitle="Contanos qué te gustaría que agreguemos o mejoremos en MiLocal" onClose={onClose} width={420}>
+      {enviado ? (
+        <div style={{ textAlign:"center", padding:"20px 0" }}>
+          <div style={{ fontSize:36, marginBottom:10 }}>🙌</div>
+          <div style={{ fontWeight:700, fontSize:15 }}>¡Gracias por tu idea!</div>
+          <div style={{ fontSize:13, color:"#888", marginTop:4 }}>La vamos a tener en cuenta.</div>
+        </div>
+      ) : (
+        <>
+          <div style={{ marginBottom:14 }}>
+            <label style={G.label}>Tipo</label>
+            <select style={G.inp()} value={categoria} onChange={e => setCategoria(e.target.value)}>
+              <option value="Mejora">Mejora a algo existente</option>
+              <option value="Nueva función">Idea de función nueva</option>
+              <option value="Bug">Encontré un error</option>
+              <option value="Otro">Otro</option>
+            </select>
+          </div>
+          <div style={{ marginBottom:18 }}>
+            <label style={G.label}>Tu sugerencia</label>
+            <textarea
+              style={{ ...G.inp(), minHeight:110, resize:"vertical", fontFamily:"inherit" }}
+              placeholder="Ej: Me gustaría poder..."
+              value={texto}
+              onChange={e => setTexto(e.target.value)}
+              autoFocus
+            />
+          </div>
+          <button
+            onClick={handleEnviar}
+            disabled={!texto.trim() || enviando}
+            style={{ ...G.btn(texto.trim() && !enviando ? "dark" : "light"), width:"100%", justifyContent:"center", padding:"12px" }}
+          >
+            {enviando ? "Enviando..." : "Enviar sugerencia"}
+          </button>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function AbrirCajaModal({ setCaja, saveCaja, onClose }) {
   const [monto, setMonto] = useState("");
   const [loading, setLoading] = useState(false);
@@ -5948,6 +6009,8 @@ function AdminPage({ onVolver }) {
   const [filtroRubro, setFiltroRubro] = useState("Todos");
   const [procesando, setProcesando] = useState(null); // id del negocio con acción en curso
   const [confirmCancelar, setConfirmCancelar] = useState(null); // negocio a confirmar cancelación
+  const [sugerencias, setSugerencias] = useState([]);
+  const [filtroSugerencias, setFiltroSugerencias] = useState("nueva");
 
   const cargar = async () => {
     try {
@@ -5960,6 +6023,7 @@ function AdminPage({ onVolver }) {
       if (!resp.ok) { setError(data.error || "No autorizado"); setLoading(false); return; }
       setResumen(data.resumen);
       setNegocios(data.negocios || []);
+      setSugerencias(data.sugerencias || []);
     } catch (e) {
       setError(e.message || "Error de conexión");
     }
@@ -5967,6 +6031,24 @@ function AdminPage({ onVolver }) {
   };
 
   useEffect(() => { cargar(); }, []);
+
+  const marcarSugerencia = async (sugerenciaId, nuevoEstado) => {
+    setProcesando(sugerenciaId + nuevoEstado);
+    try {
+      const session = await sb.getSession();
+      const resp = await fetch(`${SUPABASE_FUNC_URL}/admin-actions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "marcar_sugerencia", sugerencia_id: sugerenciaId, nuevo_estado: nuevoEstado }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { alert("Error: " + (data.error || "algo salió mal")); setProcesando(null); return; }
+      setSugerencias(prev => prev.map(s => s.id === sugerenciaId ? { ...s, estado: nuevoEstado } : s));
+    } catch (e) {
+      alert("Error de conexión: " + e.message);
+    }
+    setProcesando(null);
+  };
 
   const ejecutarAccion = async (negocioId, action) => {
     setProcesando(negocioId + action);
@@ -6071,6 +6153,60 @@ function AdminPage({ onVolver }) {
             <div style={{ fontSize:24, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
           </div>
         ))}
+      </div>
+
+      {/* Sugerencias de mejora */}
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px", marginBottom:24 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:10 }}>
+          <h3 style={{ margin:0, fontSize:16, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
+            💡 Sugerencias de mejora
+            {sugerencias.filter(s => s.estado === "nueva").length > 0 && (
+              <span style={{ background:"#dc2626", color:"#fff", fontSize:11, fontWeight:700, padding:"2px 9px", borderRadius:20 }}>{sugerencias.filter(s => s.estado === "nueva").length} nuevas</span>
+            )}
+          </h3>
+          <select value={filtroSugerencias} onChange={e => setFiltroSugerencias(e.target.value)} style={{ padding:"7px 12px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:13 }}>
+            <option value="Todas">Todas</option>
+            <option value="nueva">Nuevas</option>
+            <option value="revisada">Revisadas</option>
+            <option value="implementada">Implementadas</option>
+          </select>
+        </div>
+
+        {sugerencias.filter(s => filtroSugerencias === "Todas" || s.estado === filtroSugerencias).length === 0 ? (
+          <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>No hay sugerencias {filtroSugerencias !== "Todas" ? `en estado "${filtroSugerencias}"` : "todavía"}.</div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {sugerencias.filter(s => filtroSugerencias === "Todas" || s.estado === filtroSugerencias).map(s => {
+              const catColor = { "Mejora":"#7c3aed", "Nueva función":"#2563eb", "Bug":"#dc2626", "Otro":"#6b7280" }[s.categoria] || "#6b7280";
+              const estColor = { nueva:{bg:"#fee2e2",c:"#dc2626"}, revisada:{bg:"#fef3c7",c:"#92400e"}, implementada:{bg:"#dcfce7",c:"#15803d"} }[s.estado];
+              return (
+                <div key={s.id} style={{ border:"1px solid #f0f0f0", borderRadius:10, padding:"14px 16px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:6, flexWrap:"wrap" }}>
+                    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                      <span style={{ fontWeight:600, fontSize:13.5 }}>{s.negocioNombre}</span>
+                      <span style={{ fontSize:10.5, fontWeight:700, color:catColor, background:catColor+"18", padding:"2px 8px", borderRadius:20 }}>{s.categoria}</span>
+                      <span style={{ fontSize:10.5, fontWeight:700, color:estColor.c, background:estColor.bg, padding:"2px 8px", borderRadius:20 }}>{s.estado}</span>
+                    </div>
+                    <span style={{ fontSize:11, color:"#aaa", flexShrink:0 }}>{new Date(s.created_at).toLocaleDateString("es-AR")}</span>
+                  </div>
+                  <p style={{ margin:"0 0 10px", fontSize:13.5, color:"#333", lineHeight:1.5 }}>{s.texto}</p>
+                  <div style={{ display:"flex", gap:6 }}>
+                    {s.estado !== "revisada" && (
+                      <button onClick={() => marcarSugerencia(s.id, "revisada")} disabled={procesando === s.id+"revisada"} style={{ background:"#fef3c7", color:"#92400e", border:"none", borderRadius:6, padding:"5px 10px", fontSize:11.5, fontWeight:600, cursor:"pointer" }}>
+                        {procesando === s.id+"revisada" ? "..." : "Marcar revisada"}
+                      </button>
+                    )}
+                    {s.estado !== "implementada" && (
+                      <button onClick={() => marcarSugerencia(s.id, "implementada")} disabled={procesando === s.id+"implementada"} style={{ background:"#dcfce7", color:"#15803d", border:"none", borderRadius:6, padding:"5px 10px", fontSize:11.5, fontWeight:600, cursor:"pointer" }}>
+                        {procesando === s.id+"implementada" ? "..." : "✓ Implementada"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Filtros */}
@@ -6585,6 +6721,7 @@ export default function App() {
   const [remitos, setRemitos] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [showSubscriptionSuccess, setShowSubscriptionSuccess] = useState(false);
+  const [showSugerencia, setShowSugerencia] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false); // drawer del sidebar en mobile
 
   // ── Detectar retorno desde Mercado Pago (?subscription=success) ──
@@ -6755,6 +6892,11 @@ export default function App() {
   };
   const deleteGasto = async (id) => { if (sb._negocioId) await sb.del("gastos", id); };
 
+  const saveSugerencia = async (texto, categoria) => {
+    if (!sb._negocioId) return;
+    await sb.insert("sugerencias", { id: uid(), negocio_id: sb._negocioId, texto, categoria: categoria || "Mejora" });
+  };
+
   // ── Guardar proveedor en Supabase ────────────────────────
   const saveProveedor = async (p) => {
     if (!sb._negocioId) return;
@@ -6828,7 +6970,7 @@ export default function App() {
 
   const ctx = { config, setConfig: saveConfig, products, setProducts, sales, setSales, caja, setCaja, gastos, setGastos, remitos, setRemitos, proveedores, setProveedores, setPage,
     // Supabase DB operations
-    saveProduct, saveProducts, deleteProduct, saveVenta, saveCaja, saveGasto, deleteGasto, saveProveedor, deleteProveedor, saveRemito,
+    saveProduct, saveProducts, deleteProduct, saveVenta, saveCaja, saveGasto, deleteGasto, saveProveedor, deleteProveedor, saveRemito, saveSugerencia,
     handleLogout,
   };
 
@@ -6986,6 +7128,10 @@ export default function App() {
           </nav>
           <div style={{ padding:"16px 20px", borderTop:"1px solid var(--border)" }}>
             {caja.abierta && <div style={{ background:"#f0fdf4", borderRadius:7, padding:"6px 12px", marginBottom:10, fontSize:13, color:"#16a34a", fontWeight:600, display:"flex", alignItems:"center", gap:6 }}><Unlock size={13}/>Caja abierta</div>}
+            <button onClick={() => setShowSugerencia(true)} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", background:"none", border:"1px solid var(--border-mid)", borderRadius:7, padding:"9px 12px", cursor:"pointer", fontSize:13.5, color:"var(--text-muted)", marginBottom:8, fontFamily:"inherit" }}>
+              💡 Sugerir mejora
+            </button>
+            {showSugerencia && <SugerenciaModal onSave={saveSugerencia} onClose={() => setShowSugerencia(false)} />}
             <button onClick={handleLogout} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", background:"none", border:"1px solid var(--border-mid)", borderRadius:7, padding:"9px 12px", cursor:"pointer", fontSize:13.5, color:"var(--text-muted)", marginBottom:10, fontFamily:"inherit" }}>
               <LogOut size={13}/> Cerrar sesión
             </button>
