@@ -6011,7 +6011,7 @@ function AdminPage({ onVolver }) {
   const [confirmCancelar, setConfirmCancelar] = useState(null); // negocio a confirmar cancelación
   const [sugerencias, setSugerencias] = useState([]);
   const [filtroSugerencias, setFiltroSugerencias] = useState("nueva");
-  const [tabAdmin, setTabAdmin] = useState("inicio");
+  const [tabAdmin, setTabAdmin] = useState("resumen");
 
   const cargar = async () => {
     try {
@@ -6089,6 +6089,26 @@ function AdminPage({ onVolver }) {
     return matchBusqueda && matchEstado && matchRubro;
   });
 
+  // ── Métricas derivadas para Resumen / Finanzas / Recomendaciones ──
+  const churnPct = resumen.total > 0 ? (resumen.cancelled / resumen.total) * 100 : 0;
+  const arr = resumen.mrr * 12;
+  const arpu = resumen.active > 0 ? resumen.mrr / resumen.active : 0;
+  const pendientesActivacion = negocios.filter(n => n.subscription_status === "trial" && (n.productos || 0) === 0).length;
+
+  // Ingreso mensual por rubro (solo cuentas activas, todas pagan lo mismo: $30.000)
+  const ingresoPorRubro = {};
+  negocios.filter(n => n.subscription_status === "active").forEach(n => {
+    const r = n.rubro || "Sin rubro";
+    ingresoPorRubro[r] = (ingresoPorRubro[r] || 0) + 30000;
+  });
+  const ingresoPorRubroArr = Object.entries(ingresoPorRubro).sort((a,b) => b[1]-a[1]);
+
+  // Trials por vencer en los próximos 3 días (riesgo de churn si no convierten)
+  const en3Dias = new Date(); en3Dias.setDate(en3Dias.getDate() + 3);
+  const trialsPorVencer = negocios.filter(n => n.subscription_status === "trial" && n.trial_ends_at && new Date(n.trial_ends_at) <= en3Dias && new Date(n.trial_ends_at) >= new Date());
+  const cuentasAtrasadas = negocios.filter(n => n.subscription_status === "past_due");
+  const cuentasSinActividad = negocios.filter(n => n.subscription_status === "trial" && (n.productos || 0) === 0);
+
   const fmtFecha = (iso) => {
     if (!iso) return "—";
     const d = new Date(iso);
@@ -6142,7 +6162,10 @@ function AdminPage({ onVolver }) {
       {/* Pestañas */}
       <div style={{ display:"flex", gap:6, marginBottom:24, borderBottom:"1px solid #e5e7eb" }}>
         {[
-          { id:"inicio", label:"Inicio" },
+          { id:"resumen", label:"Resumen" },
+          { id:"cuentas", label:"Cuentas" },
+          { id:"finanzas", label:"Finanzas" },
+          { id:"recomendaciones", label:"Recomendaciones" },
           { id:"sugerencias", label:"Sugerencias", badge: sugerencias.filter(s => s.estado === "nueva").length || null },
         ].map(t => (
           <button key={t.id} onClick={() => setTabAdmin(t.id)} style={{
@@ -6156,25 +6179,41 @@ function AdminPage({ onVolver }) {
         ))}
       </div>
 
-      {tabAdmin === "inicio" && (
+      {tabAdmin === "resumen" && (
       <>
-      {/* KPIs */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:14, marginBottom:24 }}>
+      {/* KPIs principales */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:14, marginBottom:14 }}>
         {[
-          { label: "Total negocios", value: resumen.total, bg: "#ede9fe", color: "#7c3aed" },
-          { label: "En prueba", value: resumen.trial, bg: "#fef3c7", color: "#92400e" },
-          { label: "Activos", value: resumen.active, bg: "#dcfce7", color: "#15803d" },
-          { label: "Atrasados", value: resumen.past_due, bg: "#fee2e2", color: "#dc2626" },
-          { label: "Cancelados", value: resumen.cancelled, bg: "#f3f4f6", color: "#6b7280" },
-          { label: "MRR", value: fmtMoney(resumen.mrr, "$"), bg: "#dbeafe", color: "#1e40af" },
+          { label: "Cuentas creadas", value: resumen.total, sub:"total", bg: "#ede9fe", color: "#7c3aed" },
+          { label: "Cuentas activas", value: resumen.active, sub:`${resumen.trial} en prueba`, bg: "#dcfce7", color: "#15803d" },
+          { label: "Cuentas que pagaron", value: resumen.active, sub:`de ${resumen.total} totales`, bg: "#dbeafe", color: "#1e40af" },
+          { label: "Cuentas canceladas", value: resumen.cancelled, sub:`churn ${churnPct.toFixed(1)}%`, bg: "#fee2e2", color: "#dc2626" },
         ].map((k, i) => (
           <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
-            <div style={{ display:"inline-block", background:k.bg, color:k.color, fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:20, marginBottom:10 }}>{k.label}</div>
-            <div style={{ fontSize:24, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
+            <div style={{ fontSize:26, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:12, color:"#aaa", marginTop:4 }}>{k.sub}</div>
           </div>
         ))}
       </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:14, marginBottom:24 }}>
+        {[
+          { label: "MRR (ingreso mensual recurrente)", value: fmtMoney(resumen.mrr, "$"), sub:"recurrente", bg: "#dcfce7", color: "#15803d" },
+          { label: "ARR (anual proyectado)", value: fmtMoney(arr, "$"), sub:"MRR × 12", bg: "#ede9fe", color: "#7c3aed" },
+          { label: "Pendientes de activación", value: pendientesActivacion, sub:"en prueba, sin cargar productos", bg: "#fef3c7", color: "#92400e" },
+        ].map((k, i) => (
+          <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+            <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
+            <div style={{ fontSize:26, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:12, color:"#aaa", marginTop:4 }}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+      </>
+      )}
 
+      {tabAdmin === "cuentas" && (
+      <>
       {/* Filtros */}
       <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
         <input
@@ -6272,6 +6311,121 @@ function AdminPage({ onVolver }) {
             </tbody>
           </table>
         </div>
+      </div>
+      </>
+      )}
+
+      {tabAdmin === "finanzas" && (
+      <>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:14, marginBottom:20 }}>
+        {[
+          { label: "MRR", value: fmtMoney(resumen.mrr, "$"), sub:"mensual recurrente", bg:"#dcfce7", color:"#15803d" },
+          { label: "ARR", value: fmtMoney(arr, "$"), sub:"anual proyectado", bg:"#ede9fe", color:"#7c3aed" },
+          { label: "ARPU", value: fmtMoney(arpu, "$"), sub:"ingreso por cuenta activa", bg:"#f4ecff", color:"#9238FF" },
+          { label: "Cuentas pagadoras", value: resumen.active, sub:"activas y pagando", bg:"#dbeafe", color:"#1e40af" },
+        ].map((k,i) => (
+          <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+            <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
+            <div style={{ fontSize:26, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:12, color:"#aaa", marginTop:4 }}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px", marginBottom:20 }}>
+        <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Ingreso mensual por rubro</h3>
+        {ingresoPorRubroArr.length === 0 ? (
+          <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Todavía no hay cuentas activas pagando.</div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {ingresoPorRubroArr.map(([rubro, monto]) => (
+              <div key={rubro}>
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
+                  <span style={{ color:"#333" }}>{rubro}</span>
+                  <span style={{ fontWeight:700 }}>{fmtMoney(monto, "$")}</span>
+                </div>
+                <div style={{ background:"#f3f4f6", borderRadius:20, height:8, overflow:"hidden" }}>
+                  <div style={{ background:"#9238FF", height:"100%", width:`${(monto/resumen.mrr)*100}%`, borderRadius:20 }}/>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:14 }}>
+        {[
+          { label:"Ingreso mensual", value: fmtMoney(resumen.mrr, "$") },
+          { label:"Proyección trimestral", value: fmtMoney(resumen.mrr*3, "$") },
+          { label:"Proyección anual", value: fmtMoney(arr, "$") },
+        ].map((k,i) => (
+          <div key={i} style={{ background:"#f9fafb", border:"1px solid #f0f0f0", borderRadius:10, padding:"14px 16px" }}>
+            <div style={{ fontSize:12, color:"#999", marginBottom:4 }}>{k.label}</div>
+            <div style={{ fontSize:18, fontWeight:800 }}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+      </>
+      )}
+
+      {tabAdmin === "recomendaciones" && (
+      <>
+      <p style={{ margin:"0 0 18px", fontSize:13, color:"#999" }}>Alertas calculadas automáticamente a partir de tus datos reales.</p>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))", gap:14 }}>
+        {pendientesActivacion > 0 && (
+          <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:12, padding:"18px 20px", display:"flex", gap:14 }}>
+            <AlertTriangle size={20} color="#dc2626" style={{ flexShrink:0 }}/>
+            <div>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:5 }}>{pendientesActivacion} cuenta{pendientesActivacion!==1?"s":""} pendiente{pendientesActivacion!==1?"s":""} de activación</div>
+              <div style={{ fontSize:13, color:"#666", lineHeight:1.5 }}>
+                {cuentasSinActividad.slice(0,3).map(n=>n.nombre).join(", ")}{cuentasSinActividad.length>3?` y ${cuentasSinActividad.length-3} más`:""} se registraron pero no cargaron productos todavía. Contactalas para ayudarlas a arrancar antes de que venza la prueba.
+              </div>
+            </div>
+          </div>
+        )}
+        {churnPct > 10 && (
+          <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:12, padding:"18px 20px", display:"flex", gap:14 }}>
+            <AlertTriangle size={20} color="#dc2626" style={{ flexShrink:0 }}/>
+            <div>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:5 }}>Tasa de cancelación alta ({churnPct.toFixed(1)}%)</div>
+              <div style={{ fontSize:13, color:"#666", lineHeight:1.5 }}>El churn supera el 10%. Vale la pena revisar por qué cancelaron y si hay un patrón en común (rubro, tiempo de uso, etc.).</div>
+            </div>
+          </div>
+        )}
+        {trialsPorVencer.length > 0 && (
+          <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:12, padding:"18px 20px", display:"flex", gap:14 }}>
+            <TrendingUp size={20} color="#d97706" style={{ flexShrink:0 }}/>
+            <div>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:5 }}>{trialsPorVencer.length} prueba{trialsPorVencer.length!==1?"s":""} vencen en los próximos 3 días</div>
+              <div style={{ fontSize:13, color:"#666", lineHeight:1.5 }}>{trialsPorVencer.map(n=>n.nombre).join(", ")}. Es el mejor momento para contactarlas y ayudarlas a convertir antes de perder el acceso.</div>
+            </div>
+          </div>
+        )}
+        {cuentasAtrasadas.length > 0 && (
+          <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:12, padding:"18px 20px", display:"flex", gap:14 }}>
+            <AlertTriangle size={20} color="#dc2626" style={{ flexShrink:0 }}/>
+            <div>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:5 }}>{cuentasAtrasadas.length} cuenta{cuentasAtrasadas.length!==1?"s":""} atrasada{cuentasAtrasadas.length!==1?"s":""} en el pago</div>
+              <div style={{ fontSize:13, color:"#666", lineHeight:1.5 }}>{cuentasAtrasadas.map(n=>n.nombre).join(", ")}. Revisá si conviene contactarlas antes de que se bloqueen del todo.</div>
+            </div>
+          </div>
+        )}
+        {sugerencias.filter(s=>s.estado==="nueva").length > 0 && (
+          <div style={{ background:"#f4ecff", border:"1px solid #ddd0fb", borderRadius:12, padding:"18px 20px", display:"flex", gap:14 }}>
+            <TrendingUp size={20} color="#9238FF" style={{ flexShrink:0 }}/>
+            <div>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:5 }}>{sugerencias.filter(s=>s.estado==="nueva").length} sugerencia{sugerencias.filter(s=>s.estado==="nueva").length!==1?"s":""} sin revisar</div>
+              <div style={{ fontSize:13, color:"#666", lineHeight:1.5 }}>Tus clientes te dejaron ideas de mejora — revisalas en la pestaña "Sugerencias".</div>
+            </div>
+          </div>
+        )}
+        {pendientesActivacion===0 && churnPct<=10 && trialsPorVencer.length===0 && cuentasAtrasadas.length===0 && sugerencias.filter(s=>s.estado==="nueva").length===0 && (
+          <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:12, padding:"24px", textAlign:"center", gridColumn:"1/-1" }}>
+            <div style={{ fontSize:28, marginBottom:8 }}>✅</div>
+            <div style={{ fontWeight:700, fontSize:14 }}>Todo tranquilo por ahora</div>
+            <div style={{ fontSize:13, color:"#666", marginTop:4 }}>No hay alertas activas en este momento.</div>
+          </div>
+        )}
       </div>
       </>
       )}
