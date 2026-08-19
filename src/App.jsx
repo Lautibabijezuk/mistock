@@ -6089,26 +6089,6 @@ function AdminPage({ onVolver }) {
     return matchBusqueda && matchEstado && matchRubro;
   });
 
-  // ── Métricas derivadas para Resumen / Finanzas / Recomendaciones ──
-  const churnPct = resumen.total > 0 ? (resumen.cancelled / resumen.total) * 100 : 0;
-  const arr = resumen.mrr * 12;
-  const arpu = resumen.active > 0 ? resumen.mrr / resumen.active : 0;
-  const pendientesActivacion = negocios.filter(n => n.subscription_status === "trial" && (n.productos || 0) === 0).length;
-
-  // Ingreso mensual por rubro (solo cuentas activas, todas pagan lo mismo: $30.000)
-  const ingresoPorRubro = {};
-  negocios.filter(n => n.subscription_status === "active").forEach(n => {
-    const r = n.rubro || "Sin rubro";
-    ingresoPorRubro[r] = (ingresoPorRubro[r] || 0) + 30000;
-  });
-  const ingresoPorRubroArr = Object.entries(ingresoPorRubro).sort((a,b) => b[1]-a[1]);
-
-  // Trials por vencer en los próximos 3 días (riesgo de churn si no convierten)
-  const en3Dias = new Date(); en3Dias.setDate(en3Dias.getDate() + 3);
-  const trialsPorVencer = negocios.filter(n => n.subscription_status === "trial" && n.trial_ends_at && new Date(n.trial_ends_at) <= en3Dias && new Date(n.trial_ends_at) >= new Date());
-  const cuentasAtrasadas = negocios.filter(n => n.subscription_status === "past_due");
-  const cuentasSinActividad = negocios.filter(n => n.subscription_status === "trial" && (n.productos || 0) === 0);
-
   const fmtFecha = (iso) => {
     if (!iso) return "—";
     const d = new Date(iso);
@@ -6146,6 +6126,27 @@ function AdminPage({ onVolver }) {
       </div>
     );
   }
+
+  // ── Métricas derivadas para Resumen / Finanzas / Recomendaciones ──
+  // (acá abajo "resumen" ya está garantizado no-nulo, porque loading/error ya se manejaron arriba)
+  const churnPct = resumen.total > 0 ? (resumen.cancelled / resumen.total) * 100 : 0;
+  const arr = resumen.mrr * 12;
+  const arpu = resumen.active > 0 ? resumen.mrr / resumen.active : 0;
+  const pendientesActivacion = negocios.filter(n => n.subscription_status === "trial" && (n.productos || 0) === 0).length;
+
+  // Ingreso mensual por rubro (solo cuentas activas, todas pagan lo mismo: $30.000)
+  const ingresoPorRubro = {};
+  negocios.filter(n => n.subscription_status === "active").forEach(n => {
+    const r = n.rubro || "Sin rubro";
+    ingresoPorRubro[r] = (ingresoPorRubro[r] || 0) + 30000;
+  });
+  const ingresoPorRubroArr = Object.entries(ingresoPorRubro).sort((a,b) => b[1]-a[1]);
+
+  // Trials por vencer en los próximos 3 días (riesgo de churn si no convierten)
+  const en3Dias = new Date(); en3Dias.setDate(en3Dias.getDate() + 3);
+  const trialsPorVencer = negocios.filter(n => n.subscription_status === "trial" && n.trial_ends_at && new Date(n.trial_ends_at) <= en3Dias && new Date(n.trial_ends_at) >= new Date());
+  const cuentasAtrasadas = negocios.filter(n => n.subscription_status === "past_due");
+  const cuentasSinActividad = negocios.filter(n => n.subscription_status === "trial" && (n.productos || 0) === 0);
 
   return (
     <div style={{ minHeight:"100vh", background:"#f9fafb", fontFamily:"'DM Sans',system-ui,sans-serif", padding:"28px 32px" }}>
