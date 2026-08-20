@@ -6330,28 +6330,56 @@ function AdminPage({ onVolver }) {
         ))}
       </div>
 
-      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
-        <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Crecimiento de cuentas</h3>
-        <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Nuevos registros por mes</p>
-        {crecimientoData.length < 2 ? (
-          <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Necesitamos más de un mes de datos para mostrar la tendencia.</div>
-        ) : (
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:16 }}>
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Crecimiento de cuentas</h3>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Nuevos registros por mes</p>
+          {crecimientoData.length < 2 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Necesitamos más de un mes de datos para mostrar la tendencia.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <AreaChart data={crecimientoData} margin={{ top:8, right:8, left:0, bottom:4 }}>
+                <defs>
+                  <linearGradient id="gradCrecimiento" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#9238FF" stopOpacity={0.28}/>
+                    <stop offset="100%" stopColor="#9238FF" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f0f0f0"/>
+                <XAxis dataKey="label" tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false}/>
+                <YAxis tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false} allowDecimals={false}/>
+                <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [v, "cuentas nuevas"]}/>
+                <Area type="monotone" dataKey="total" stroke="#9238FF" strokeWidth={2.5} fill="url(#gradCrecimiento)"/>
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Distribución de cuentas</h3>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Por estado, del total de {resumen.total}</p>
           <ResponsiveContainer width="100%" height={240}>
-            <AreaChart data={crecimientoData} margin={{ top:8, right:8, left:0, bottom:4 }}>
-              <defs>
-                <linearGradient id="gradCrecimiento" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#9238FF" stopOpacity={0.28}/>
-                  <stop offset="100%" stopColor="#9238FF" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f0f0f0"/>
-              <XAxis dataKey="label" tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false}/>
-              <YAxis tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false} allowDecimals={false}/>
-              <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [v, "cuentas nuevas"]}/>
-              <Area type="monotone" dataKey="total" stroke="#9238FF" strokeWidth={2.5} fill="url(#gradCrecimiento)"/>
-            </AreaChart>
+            <PieChart>
+              <Pie
+                data={[
+                  { name:"Activas", value: resumen.active, color:"#15803d" },
+                  { name:"En prueba", value: resumen.trial, color:"#d97706" },
+                  { name:"Atrasadas", value: resumen.past_due, color:"#dc2626" },
+                  { name:"Canceladas", value: resumen.cancelled, color:"#6b7280" },
+                ].filter(d => d.value > 0)}
+                dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={3}
+              >
+                {[
+                  { name:"Activas", value: resumen.active, color:"#15803d" },
+                  { name:"En prueba", value: resumen.trial, color:"#d97706" },
+                  { name:"Atrasadas", value: resumen.past_due, color:"#dc2626" },
+                  { name:"Canceladas", value: resumen.cancelled, color:"#6b7280" },
+                ].filter(d => d.value > 0).map((d,i) => <Cell key={i} fill={d.color}/>)}
+              </Pie>
+              <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }}/>
+            </PieChart>
           </ResponsiveContainer>
-        )}
+        </div>
       </div>
       </>
       )}
@@ -6677,17 +6705,21 @@ function AdminPage({ onVolver }) {
         )}
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:14 }}>
-        {[
-          { label:"Ingreso mensual", value: fmtMoney(resumen.mrr, "$") },
-          { label:"Proyección trimestral", value: fmtMoney(resumen.mrr*3, "$") },
-          { label:"Proyección anual", value: fmtMoney(arr, "$") },
-        ].map((k,i) => (
-          <div key={i} style={{ background:"#f9fafb", border:"1px solid #f0f0f0", borderRadius:10, padding:"14px 16px" }}>
-            <div style={{ fontSize:12, color:"#999", marginBottom:4 }}>{k.label}</div>
-            <div style={{ fontSize:18, fontWeight:800 }}>{k.value}</div>
-          </div>
-        ))}
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+        <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Proyección de ingresos</h3>
+        <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Si tu MRR se mantiene como está hoy (${fmtMoney(resumen.mrr,"$")}/mes), sin contar crecimiento ni bajas futuras</p>
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={[
+            { label:"Este mes", total: resumen.mrr },
+            { label:"Próx. 3 meses", total: resumen.mrr*3 },
+            { label:"Próx. 12 meses", total: arr },
+          ]} margin={{ top:8, right:8, left:0, bottom:4 }}>
+            <XAxis dataKey="label" tick={{ fontSize:12.5, fill:"#999" }} axisLine={false} tickLine={false}/>
+            <YAxis tick={{ fontSize:11, fill:"#999" }} axisLine={false} tickLine={false} tickFormatter={v => `$${v>=1000000?(v/1000000).toFixed(1)+"M":v>=1000?(v/1000).toFixed(0)+"k":v}`}/>
+            <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [fmtMoney(v,"$"), "proyectado"]}/>
+            <Bar dataKey="total" fill="#9238FF" radius={[10,10,0,0]} maxBarSize={90}/>
+          </BarChart>
+        </ResponsiveContainer>
       </div>
       </>
       )}
