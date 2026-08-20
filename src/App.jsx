@@ -6235,6 +6235,35 @@ function AdminPage({ onVolver }) {
   // LTV estimado (ARPU / tasa de cancelación, aproximación estándar de SaaS)
   const ltv = churnPct > 0 ? arpu / (churnPct/100) : null;
 
+  // Tasa de conversión Prueba → Pago: cuentas que en algún momento activaron el pago, sobre el total (todas arrancan en prueba)
+  const convertidas = negocios.filter(n => n.subscription_started_at).length;
+  const tasaConversion = negocios.length > 0 ? (convertidas / negocios.length) * 100 : 0;
+
+  // Stickiness: qué % de tus usuarios mensuales (MAU) también te usan a diario (DAU)
+  const stickiness = mau > 0 ? (dau / mau) * 100 : 0;
+
+  // ── Pestaña Actividad: solo cuentas pagando (active), última vez que usaron el sistema, y qué hicieron ──
+  const cuentasActivasPagando = negocios.filter(n => n.subscription_status === "active");
+  const actividadPorCuenta = cuentasActivasPagando.map(n => {
+    const ultimaFecha = ultimaVentaPorNegocio[n.id] || null;
+    const diasSinUsar = ultimaFecha ? Math.floor((new Date() - new Date(ultimaFecha+"T12:00:00")) / 86400000) : null;
+    return { ...n, ultimaFecha, diasSinUsar };
+  }).sort((a,b) => {
+    if (a.diasSinUsar === null) return -1; // nunca usó = lo más urgente, arriba
+    if (b.diasSinUsar === null) return 1;
+    return b.diasSinUsar - a.diasSinUsar; // más días sin usar primero
+  });
+  const cuentasEnRiesgoPagando = actividadPorCuenta.filter(n => n.diasSinUsar === null || n.diasSinUsar > 14);
+
+  // Feed de actividad reciente: ventas de cuentas activas, más recientes primero
+  const idsActivos = new Set(cuentasActivasPagando.map(n => n.id));
+  const nombrePorIdActivo = {}; cuentasActivasPagando.forEach(n => { nombrePorIdActivo[n.id] = n.nombre; });
+  const feedActividad = ventasAdmin
+    .filter(v => idsActivos.has(v.negocio_id) && v.created_at)
+    .sort((a,b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 60)
+    .map(v => ({ ...v, nombre: nombrePorIdActivo[v.negocio_id] }));
+
   return (
     <div style={{ minHeight:"100vh", background:"#f9fafb", fontFamily:"'DM Sans',system-ui,sans-serif", padding:"28px 32px" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');`}</style>
@@ -6253,6 +6282,7 @@ function AdminPage({ onVolver }) {
           { id:"resumen", label:"Resumen" },
           { id:"cuentas", label:"Cuentas" },
           { id:"engagement", label:"Engagement" },
+          { id:"actividad", label:"Actividad" },
           { id:"finanzas", label:"Finanzas" },
           { id:"recomendaciones", label:"Recomendaciones" },
           { id:"sugerencias", label:"Sugerencias", badge: sugerencias.filter(s => s.estado === "nueva").length || null },
@@ -6290,6 +6320,7 @@ function AdminPage({ onVolver }) {
           { label: "MRR (ingreso mensual recurrente)", value: fmtMoney(resumen.mrr, "$"), sub:"recurrente", bg: "#dcfce7", color: "#15803d" },
           { label: "ARR (anual proyectado)", value: fmtMoney(arr, "$"), sub:"MRR × 12", bg: "#ede9fe", color: "#7c3aed" },
           { label: "Pendientes de activación", value: pendientesActivacion, sub:"en prueba, sin cargar productos", bg: "#fef3c7", color: "#92400e" },
+          { label: "Conversión Prueba → Pago", value: `${tasaConversion.toFixed(1)}%`, sub:`${convertidas} de ${negocios.length} se suscribieron`, bg: "#dcfce7", color: "#15803d" },
         ].map((k, i) => (
           <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
             <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
@@ -6437,6 +6468,7 @@ function AdminPage({ onVolver }) {
           { label:"WAU", sub:"cuentas activas esta semana", value: wau, bg:"#dbeafe", color:"#1e40af" },
           { label:"MAU", sub:"cuentas activas este mes", value: mau, bg:"#ede9fe", color:"#7c3aed" },
           { label:"Frecuencia de uso", sub:"días activos/semana (prom.)", value: frecuenciaPromedio.toFixed(1), bg:"#f4ecff", color:"#9238FF" },
+          { label:"Stickiness (DAU/MAU)", sub:"qué % de tus usuarios mensuales te usan a diario", value: `${stickiness.toFixed(1)}%`, bg:"#fce7f3", color:"#be185d" },
         ].map((k,i) => (
           <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
             <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
@@ -6541,6 +6573,71 @@ function AdminPage({ onVolver }) {
             ))}
           </div>
         )}
+      </div>
+      </>
+      )}
+
+      {tabAdmin === "actividad" && (
+      <>
+      <p style={{ margin:"0 0 18px", fontSize:13, color:"#999" }}>Solo cuentas con plan activo y pagando ({cuentasActivasPagando.length}). Las cuentas en prueba no aparecen acá.</p>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+          <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>Cuentas pagando</div>
+          <div style={{ fontSize:26, fontWeight:800 }}>{cuentasActivasPagando.length}</div>
+        </div>
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+          <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>Sin uso hace +14 días</div>
+          <div style={{ fontSize:26, fontWeight:800, color: cuentasEnRiesgoPagando.length>0?"#dc2626":"#111" }}>{cuentasEnRiesgoPagando.length}</div>
+        </div>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"1.1fr 1fr", gap:16 }}>
+        {/* Tabla: última vez que usaron el sistema */}
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 14px", fontSize:15, fontWeight:700 }}>Última actividad por cuenta</h3>
+          {actividadPorCuenta.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Todavía no hay cuentas con plan activo.</div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+              {actividadPorCuenta.map(n => {
+                const enRiesgo = n.diasSinUsar === null || n.diasSinUsar > 14;
+                const alerta = n.diasSinUsar === null || n.diasSinUsar > 30;
+                return (
+                  <div key={n.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 12px", background: alerta?"#fef2f2":enRiesgo?"#fffbeb":"#f9fafb", borderRadius:8, fontSize:13 }}>
+                    <span style={{ fontWeight:600 }}>{n.nombre}</span>
+                    <span style={{ color: alerta?"#dc2626":enRiesgo?"#d97706":"#888", fontWeight: enRiesgo?700:400, fontSize:12.5 }}>
+                      {n.diasSinUsar === null ? "Nunca vendió" : n.diasSinUsar === 0 ? "Hoy" : n.diasSinUsar === 1 ? "Ayer" : `Hace ${n.diasSinUsar} días`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Feed de actividad reciente */}
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 14px", fontSize:15, fontWeight:700 }}>Actividad reciente</h3>
+          {feedActividad.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Todavía no hay ventas registradas.</div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:0, maxHeight:480, overflowY:"auto" }}>
+              {feedActividad.map((v,i) => (
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 4px", borderBottom:"1px solid #f5f5f5", fontSize:13 }}>
+                  <div>
+                    <span style={{ fontWeight:600 }}>{v.nombre}</span>
+                    <span style={{ color:"#999" }}> vendió {v.items} producto{v.items!==1?"s":""}</span>
+                  </div>
+                  <div style={{ textAlign:"right", flexShrink:0 }}>
+                    <div style={{ fontWeight:700, color:"#16a34a" }}>{fmtMoney(v.total, "$")}</div>
+                    <div style={{ fontSize:11, color:"#aaa" }}>{new Date(v.created_at).toLocaleString("es-AR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" })}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       </>
       )}
