@@ -6011,6 +6011,7 @@ function AdminPage({ onVolver }) {
   const [confirmCancelar, setConfirmCancelar] = useState(null); // negocio a confirmar cancelación
   const [sugerencias, setSugerencias] = useState([]);
   const [ventasAdmin, setVentasAdmin] = useState([]);
+  const [filtroActividad, setFiltroActividad] = useState("active");
   const [filtroSugerencias, setFiltroSugerencias] = useState("nueva");
   const [tabAdmin, setTabAdmin] = useState("resumen");
 
@@ -6079,6 +6080,11 @@ function AdminPage({ onVolver }) {
     cancelled: { label: "Cancelado", bg: "#f3f4f6", color: "#6b7280" },
   };
 
+  // Si tiene cortesía vigente (mes regalado), se ve como "Activo" aunque el estado real de pago sea otro.
+  // OJO: esto es solo visual — el MRR/ARR/ARPU siguen contando nada más las cuentas que realmente pagan.
+  const tieneCortesia = (n) => n.acceso_manual_hasta && new Date(n.acceso_manual_hasta) > new Date();
+  const estadoVisual = (n) => tieneCortesia(n) ? "active" : n.subscription_status;
+
   const rubrosDisponibles = [...new Set(negocios.map(n => n.rubro).filter(Boolean))].sort();
 
   const negociosFiltrados = negocios.filter(n => {
@@ -6086,7 +6092,7 @@ function AdminPage({ onVolver }) {
       (n.nombre || "").toLowerCase().includes(busqueda.toLowerCase()) ||
       (n.email || "").toLowerCase().includes(busqueda.toLowerCase()) ||
       (n.telefono || "").includes(busqueda);
-    const matchEstado = filtroEstado === "Todos" || n.subscription_status === filtroEstado;
+    const matchEstado = filtroEstado === "Todos" || estadoVisual(n) === filtroEstado;
     const matchRubro = filtroRubro === "Todos" || n.rubro === filtroRubro;
     return matchBusqueda && matchEstado && matchRubro;
   });
@@ -6132,6 +6138,13 @@ function AdminPage({ onVolver }) {
   // ── Métricas derivadas para Resumen / Finanzas / Recomendaciones ──
   // (acá abajo "resumen" ya está garantizado no-nulo, porque loading/error ya se manejaron arriba)
   const churnPct = resumen.total > 0 ? (resumen.cancelled / resumen.total) * 100 : 0;
+
+  // Conteo "visual" de activas: incluye cortesías (para mostrar en pantalla). El MRR real (resumen.mrr) NO usa este número.
+  const activasVisual = negocios.filter(n => estadoVisual(n) === "active").length;
+  const trialVisual = negocios.filter(n => estadoVisual(n) === "trial").length;
+  const pastDueVisual = negocios.filter(n => estadoVisual(n) === "past_due").length;
+  const cancelledVisual = negocios.filter(n => estadoVisual(n) === "cancelled").length;
+  const cortesiasQueNoSonPago = negocios.filter(n => tieneCortesia(n) && n.subscription_status !== "active").length;
   const arr = resumen.mrr * 12;
   const arpu = resumen.active > 0 ? resumen.mrr / resumen.active : 0;
   const pendientesActivacion = negocios.filter(n => n.subscription_status === "trial" && (n.productos || 0) === 0).length;
@@ -6242,8 +6255,10 @@ function AdminPage({ onVolver }) {
   // Stickiness: qué % de tus usuarios mensuales (MAU) también te usan a diario (DAU)
   const stickiness = mau > 0 ? (dau / mau) * 100 : 0;
 
-  // ── Pestaña Actividad: solo cuentas pagando (active), última vez que usaron el sistema, y qué hicieron ──
-  const cuentasActivasPagando = negocios.filter(n => n.subscription_status === "active");
+  // ── Pestaña Actividad: filtrable por estado (por defecto, solo cuentas pagando) ──
+  const cuentasActivasPagando = filtroActividad === "Todos"
+    ? negocios
+    : negocios.filter(n => estadoVisual(n) === filtroActividad);
   const actividadPorCuenta = cuentasActivasPagando.map(n => {
     const ultimaFecha = ultimaVentaPorNegocio[n.id] || null;
     const diasSinUsar = ultimaFecha ? Math.floor((new Date() - new Date(ultimaFecha+"T12:00:00")) / 86400000) : null;
@@ -6255,7 +6270,7 @@ function AdminPage({ onVolver }) {
   });
   const cuentasEnRiesgoPagando = actividadPorCuenta.filter(n => n.diasSinUsar === null || n.diasSinUsar > 14);
 
-  // Feed de actividad reciente: ventas de cuentas activas, más recientes primero
+  // Feed de actividad reciente: ventas de las cuentas que entran en el filtro elegido, más recientes primero
   const idsActivos = new Set(cuentasActivasPagando.map(n => n.id));
   const nombrePorIdActivo = {}; cuentasActivasPagando.forEach(n => { nombrePorIdActivo[n.id] = n.nombre; });
   const feedActividad = ventasAdmin
@@ -6304,7 +6319,7 @@ function AdminPage({ onVolver }) {
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:14, marginBottom:14 }}>
         {[
           { label: "Cuentas creadas", value: resumen.total, sub:"total", bg: "#ede9fe", color: "#7c3aed" },
-          { label: "Cuentas activas", value: resumen.active, sub:`${resumen.trial} en prueba`, bg: "#dcfce7", color: "#15803d" },
+          { label: "Cuentas activas", value: activasVisual, sub: cortesiasQueNoSonPago > 0 ? `${resumen.trial} en prueba · ${cortesiasQueNoSonPago} con cortesía` : `${resumen.trial} en prueba`, bg: "#dcfce7", color: "#15803d" },
           { label: "Cuentas que pagaron", value: resumen.active, sub:`de ${resumen.total} totales`, bg: "#dbeafe", color: "#1e40af" },
           { label: "Cuentas canceladas", value: resumen.cancelled, sub:`churn ${churnPct.toFixed(1)}%`, bg: "#fee2e2", color: "#dc2626" },
         ].map((k, i) => (
@@ -6357,23 +6372,23 @@ function AdminPage({ onVolver }) {
 
         <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
           <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Distribución de cuentas</h3>
-          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Por estado, del total de {resumen.total}</p>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Por estado (las cortesías cuentan como Activas acá), del total de {resumen.total}</p>
           <ResponsiveContainer width="100%" height={240}>
             <PieChart>
               <Pie
                 data={[
-                  { name:"Activas", value: resumen.active, color:"#15803d" },
-                  { name:"En prueba", value: resumen.trial, color:"#d97706" },
-                  { name:"Atrasadas", value: resumen.past_due, color:"#dc2626" },
-                  { name:"Canceladas", value: resumen.cancelled, color:"#6b7280" },
+                  { name:"Activas", value: activasVisual, color:"#15803d" },
+                  { name:"En prueba", value: trialVisual, color:"#d97706" },
+                  { name:"Atrasadas", value: pastDueVisual, color:"#dc2626" },
+                  { name:"Canceladas", value: cancelledVisual, color:"#6b7280" },
                 ].filter(d => d.value > 0)}
                 dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={3}
               >
                 {[
-                  { name:"Activas", value: resumen.active, color:"#15803d" },
-                  { name:"En prueba", value: resumen.trial, color:"#d97706" },
-                  { name:"Atrasadas", value: resumen.past_due, color:"#dc2626" },
-                  { name:"Canceladas", value: resumen.cancelled, color:"#6b7280" },
+                  { name:"Activas", value: activasVisual, color:"#15803d" },
+                  { name:"En prueba", value: trialVisual, color:"#d97706" },
+                  { name:"Atrasadas", value: pastDueVisual, color:"#dc2626" },
+                  { name:"Canceladas", value: cancelledVisual, color:"#6b7280" },
                 ].filter(d => d.value > 0).map((d,i) => <Cell key={i} fill={d.color}/>)}
               </Pie>
               <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }}/>
@@ -6420,7 +6435,7 @@ function AdminPage({ onVolver }) {
             </thead>
             <tbody>
               {negociosFiltrados.map(n => {
-                const est = ESTADOS[n.subscription_status] || ESTADOS.trial;
+                const est = ESTADOS[estadoVisual(n)] || ESTADOS.trial;
                 const fechaRelevante = n.subscription_status === "active" ? n.next_billing_date : n.trial_ends_at;
                 const wa = linkWhatsApp(n.telefono);
                 const tieneCortesia = n.acceso_manual_hasta && new Date(n.acceso_manual_hasta) > new Date();
@@ -6607,11 +6622,27 @@ function AdminPage({ onVolver }) {
 
       {tabAdmin === "actividad" && (
       <>
-      <p style={{ margin:"0 0 18px", fontSize:13, color:"#999" }}>Solo cuentas con plan activo y pagando ({cuentasActivasPagando.length}). Las cuentas en prueba no aparecen acá.</p>
+      <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
+        {[
+          { id:"active", label:"Activas" },
+          { id:"trial", label:"En prueba" },
+          { id:"past_due", label:"Atrasadas" },
+          { id:"cancelled", label:"Canceladas" },
+          { id:"Todos", label:"Todas" },
+        ].map(f => (
+          <button key={f.id} onClick={() => setFiltroActividad(f.id)} style={{
+            background: filtroActividad===f.id ? "#111" : "#fff", color: filtroActividad===f.id ? "#fff" : "#666",
+            border:"1px solid #e5e7eb", borderRadius:20, padding:"7px 16px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit",
+          }}>{f.label}</button>
+        ))}
+      </div>
+      <p style={{ margin:"0 0 18px", fontSize:13, color:"#999" }}>
+        Mostrando {cuentasActivasPagando.length} cuenta{cuentasActivasPagando.length!==1?"s":""} {filtroActividad!=="Todos" ? `en estado "${ESTADOS[filtroActividad]?.label || filtroActividad}"` : ""}. Las cortesías cuentan como "Activas".
+      </p>
 
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
         <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
-          <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>Cuentas pagando</div>
+          <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>Cuentas mostradas</div>
           <div style={{ fontSize:26, fontWeight:800 }}>{cuentasActivasPagando.length}</div>
         </div>
         <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
