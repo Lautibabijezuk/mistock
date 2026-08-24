@@ -190,6 +190,42 @@ class ErrorBoundary extends Component {
 // UTILS & CONSTANTS
 // ═══════════════════════════════════════════════════════════
 const uid = () => crypto.randomUUID();
+
+// ── Tracking de uso: detectar dispositivo/sistema y mantener un id de sesión ──
+const detectarDispositivo = () => {
+  if (typeof navigator === "undefined") return { dispositivo: null, sistema: null };
+  const ua = navigator.userAgent || "";
+  const ancho = typeof window !== "undefined" ? window.innerWidth : 1024;
+  let dispositivo = "escritorio";
+  if (/Mobi|Android|iPhone|iPod/i.test(ua) || ancho < 640) dispositivo = "movil";
+  else if (/iPad|Tablet/i.test(ua) || (ancho >= 640 && ancho < 1024)) dispositivo = "tablet";
+  let sistema = "Otro";
+  if (/iPhone|iPad|iPod/i.test(ua)) sistema = "iOS";
+  else if (/Android/i.test(ua)) sistema = "Android";
+  else if (/Windows/i.test(ua)) sistema = "Windows";
+  else if (/Mac OS X|Macintosh/i.test(ua)) sistema = "Mac";
+  else if (/Linux/i.test(ua)) sistema = "Linux";
+  return { dispositivo, sistema };
+};
+
+// Un id por "visita": se guarda en memoria, se renueva al recargar la página
+const SESSION_ID = uid();
+
+// Nombres legibles de cada sección, para el ranking de uso en el panel admin
+const SECCION_LABELS = {
+  venta: "Nueva Venta",
+  dashboard: "Dashboard",
+  inventario: "Productos e Inventario",
+  historial: "Historial",
+  estadisticas: "Estadísticas",
+  proyeccion: "Proyección",
+  finanzas: "Finanzas",
+  calculadora: "Calculadora de precios",
+  remitos: "Remitos",
+  suscripcion: "Suscripción",
+  config: "Configuración",
+};
+
 const todayStr = () => new Date().toISOString().split("T")[0];
 const fmtMoney = (n, m = "$") => `${m}${Math.round(Number(n) || 0).toLocaleString("es-AR")}`;
 const fmtDate = (s) => s ? new Date(s + "T12:00:00").toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" }) : "";
@@ -6011,6 +6047,7 @@ function AdminPage({ onVolver }) {
   const [confirmCancelar, setConfirmCancelar] = useState(null); // negocio a confirmar cancelación
   const [sugerencias, setSugerencias] = useState([]);
   const [ventasAdmin, setVentasAdmin] = useState([]);
+  const [uso, setUso] = useState(null);
   const [filtroActividad, setFiltroActividad] = useState("active");
   const [filtroSugerencias, setFiltroSugerencias] = useState("nueva");
   const [tabAdmin, setTabAdmin] = useState("resumen");
@@ -6028,6 +6065,7 @@ function AdminPage({ onVolver }) {
       setNegocios(data.negocios || []);
       setSugerencias(data.sugerencias || []);
       setVentasAdmin(data.ventas || []);
+      setUso(data.uso || null);
     } catch (e) {
       setError(e.message || "Error de conexión");
     }
@@ -6297,6 +6335,7 @@ function AdminPage({ onVolver }) {
           { id:"resumen", label:"Resumen" },
           { id:"cuentas", label:"Cuentas" },
           { id:"engagement", label:"Engagement" },
+          { id:"uso", label:"Uso" },
           { id:"actividad", label:"Actividad" },
           { id:"finanzas", label:"Finanzas" },
           { id:"recomendaciones", label:"Recomendaciones" },
@@ -6617,6 +6656,98 @@ function AdminPage({ onVolver }) {
           </div>
         )}
       </div>
+      </>
+      )}
+
+      {tabAdmin === "uso" && (
+      <>
+      {!uso || uso.totalEventos === 0 ? (
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"40px 24px", textAlign:"center" }}>
+          <div style={{ fontSize:32, marginBottom:12 }}>📊</div>
+          <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>Todavía no hay datos de uso</div>
+          <div style={{ fontSize:13, color:"#888", lineHeight:1.5, maxWidth:440, margin:"0 auto" }}>
+            El registro de navegación empieza a funcionar desde que se sube esta versión. En unos días vas a poder ver qué secciones usan más tus clientes, desde qué dispositivos entran y cuánto tiempo pasan adentro.
+          </div>
+        </div>
+      ) : (
+      <>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
+        {[
+          { label:"Sesiones registradas", value: uso.totalSesiones, sub:"visitas a la app" },
+          { label:"Duración promedio", value: uso.duracionPromedioMin >= 1 ? `${uso.duracionPromedioMin.toFixed(1)} min` : `${Math.round(uso.duracionPromedioMin*60)} seg`, sub:`sobre ${uso.sesionesMedibles} sesiones medibles` },
+          { label:"Pantallas por sesión", value: uso.pantallasPorSesion.toFixed(1), sub:"promedio de navegación" },
+          { label:"Total de visitas", value: uso.totalEventos, sub:"a todas las secciones" },
+        ].map((k,i) => (
+          <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+            <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
+            <div style={{ fontSize:26, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:12, color:"#aaa", marginTop:4 }}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px", marginBottom:20 }}>
+        <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Secciones más usadas</h3>
+        <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Cuántas veces se abrió cada sección, y cuántas cuentas distintas la usaron</p>
+        <ResponsiveContainer width="100%" height={Math.max(200, uso.seccionesRanking.length * 40)}>
+          <BarChart data={uso.seccionesRanking.map(s => ({ label: SECCION_LABELS[s.seccion] || s.seccion, total: s.visitas }))} layout="vertical" margin={{ top:4, right:24, left:4, bottom:4 }}>
+            <XAxis type="number" tick={{ fontSize:11, fill:"#999" }} axisLine={false} tickLine={false} allowDecimals={false}/>
+            <YAxis type="category" dataKey="label" tick={{ fontSize:12.5, fill:"#333" }} axisLine={false} tickLine={false} width={130}/>
+            <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [v, "visitas"]}/>
+            <Bar dataKey="total" fill="#9238FF" radius={[0,8,8,0]} maxBarSize={26}/>
+          </BarChart>
+        </ResponsiveContainer>
+        <div style={{ marginTop:14, borderTop:"1px solid #f0f0f0", paddingTop:12 }}>
+          {uso.seccionesRanking.map(s => (
+            <div key={s.seccion} style={{ display:"flex", justifyContent:"space-between", fontSize:12.5, padding:"5px 0", color:"#666" }}>
+              <span>{SECCION_LABELS[s.seccion] || s.seccion}</span>
+              <span><b style={{ color:"#111" }}>{s.usuarios}</b> cuenta{s.usuarios!==1?"s":""} distinta{s.usuarios!==1?"s":""}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))", gap:16 }}>
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Dispositivos</h3>
+          {Object.keys(uso.porDispositivo).length === 0 ? (
+            <div style={{ textAlign:"center", padding:"20px 0", color:"#aaa", fontSize:13 }}>Sin datos todavía.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie data={Object.entries(uso.porDispositivo).map(([k,v]) => ({ name: k==="movil"?"Celular":k==="tablet"?"Tablet":"Computadora", value:v }))}
+                  dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={3}>
+                  {Object.keys(uso.porDispositivo).map((k,i) => <Cell key={i} fill={["#9238FF","#c4b5fd","#ddd0fb"][i%3]}/>)}
+                </Pie>
+                <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }}/>
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Sistemas operativos</h3>
+          {Object.keys(uso.porSistema).length === 0 ? (
+            <div style={{ textAlign:"center", padding:"20px 0", color:"#aaa", fontSize:13 }}>Sin datos todavía.</div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {Object.entries(uso.porSistema).sort((a,b)=>b[1]-a[1]).map(([sis,cant]) => (
+                <div key={sis}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
+                    <span style={{ color:"#333" }}>{sis}</span>
+                    <span style={{ fontWeight:700 }}>{((cant/uso.totalEventos)*100).toFixed(0)}%</span>
+                  </div>
+                  <div style={{ background:"#f3f4f6", borderRadius:20, height:8, overflow:"hidden" }}>
+                    <div style={{ background:"#9238FF", height:"100%", width:`${(cant/uso.totalEventos)*100}%`, borderRadius:20 }}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      </>
+      )}
       </>
       )}
 
@@ -7406,6 +7537,28 @@ export default function App() {
     return () => clearInterval(interval);
   }, [token, loaded]);
 
+  // ── Registrar navegación (para saber qué secciones se usan más) ──
+  // Silencioso a propósito: si falla, nunca debe romper ni frenar la app del cliente.
+  const registrarEvento = async (seccion) => {
+    try {
+      if (!sb._negocioId) return;
+      const { dispositivo, sistema } = detectarDispositivo();
+      await _sb.from("eventos_uso").insert({
+        negocio_id: sb._negocioId,
+        seccion,
+        dispositivo,
+        sistema,
+        session_id: SESSION_ID,
+      });
+    } catch { /* sin ruido: el tracking nunca debe molestar al usuario */ }
+  };
+
+  // Registrar cada cambio de sección
+  useEffect(() => {
+    if (!token || !loaded || !sb._negocioId) return;
+    registrarEvento(page);
+  }, [page, token, loaded]);
+
   const handleLogin = (access_token, userId) => { setToken({ access_token, userId }); setAuthReady(false); };
   const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); navegar("login"); };
 
@@ -7461,6 +7614,9 @@ export default function App() {
     const row = await sb.insert("sugerencias", { id: uid(), negocio_id: sb._negocioId, texto, categoria: categoria || "Mejora" });
     if (!row) throw new Error("No se pudo guardar la sugerencia");
   };
+
+  // ── Registrar navegación (para saber qué secciones se usan más) ──
+  // Silencioso a propósito: si falla, nunca debe romper ni frenar la app del cliente.
 
   // ── Guardar proveedor en Supabase ────────────────────────
   const saveProveedor = async (p) => {
