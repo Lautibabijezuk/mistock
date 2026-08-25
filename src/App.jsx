@@ -6048,6 +6048,7 @@ function AdminPage({ onVolver }) {
   const [sugerencias, setSugerencias] = useState([]);
   const [ventasAdmin, setVentasAdmin] = useState([]);
   const [uso, setUso] = useState(null);
+  const [perfilAbierto, setPerfilAbierto] = useState(null);
   const [filtroActividad, setFiltroActividad] = useState("active");
   const [filtroSugerencias, setFiltroSugerencias] = useState("nueva");
   const [tabAdmin, setTabAdmin] = useState("resumen");
@@ -6467,7 +6468,7 @@ function AdminPage({ onVolver }) {
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
             <thead>
               <tr style={{ background:"#f9fafb", borderBottom:"1px solid #e5e7eb" }}>
-                {["Negocio","Dueño/a","Email","WhatsApp","Rubro","Instagram","Registrado","Estado","Vence / Próx. cobro","Acciones"].map(h => (
+                {["Negocio","Rubro","Estado","Actividad","Registrado","Vence / Próx. cobro",""].map(h => (
                   <th key={h} style={{ padding:"12px 16px", textAlign:"left", fontWeight:600, color:"#666", whiteSpace:"nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -6476,63 +6477,44 @@ function AdminPage({ onVolver }) {
               {negociosFiltrados.map(n => {
                 const est = ESTADOS[estadoVisual(n)] || ESTADOS.trial;
                 const fechaRelevante = n.subscription_status === "active" ? n.next_billing_date : n.trial_ends_at;
-                const wa = linkWhatsApp(n.telefono);
-                const tieneCortesia = n.acceso_manual_hasta && new Date(n.acceso_manual_hasta) > new Date();
-                const puedeAccionar = n.subscription_status !== "cancelled";
+                const tieneCortesiaN = tieneCortesia(n);
+                const ultimaVenta = ultimaVentaPorNegocio[n.id];
+                const diasSinVender = ultimaVenta ? Math.floor((new Date() - new Date(ultimaVenta+"T12:00:00"))/86400000) : null;
                 return (
-                  <tr key={n.id} style={{ borderBottom:"1px solid #f3f4f6" }}>
-                    <td style={{ padding:"12px 16px", fontWeight:600 }}>{n.nombre}</td>
-                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.dueno || "—"}</td>
-                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.email || "—"}</td>
+                  <tr key={n.id}
+                    onClick={() => setPerfilAbierto(n)}
+                    style={{ borderBottom:"1px solid #f3f4f6", cursor:"pointer" }}
+                    onMouseEnter={e => e.currentTarget.style.background="#fafbfc"}
+                    onMouseLeave={e => e.currentTarget.style.background="transparent"}
+                  >
                     <td style={{ padding:"12px 16px" }}>
-                      {wa ? (
-                        <a href={wa} target="_blank" rel="noopener noreferrer" style={{ color:"#16a34a", fontWeight:600, textDecoration:"none", display:"flex", alignItems:"center", gap:5 }}>
-                          {n.telefono}
-                        </a>
-                      ) : "—"}
+                      <div style={{ fontWeight:600 }}>{n.nombre}</div>
+                      <div style={{ fontSize:11.5, color:"#aaa" }}>{n.dueno || n.email || "—"}</div>
                     </td>
                     <td style={{ padding:"12px 16px", color:"#666" }}>{n.rubro || "—"}</td>
-                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.instagram ? `@${n.instagram.replace(/^@/,"")}` : "—"}</td>
+                    <td style={{ padding:"12px 16px" }}>
+                      <span style={{ background:est.bg, color:est.color, fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>{est.label}</span>
+                      {tieneCortesiaN && (
+                        <div style={{ marginTop:5, fontSize:10.5, color:"#7c3aed", fontWeight:600 }}>🎁 cortesía</div>
+                      )}
+                    </td>
+                    <td style={{ padding:"12px 16px", whiteSpace:"nowrap" }}>
+                      <div style={{ fontSize:12.5, fontWeight:600, color: diasSinVender === null ? "#dc2626" : diasSinVender > 14 ? "#d97706" : "#16a34a" }}>
+                        {diasSinVender === null ? "Sin ventas" : diasSinVender === 0 ? "Vendió hoy" : diasSinVender === 1 ? "Ayer" : `Hace ${diasSinVender}d`}
+                      </div>
+                      <div style={{ fontSize:11, color:"#aaa" }}>{n.ventas || 0} ventas · {n.productos || 0} prod.</div>
+                    </td>
                     <td style={{ padding:"12px 16px", color:"#666", whiteSpace:"nowrap" }}>
                       <div>{fmtFecha(n.created_at)}</div>
                       <div style={{ fontSize:11, color:"#aaa" }}>{diasDesde(n.created_at)}</div>
                     </td>
-                    <td style={{ padding:"12px 16px" }}>
-                      <span style={{ background:est.bg, color:est.color, fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>{est.label}</span>
-                      {tieneCortesia && (
-                        <div style={{ marginTop:5, fontSize:10.5, color:"#7c3aed", fontWeight:600 }}>🎁 cortesía hasta {fmtFecha(n.acceso_manual_hasta)}</div>
-                      )}
-                    </td>
                     <td style={{ padding:"12px 16px", color:"#666", whiteSpace:"nowrap" }}>{fmtFecha(fechaRelevante)}</td>
-                    <td style={{ padding:"12px 16px", whiteSpace:"nowrap" }}>
-                      {puedeAccionar && (
-                        <div style={{ display:"flex", gap:6 }}>
-                          <button
-                            onClick={() => ejecutarAccion(n.id, "regalar_mes")}
-                            disabled={procesando === n.id + "regalar_mes"}
-                            title="Regalar 30 días de acceso sin cobrar"
-                            style={{ background:"#f4ecff", color:"#7c3aed", border:"none", borderRadius:6, padding:"6px 10px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
-                          >
-                            {procesando === n.id + "regalar_mes" ? "..." : "🎁 Regalar mes"}
-                          </button>
-                          {tieneCortesia && (
-                            <button
-                              onClick={() => setConfirmCancelar(n)}
-                              disabled={procesando === n.id + "cancelar_regalo"}
-                              title="Deshacer el mes regalado"
-                              style={{ background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:6, padding:"6px 10px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
-                            >
-                              {procesando === n.id + "cancelar_regalo" ? "..." : "Quitar regalo"}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </td>
+                    <td style={{ padding:"12px 16px", color:"#ccc", fontSize:18 }}>›</td>
                   </tr>
                 );
               })}
               {negociosFiltrados.length === 0 && (
-                <tr><td colSpan={10} style={{ padding:"32px 16px", textAlign:"center", color:"#aaa" }}>No hay negocios que coincidan con el filtro</td></tr>
+                <tr><td colSpan={7} style={{ padding:"32px 16px", textAlign:"center", color:"#aaa" }}>No hay negocios que coincidan con el filtro</td></tr>
               )}
             </tbody>
           </table>
@@ -7002,6 +6984,208 @@ function AdminPage({ onVolver }) {
         )}
       </div>
       )}
+
+      {/* ── Perfil de cuenta (panel lateral) ── */}
+      {perfilAbierto && (() => {
+        const n = perfilAbierto;
+        const est = ESTADOS[estadoVisual(n)] || ESTADOS.trial;
+        const usoN = uso?.porNegocio?.[n.id] || null;
+        const ventasN = ventasAdmin.filter(v => v.negocio_id === n.id);
+        const ultimaVenta = ultimaVentaPorNegocio[n.id];
+        const diasSinVender = ultimaVenta ? Math.floor((new Date() - new Date(ultimaVenta+"T12:00:00"))/86400000) : null;
+        const diasDesdeAlta = Math.floor((new Date() - new Date(n.created_at))/86400000);
+        const wa = linkWhatsApp(n.telefono);
+        const ticketProm = ventasN.length > 0 ? ventasN.reduce((a,v)=>a+v.total,0)/ventasN.length : 0;
+        // Días distintos con actividad (ventas)
+        const diasActivos = new Set(ventasN.map(v => v.fecha)).size;
+        const frecuencia = diasDesdeAlta > 0 ? (diasActivos / diasDesdeAlta) * 7 : 0;
+        // Ventas por día, últimos 30 días
+        const hace30 = new Date(); hace30.setDate(hace30.getDate()-30);
+        const porDia = {};
+        ventasN.filter(v => new Date(v.fecha) >= hace30).forEach(v => { porDia[v.fecha] = (porDia[v.fecha]||0) + v.total; });
+        const dataDias = Object.entries(porDia).sort().map(([f,t]) => ({ label:f.slice(5), total:Math.round(t) }));
+        const metodos = Object.entries(n.metodosPago || {}).sort((a,b)=>b[1]-a[1]);
+        const puedeAccionar = n.subscription_status !== "cancelled";
+
+        return (
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.35)", zIndex:900, display:"flex", justifyContent:"flex-end" }}
+            onClick={() => setPerfilAbierto(null)}>
+            <div style={{ background:"#fff", width:"min(660px, 100%)", height:"100%", overflowY:"auto", padding:"28px 30px" }}
+              onClick={e => e.stopPropagation()}>
+
+              {/* Encabezado */}
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:22 }}>
+                <div>
+                  <h2 style={{ margin:"0 0 6px", fontSize:24, fontWeight:800, letterSpacing:"-0.5px" }}>{n.nombre}</h2>
+                  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                    <span style={{ background:est.bg, color:est.color, fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>{est.label}</span>
+                    {tieneCortesia(n) && <span style={{ background:"#f4ecff", color:"#7c3aed", fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>🎁 cortesía hasta {fmtFecha(n.acceso_manual_hasta)}</span>}
+                    <span style={{ fontSize:12.5, color:"#999" }}>{n.rubro || "Sin rubro"}</span>
+                  </div>
+                </div>
+                <button onClick={() => setPerfilAbierto(null)} style={{ background:"#f3f4f6", border:"none", borderRadius:8, width:34, height:34, cursor:"pointer", fontSize:18, color:"#666", flexShrink:0 }}>×</button>
+              </div>
+
+              {/* Datos de contacto */}
+              <div style={{ background:"#f9fafb", borderRadius:12, padding:"16px 18px", marginBottom:20 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Contacto</div>
+                {[
+                  ["Dueño/a", n.dueno || "—"],
+                  ["Email", n.email || "—"],
+                  ["WhatsApp", n.telefono || "—", wa],
+                  ["Instagram", n.instagram ? `@${n.instagram.replace(/^@/,"")}` : "—"],
+                  ["Dirección", n.direccion || "—"],
+                ].map(([lbl, val, link], i) => (
+                  <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", fontSize:13.5, gap:12 }}>
+                    <span style={{ color:"#888", flexShrink:0 }}>{lbl}</span>
+                    {link ? (
+                      <a href={link} target="_blank" rel="noopener noreferrer" style={{ color:"#16a34a", fontWeight:600, textDecoration:"none", textAlign:"right" }}>{val}</a>
+                    ) : (
+                      <span style={{ fontWeight:600, textAlign:"right", wordBreak:"break-word" }}>{val}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Comportamiento */}
+              <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Comportamiento</div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:12, marginBottom:20 }}>
+                {[
+                  { l:"Última venta", v: diasSinVender === null ? "Nunca" : diasSinVender === 0 ? "Hoy" : diasSinVender === 1 ? "Ayer" : `Hace ${diasSinVender}d`,
+                    c: diasSinVender === null ? "#dc2626" : diasSinVender > 14 ? "#d97706" : "#16a34a" },
+                  { l:"Último ingreso", v: n.ultimoLogin ? fmtFecha(n.ultimoLogin) : "—" },
+                  { l:"Antigüedad", v: `${diasDesdeAlta} días` },
+                  { l:"Días con ventas", v: diasActivos },
+                  { l:"Frecuencia", v: `${frecuencia.toFixed(1)} d/sem` },
+                  { l:"Ticket promedio", v: fmtMoney(ticketProm, "$") },
+                ].map((k,i) => (
+                  <div key={i} style={{ border:"1px solid #e5e7eb", borderRadius:10, padding:"12px 14px" }}>
+                    <div style={{ fontSize:11.5, color:"#999", marginBottom:5 }}>{k.l}</div>
+                    <div style={{ fontSize:17, fontWeight:800, color:k.c || "#111" }}>{k.v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Qué cargó en el sistema */}
+              <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Datos cargados</div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:12, marginBottom:20 }}>
+                {[
+                  ["Productos", n.productos||0],
+                  ["Categorías", n.categorias||0],
+                  ["Ventas", n.ventas||0],
+                  ["Facturado", fmtMoney(n.facturado||0, "$")],
+                  ["Gastos", n.gastos||0],
+                  ["Remitos", n.remitos||0],
+                  ["Proveedores", n.proveedores||0],
+                ].map(([l,v],i) => (
+                  <div key={i} style={{ border:"1px solid #e5e7eb", borderRadius:10, padding:"12px 14px" }}>
+                    <div style={{ fontSize:11.5, color:"#999", marginBottom:5 }}>{l}</div>
+                    <div style={{ fontSize:17, fontWeight:800 }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Qué funciones usa */}
+              <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Qué funciones usa</div>
+              {!usoN ? (
+                <div style={{ background:"#f9fafb", borderRadius:10, padding:"18px", fontSize:13, color:"#888", marginBottom:20, textAlign:"center" }}>
+                  Todavía no hay datos de navegación de esta cuenta.
+                </div>
+              ) : (
+                <div style={{ marginBottom:20 }}>
+                  <div style={{ display:"flex", gap:16, marginBottom:14, fontSize:12.5, color:"#666" }}>
+                    <span><b style={{ color:"#111" }}>{usoN.sesiones}</b> sesiones</span>
+                    <span><b style={{ color:"#111" }}>{usoN.total}</b> pantallas vistas</span>
+                    {Object.keys(usoN.dispositivos).length > 0 && (
+                      <span>Desde: <b style={{ color:"#111" }}>{Object.entries(usoN.dispositivos).sort((a,b)=>b[1]-a[1])[0][0] === "movil" ? "Celular" : Object.entries(usoN.dispositivos).sort((a,b)=>b[1]-a[1])[0][0] === "tablet" ? "Tablet" : "Computadora"}</b></span>
+                    )}
+                  </div>
+                  {usoN.secciones.slice(0,8).map(s => {
+                    const max = usoN.secciones[0].visitas;
+                    return (
+                      <div key={s.seccion} style={{ marginBottom:9 }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", fontSize:12.5, marginBottom:4 }}>
+                          <span style={{ color:"#333" }}>{SECCION_LABELS[s.seccion] || s.seccion}</span>
+                          <span style={{ fontWeight:700, color:"#666" }}>{s.visitas}</span>
+                        </div>
+                        <div style={{ background:"#f3f4f6", borderRadius:20, height:7, overflow:"hidden" }}>
+                          <div style={{ background:"#9238FF", height:"100%", width:`${(s.visitas/max)*100}%`, borderRadius:20 }}/>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Métodos de pago que usa */}
+              {metodos.length > 0 && (
+                <>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Cómo cobra</div>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:20 }}>
+                    {metodos.map(([m,c]) => (
+                      <span key={m} style={{ background:"#f3f4f6", borderRadius:8, padding:"7px 12px", fontSize:12.5 }}>
+                        {m} <b>{c}</b>
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Ventas últimos 30 días */}
+              {dataDias.length > 0 && (
+                <>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Ventas últimos 30 días</div>
+                  <div style={{ border:"1px solid #e5e7eb", borderRadius:12, padding:"16px 14px", marginBottom:20 }}>
+                    <ResponsiveContainer width="100%" height={160}>
+                      <BarChart data={dataDias} margin={{ top:4, right:4, left:0, bottom:4 }}>
+                        <XAxis dataKey="label" tick={{ fontSize:10, fill:"#aaa" }} axisLine={false} tickLine={false} interval="preserveStartEnd"/>
+                        <YAxis tick={{ fontSize:10, fill:"#aaa" }} axisLine={false} tickLine={false} tickFormatter={v=>`$${v>=1000?(v/1000).toFixed(0)+"k":v}`}/>
+                        <Tooltip contentStyle={{ borderRadius:8, border:"1px solid #e5e7eb", fontSize:12 }} formatter={v=>[fmtMoney(v,"$"),"vendido"]}/>
+                        <Bar dataKey="total" fill="#9238FF" radius={[4,4,0,0]}/>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </>
+              )}
+
+              {/* Suscripción y acciones */}
+              <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Suscripción</div>
+              <div style={{ background:"#f9fafb", borderRadius:12, padding:"16px 18px", marginBottom:16 }}>
+                {[
+                  ["Se registró", fmtFecha(n.created_at)],
+                  ["Fin de prueba", n.trial_ends_at ? fmtFecha(n.trial_ends_at) : "—"],
+                  ["Empezó a pagar", n.subscription_started_at ? fmtFecha(n.subscription_started_at) : "—"],
+                  ["Próximo cobro", n.next_billing_date ? fmtFecha(n.next_billing_date) : "—"],
+                ].map(([l,v],i) => (
+                  <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", fontSize:13.5 }}>
+                    <span style={{ color:"#888" }}>{l}</span><span style={{ fontWeight:600 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+
+              {puedeAccionar && (
+                <div style={{ display:"flex", gap:8 }}>
+                  <button
+                    onClick={() => ejecutarAccion(n.id, "regalar_mes")}
+                    disabled={procesando === n.id + "regalar_mes"}
+                    style={{ flex:1, background:"#f4ecff", color:"#7c3aed", border:"none", borderRadius:9, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+                  >
+                    {procesando === n.id + "regalar_mes" ? "..." : "🎁 Regalar mes"}
+                  </button>
+                  {tieneCortesia(n) && (
+                    <button
+                      onClick={() => { setConfirmCancelar(n); setPerfilAbierto(null); }}
+                      style={{ flex:1, background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:9, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+                    >
+                      Quitar regalo
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal de confirmación para quitar el mes regalado */}
       {confirmCancelar && (
