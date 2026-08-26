@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+# El panel interno y el admin no se indexan
+Disallow: /app
+Disallow: /admin
+
+Sitemap: https://www.milocal.com.ar/sitemap.xml
