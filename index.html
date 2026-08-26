@@ -1,19 +1,130 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es-AR">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- SEO PRINCIPAL -->
+    <title>MiLocal — Software de gestión de ventas y stock para comercios</title>
+    <meta name="description" content="Sistema de gestión para comercios argentinos: controlá ventas, stock, caja y ganancias desde el celu o la compu. Ideal para kioscos, indumentaria, ferreterías y más. Probalo 7 días gratis." />
+    <link rel="canonical" href="https://www.milocal.com.ar/" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="author" content="MiLocal" />
+    <meta name="geo.region" content="AR" />
+    <meta name="geo.placename" content="Argentina" />
+
+    <!-- OPEN GRAPH (WhatsApp, Facebook, LinkedIn) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="MiLocal" />
+    <meta property="og:locale" content="es_AR" />
+    <meta property="og:url" content="https://www.milocal.com.ar/" />
+    <meta property="og:title" content="MiLocal — Ventas, stock y caja en un solo lugar" />
+    <meta property="og:description" content="El sistema de gestión pensado para comercios y emprendedores argentinos. Controlá tu stock, cobrá rápido y sabé cuánto ganás de verdad. 7 días gratis, sin tarjeta." />
+    <meta property="og:image" content="https://www.milocal.com.ar/milocal-logo.png" />
+    <meta property="og:image:alt" content="MiLocal — Sistema de gestión para comercios" />
+
+    <!-- TWITTER / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="MiLocal — Ventas, stock y caja en un solo lugar" />
+    <meta name="twitter:description" content="Sistema de gestión para comercios argentinos. Probalo 7 días gratis, sin tarjeta." />
+    <meta name="twitter:image" content="https://www.milocal.com.ar/milocal-logo.png" />
+
+    <!-- ICONOS -->
     <link rel="icon" type="image/png" href="/milocal-icon.png" />
     <link rel="apple-touch-icon" href="/milocal-icon.png" />
-    <meta name="description" content="MiLocal — Sistema de gestión de ventas e inventario para comercios argentinos" />
-    <title>MiLocal</title>
+    <meta name="theme-color" content="#9238FF" />
+
+    <!-- DATOS ESTRUCTURADOS -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "MiLocal",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web, iOS, Android",
+      "url": "https://www.milocal.com.ar/",
+      "description": "Sistema de gestión de ventas, stock y caja para comercios y emprendedores de Argentina.",
+      "inLanguage": "es-AR",
+      "offers": {
+        "@type": "Offer",
+        "price": "30000",
+        "priceCurrency": "ARS",
+        "availability": "https://schema.org/InStock"
+      },
+      "featureList": [
+        "Control de stock por talle y color",
+        "Punto de venta con escaner de codigo de barras",
+        "Cobro en efectivo, tarjeta, transferencia o combinado",
+        "Cierre de caja diario",
+        "Estadisticas de ventas y ganancia real",
+        "Calculadora de precios con impuestos y comisiones",
+        "Proyeccion de ventas mensual",
+        "Remitos y proveedores",
+        "Importacion de productos desde Excel"
+      ],
+      "audience": {
+        "@type": "Audience",
+        "audienceType": "Comercios minoristas y emprendedores",
+        "geographicArea": { "@type": "Country", "name": "Argentina" }
+      }
+    }
+    </script>
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Que es MiLocal?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "MiLocal es un sistema de gestion para comercios argentinos que permite controlar ventas, stock, caja y finanzas desde el celular o la computadora, sin necesidad de instalar nada."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Cuanto cuesta MiLocal?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "MiLocal tiene un unico plan de 30000 pesos por mes que incluye todas las funciones, sin limite de productos ni de ventas. Podes probarlo 7 dias gratis sin poner tarjeta."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Para que tipo de negocios sirve?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Sirve para mas de 20 rubros: indumentaria, calzado, kiosco, almacen, supermercado, ferreteria, farmacia, perfumeria, jugueteria, libreria, electronica, pet shop, vinoteca, panaderia, carniceria, optica, regaleria, vivero y mas."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Necesito instalar algo?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. MiLocal funciona directamente desde el navegador, en cualquier celular, tablet o computadora. Tus datos se guardan automaticamente en la nube."
+          }
+        }
+      ]
+    }
+    </script>
+
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       body { font-family: 'DM Sans', 'Segoe UI', system-ui, -apple-system, sans-serif; }
     </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <noscript>
+        <h1>MiLocal - Software de gestion de ventas y stock para comercios</h1>
+        <p>Sistema de gestion para comercios y emprendedores de Argentina. Controla tus ventas, tu stock, tu caja y tus ganancias desde un solo lugar.</p>
+        <p>Ideal para kioscos, locales de indumentaria, ferreterias, almacenes, pet shops, vinotecas y mas de 20 rubros.</p>
+        <p>Probalo 7 dias gratis, sin tarjeta, en milocal.com.ar</p>
+      </noscript>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
