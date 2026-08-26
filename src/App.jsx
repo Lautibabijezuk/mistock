@@ -3101,6 +3101,9 @@ function InventarioPage({ ctx }) {
   const [confirmClearAll, setConfirmClearAll] = useState(false);
   const filtered = products.filter(p => { const ms = p.nombre.toLowerCase().includes(search.toLowerCase())||(p.sku||"").toLowerCase().includes(search.toLowerCase())||(p.codigoBarras||"").includes(search.trim()); const mc = filterCat==="Todas"||p.categoria===filterCat; const mst = filterStock==="Todos"||(filterStock==="En stock"&&p.stock>0&&p.stock>(p.stockMinimo||3))||(filterStock==="Stock bajo"&&p.stock>0&&p.stock<=(p.stockMinimo||3))||(filterStock==="Sin stock"&&p.stock===0); return ms&&mc&&mst; });
   const totalStock = products.reduce((a,p) => a+p.stock, 0), stockBajo = products.filter(p => p.stock>0&&p.stock<=(p.stockMinimo||3)).length, sinStock = products.filter(p => p.stock===0).length;
+  // Cuánta plata tenés inmovilizada en mercadería, a costo y a precio de venta
+  const valorCosto = products.reduce((a,p) => a + (p.costo||0) * (p.stock||0), 0);
+  const valorVenta = products.reduce((a,p) => a + (p.precio||0) * (p.stock||0), 0);
   const onSaveProd = async (p) => {
     setProducts(prev => editProd ? prev.map(x => x.id===p.id ? p : x) : [...prev, p]);
     await ctx.saveProduct(p);
@@ -3145,11 +3148,35 @@ function InventarioPage({ ctx }) {
           <button style={G.btn("dark")} onClick={() => setShowModal(true)}><Plus size={14}/> Nuevo producto</button>
         </div>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:14 }}>
         {[["Total en Stock", totalStock, "#111"], ["Stock Bajo", stockBajo, "#d97706"], ["Sin Stock", sinStock, "#dc2626"]].map(([label,val,color]) => (
           <div key={label} style={G.card()}><div style={{ fontSize:13, color:"#999", marginBottom:4 }}>{label}</div><div style={{ fontSize:24, fontWeight:800, color }}>{val}</div></div>
         ))}
       </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:14, marginBottom:20 }}>
+        <div style={{ ...G.card(), background:"#f9fafb" }}>
+          <div style={{ fontSize:13, color:"#999", marginBottom:4 }}>Invertido en mercadería</div>
+          <div style={{ fontSize:24, fontWeight:800, color:"#111" }}>{fmtMoney(valorCosto, config.moneda)}</div>
+          <div style={{ fontSize:11.5, color:"#bbb", marginTop:4 }}>Lo que te costó el stock actual</div>
+        </div>
+        <div style={{ ...G.card(), background:"#f0fdf4" }}>
+          <div style={{ fontSize:13, color:"#15803d", marginBottom:4 }}>Valor a precio de venta</div>
+          <div style={{ fontSize:24, fontWeight:800, color:"#16a34a" }}>{fmtMoney(valorVenta, config.moneda)}</div>
+          <div style={{ fontSize:11.5, color:"#86c99e", marginTop:4 }}>Si vendés todo lo que tenés</div>
+        </div>
+        <div style={{ ...G.card(), background:"#f4ecff" }}>
+          <div style={{ fontSize:13, color:"#7c3aed", marginBottom:4 }}>Ganancia potencial</div>
+          <div style={{ fontSize:24, fontWeight:800, color:"#9238FF" }}>{fmtMoney(valorVenta - valorCosto, config.moneda)}</div>
+          <div style={{ fontSize:11.5, color:"#b89ae0", marginTop:4 }}>
+            {valorCosto > 0 ? `Margen del ${(((valorVenta - valorCosto)/valorCosto)*100).toFixed(0)}%` : "Cargá los costos para verlo"}
+          </div>
+        </div>
+      </div>
+      {valorCosto === 0 && products.length > 0 && (
+        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", marginBottom:14, fontSize:13, color:"#92400e" }}>
+          💡 Cargá el <b>costo</b> de tus productos para ver cuánto tenés invertido y tu ganancia real.
+        </div>
+      )}
       {!config.rubro && (
         <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", marginBottom:14, fontSize:13, color:"#92400e", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
           <span><AlertTriangle size={14}/> Sin rubro configurado — las categorías son genéricas.</span>
