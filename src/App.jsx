@@ -4736,6 +4736,7 @@ function ConfigPage({ ctx }) {
       <div style={{ ...G.card({ marginBottom:24 }) }}>
         <h3 style={{ margin:"0 0 20px", fontSize:16, fontWeight:700 }}><User size={15}/>Contacto</h3>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
+          <FieldRow label="Nombre del dueño/a"><input style={G.inp()} value={f.dueno||""} onChange={e => u("dueno", e.target.value)} placeholder="Ej: Juan Pérez" /></FieldRow>
           <FieldRow label="Teléfono"><input style={G.inp()} value={f.telefono} onChange={e => u("telefono", e.target.value)} placeholder="+54 9 11 1234-5678" /></FieldRow>
           <FieldRow label="Instagram"><input style={G.inp()} value={f.instagram} onChange={e => u("instagram", e.target.value)} placeholder="@tunegocio" /></FieldRow>
           <FieldRow label="Dirección del local"><input style={G.inp()} value={f.direccion||""} onChange={e => u("direccion", e.target.value)} placeholder="Ej: Av. Rivadavia 1234, CABA" /></FieldRow>
@@ -4915,6 +4916,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
   const [direccion, setDireccion] = useState("");
   const [instagram, setInstagram] = useState("");
   const [whatsappError, setWhatsappError] = useState("");
+  const [duenoError, setDuenoError] = useState("");
 
   const catsPreview = CATS_POR_RUBRO[rubro] || [];
 
@@ -4928,16 +4930,26 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
 
   const handleDone = () => {
     if (!nombre.trim() || !rubro) return;
-    // Validar WhatsApp: mínimo 8 dígitos (número corto sin código de país o completo con)
+
+    // Nombre del dueño: obligatorio, mínimo 2 caracteres
+    if (!dueno.trim() || dueno.trim().length < 2) {
+      setDuenoError("Necesitamos tu nombre para poder contactarte");
+      setWhatsappError("");
+      return;
+    }
+    setDuenoError("");
+
+    // WhatsApp: mínimo 8 dígitos (número corto sin código de país o completo con)
     const wpDigits = whatsapp.replace(/\D/g, "");
     if (!wpDigits || wpDigits.length < 8) {
       setWhatsappError("Ingresá un número de WhatsApp válido (ej: 11 3456-7890)");
       return;
     }
     setWhatsappError("");
+
     onDone({
       nombre: nombre || "Mi Negocio",
-      moneda, dueno, rubro,
+      moneda, dueno: dueno.trim(), rubro,
       telefono: whatsapp,
       direccion,
       instagram,
@@ -5133,14 +5145,19 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 16 }}>
                   <div>
-                    <label style={labelStyle}>Tu nombre (dueño/a)</label>
+                    <label style={labelStyle}>Tu nombre (dueño/a) *</label>
                     <input
                       className="onb-input"
-                      style={inputStyle}
+                      style={{ ...inputStyle, borderColor: duenoError ? "#dc2626" : C.line }}
                       value={dueno}
-                      onChange={e => setDueno(e.target.value)}
-                      placeholder="Opcional"
+                      onChange={e => { setDueno(e.target.value); if (duenoError) setDuenoError(""); }}
+                      placeholder="Ej: Juan Pérez"
                     />
+                    {duenoError && (
+                      <div style={{ fontSize: 12, color: "#dc2626", marginTop: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                        <AlertCircle size={13}/> {duenoError}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label style={labelStyle}>Moneda</label>
@@ -5215,8 +5232,8 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
                 <button
                   className="onb-btn-primary"
                   onClick={handleDone}
-                  disabled={!nombre.trim() || !whatsapp.trim()}
-                  style={(nombre.trim() && whatsapp.trim()) ? primaryBtn : disabledBtn}
+                  disabled={!nombre.trim() || !whatsapp.trim() || !dueno.trim()}
+                  style={(nombre.trim() && whatsapp.trim() && dueno.trim()) ? primaryBtn : disabledBtn}
                 >
                   ¡Comenzar a usar MiLocal!
                 </button>
