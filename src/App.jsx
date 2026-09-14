@@ -104,12 +104,23 @@ const sb = {
 
   // Crear una sucursal nueva (solo el dueño). Explícito: nunca automático.
   async crearSucursal(userId, nombre, rubro) {
+    // Cada sucursal tiene su propia suscripción, y arranca SIN prueba gratis:
+    // nace en "past_due" para que el dueño la active pagando desde el día 1.
     const { data: neg, error } = await _sb
       .from("negocios")
-      .insert({ user_id: userId, nombre, rubro: rubro || "", es_principal: false })
+      .insert({
+        user_id: userId,
+        nombre,
+        rubro: rubro || "",
+        es_principal: false,
+        subscription_status: "past_due",
+        trial_ends_at: null,
+        payment_failed_at: new Date().toISOString(),
+      })
       .select()
       .single();
     if (error) { console.error("crearSucursal:", error); throw new Error(error.message); }
+
     await _sb.from("caja").insert({ negocio_id: neg.id, abierta: false, monto: 0 });
     await _sb.from("miembros").insert({ negocio_id: neg.id, user_id: userId, rol: "dueno", permisos: ["*"] });
     return neg;
@@ -1047,7 +1058,7 @@ function NuevaSucursalModal({ onCrear, onClose }) {
   };
 
   return (
-    <Modal title="Agregar sucursal" subtitle="Cada sucursal tiene su propio stock, caja y ventas" onClose={onClose} width={430}>
+    <Modal title="Agregar sucursal" subtitle="Cada sucursal tiene su propio stock, caja y ventas" onClose={onClose} width={450}>
       <FieldRow label="Nombre de la sucursal *">
         <input
           style={G.inp()}
@@ -1065,9 +1076,19 @@ function NuevaSucursalModal({ onCrear, onClose }) {
         </select>
       </FieldRow>
 
-      <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"12px 16px", marginBottom:18, fontSize:12.5, color:"#92400e", lineHeight:1.5 }}>
-        ⚠️ Esta sucursal arranca vacía: sus productos, stock y caja son independientes del resto.
-        Se cobra como una suscripción aparte.
+      <div style={{ background:"#f4ecff", border:"2px solid #ddd0fb", borderRadius:12, padding:"16px 18px", marginBottom:16 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:"#6b21a8", marginBottom:8 }}>Cómo se cobra</div>
+        <div style={{ fontSize:26, fontWeight:800, color:"#9238FF", marginBottom:6 }}>
+          {fmtMoney(30000, "$")}<span style={{ fontSize:14, fontWeight:500, color:"#7c3aed" }}> /mes</span>
+        </div>
+        <div style={{ fontSize:12.5, color:"#6b21a8", lineHeight:1.55 }}>
+          Esta sucursal se cobra aparte, con su propia suscripción. Después de crearla vas a poder activarla desde <b>Suscripción</b>.
+          <br/>Sin prueba gratis: se paga desde el primer día.
+        </div>
+      </div>
+
+      <div style={{ background:"#f9fafb", borderRadius:10, padding:"12px 16px", marginBottom:18, fontSize:12.5, color:"#666", lineHeight:1.5 }}>
+        Arranca vacía: sus productos, stock y caja son independientes del resto.
       </div>
 
       {error && (
@@ -7924,6 +7945,8 @@ async function iniciarSuscripcion() {
       "Authorization": "Bearer " + session.access_token,
       "Content-Type": "application/json",
     },
+    // Cada sucursal tiene su propia suscripción: le decimos cuál está activando
+    body: JSON.stringify({ negocio_id: sb._negocioId }),
   });
   const data = await resp.json();
   if (!resp.ok) throw new Error(data?.error || "Error creando suscripción");
@@ -8073,7 +8096,7 @@ function AccesoBloqueadoScreen({ config, onSuscribir, onLogout }) {
 }
 
 // ─── Página de gestión de suscripción ───────────────────────
-function SuscripcionPage({ config, onSuscribir, onCancelar }) {
+function SuscripcionPage({ config, onSuscribir, onCancelar, sucursales = [] }) {
   const state = getSubscriptionState(config);
   const [loading, setLoading] = useState(false);
 
@@ -8137,7 +8160,12 @@ function SuscripcionPage({ config, onSuscribir, onCancelar }) {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span>Monto</span>
-                <span style={{ fontWeight: 600, color: "#111" }}>{fmtMoney(PRECIO_SUSCRIPCION, "$")}</span>
+                <span style={{ fontWeight: 600, color: "#111" }}>
+                  {fmtMoney(PRECIO_SUSCRIPCION, "$")}
+                  {sucursales.length > 1 && (
+                    <span style={{ fontWeight: 400, color: "#888", fontSize: 12.5 }}> (esta sucursal)</span>
+                  )}
+                </span>
               </div>
             </div>
           )}
@@ -8667,7 +8695,7 @@ export default function App() {
     equipo:<EquipoPage ctx={ctx}/>,
     consolidado:<ConsolidadoPage ctx={ctx}/>,
     remitos:<RemitosPage ctx={ctx}/>,
-    suscripcion:<SuscripcionPage config={config} onSuscribir={handleSuscribir} onCancelar={handleCancelar}/>,
+    suscripcion:<SuscripcionPage config={config} onSuscribir={handleSuscribir} onCancelar={handleCancelar} sucursales={sucursales}/>,
     config:<ConfigPage ctx={ctx}/>
   };
   const stockAlert = products.filter(p => p.stock <= (p.stockMinimo||3)).length;
