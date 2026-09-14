@@ -8410,6 +8410,26 @@ export default function App() {
     registrarEvento(page);
   }, [page, token, loaded]);
 
+  // Si el usuario quedó parado en una sección que no puede ver (cambió de sucursal
+  // o le sacaron un permiso), lo movemos a la primera que sí tenga habilitada.
+  // IMPORTANTE: este hook va acá arriba, antes de los returns condicionales de más
+  // abajo — si queda después, React deja de renderizar y la app sale en blanco.
+  useEffect(() => {
+    if (!loaded) return;
+    const esDueno = miRol === "dueno";
+    const permitido = (id) => {
+      if (id === "consolidado") return esDueno && sucursales.length >= 2;
+      if (["equipo","suscripcion","config"].includes(id)) return esDueno;
+      if (esDueno || misPermisos.includes("*")) return true;
+      return misPermisos.includes(id);
+    };
+    if (!permitido(page)) {
+      const primera = ["venta","dashboard","inventario","historial","estadisticas","proyeccion","finanzas","calculadora","remitos"]
+        .find(permitido);
+      if (primera) setPage(primera);
+    }
+  }, [miRol, misPermisos, loaded, page, sucursales.length]);
+
   const handleLogin = (access_token, userId) => { setToken({ access_token, userId }); setAuthReady(false); };
   const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); setSucursales([]); localStorage.removeItem("milocal_sucursal"); navegar("login"); };
 
@@ -8597,13 +8617,6 @@ export default function App() {
     if (n.soloDueno) return miRol === "dueno";
     return puedeVer(n.id);
   });
-
-  // Si el usuario quedó parado en una sección que no puede ver, lo movemos a la primera permitida
-  useEffect(() => {
-    if (!loaded || NAV.length === 0) return;
-    const permitida = NAV.some(n => n.id === page);
-    if (!permitida) setPage(NAV[0].id);
-  }, [miRol, misPermisos, loaded]);
 
   // ── Handlers de suscripción ──
   const handleSuscribir = async () => {
