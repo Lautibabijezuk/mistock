@@ -880,7 +880,7 @@ function EquipoPage({ ctx }) {
 
       {showNuevo && (
         <MiembroModal
-          onGuardar={async (datos) => { await llamar({ accion:"crear", ...datos }); await cargar(); }}
+          onGuardar={async (datos) => { const r = await llamar({ accion:"crear", ...datos }); await cargar(); return r; }}
           onClose={() => setShowNuevo(false)}
         />
       )}
@@ -903,6 +903,7 @@ function MiembroModal({ miembro, onGuardar, onClose }) {
   const [permisos, setPermisos] = useState(miembro?.permisos || ["venta"]);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState("");
+  const [yaExistia, setYaExistia] = useState(false);
 
   const toggle = (id) => {
     setPermisos(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
@@ -918,13 +919,39 @@ function MiembroModal({ miembro, onGuardar, onClose }) {
     setGuardando(true);
     setError("");
     try {
-      await onGuardar(esEdicion ? { permisos, nombre } : { email, password, nombre, permisos });
+      const res = await onGuardar(esEdicion ? { permisos, nombre } : { email, password, nombre, permisos });
+      // Si el email ya tenía cuenta en MiLocal, NO le cambiamos la contraseña
+      // (sería un riesgo). Hay que avisarlo o la persona no va a poder entrar.
+      if (!esEdicion && res?.ya_existia) {
+        setYaExistia(true);
+        setGuardando(false);
+        return;
+      }
       onClose();
     } catch (e) {
       setError(e.message);
       setGuardando(false);
     }
   };
+
+  // Aviso cuando el email ya tenía cuenta
+  if (yaExistia) {
+    return (
+      <Modal title="Ya tenía cuenta en MiLocal" subtitle="La agregamos a tu equipo" onClose={onClose} width={460}>
+        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"16px 18px", marginBottom:18, fontSize:13.5, color:"#92400e", lineHeight:1.6 }}>
+          <b>{email}</b> ya estaba registrado en MiLocal.
+          <br/><br/>
+          Lo sumamos a tu equipo con los permisos que elegiste, pero <b>tiene que entrar con la contraseña que ya usaba</b> — no con la que acabás de escribir.
+          <br/><br/>
+          Por seguridad no podemos cambiarle la contraseña a una cuenta que ya existe.
+        </div>
+        <div style={{ fontSize:13, color:"#666", marginBottom:18, lineHeight:1.55 }}>
+          Si no recuerda su contraseña, puede recuperarla desde <b>"¿Olvidaste tu contraseña?"</b> en la pantalla de inicio de sesión.
+        </div>
+        <button onClick={onClose} style={{ ...G.btn("dark"), width:"100%", justifyContent:"center" }}>Entendido</button>
+      </Modal>
+    );
+  }
 
   return (
     <Modal
