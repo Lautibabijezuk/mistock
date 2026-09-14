@@ -61,9 +61,58 @@ const sb = {
   },
 
   async getNegocio(userId) {
-    const { data, error } = await _sb.from("negocios").select("*").eq("user_id", userId).maybeSingle();
-    if (error) console.error("getNegocio:", error);
-    return data;
+    // Traemos el MÁS ANTIGUO en vez de usar maybeSingle():
+    // maybeSingle() tira error si hay más de una fila, y ese error hacía que
+    // el código de arriba creyera que el usuario no tenía negocio y creara otro
+    // (bola de nieve: cada login generaba una cuenta vacía nueva).
+    const { data, error } = await _sb
+      .from("negocios")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true })
+      .limit(1);
+    if (error) {
+      console.error("getNegocio:", error);
+      // Devolvemos undefined para distinguir "falló la consulta" de "no tiene negocio".
+      // Si falló, NO hay que crear uno nuevo.
+      return undefined;
+    }
+    return (data && data.length > 0) ? data[0] : null;
+  },
+
+  // Todos los negocios a los que el usuario tiene acceso (propios + donde es miembro)
+  async getMisNegocios() {
+    const { data, error } = await _sb
+      .from("negocios")
+      .select("*")
+      .order("created_at", { ascending: true });
+    if (error) { console.error("getMisNegocios:", error); return undefined; }
+    return data || [];
+  },
+
+  // Rol y permisos del usuario actual en un negocio puntual
+  async getMembresia(negocioId, userId) {
+    const { data, error } = await _sb
+      .from("miembros")
+      .select("rol, permisos, nombre")
+      .eq("negocio_id", negocioId)
+      .eq("user_id", userId)
+      .limit(1);
+    if (error) { console.error("getMembresia:", error); return null; }
+    return (data && data.length > 0) ? data[0] : null;
+  },
+
+  // Crear una sucursal nueva (solo el dueño). Explícito: nunca automático.
+  async crearSucursal(userId, nombre, rubro) {
+    const { data: neg, error } = await _sb
+      .from("negocios")
+      .insert({ user_id: userId, nombre, rubro: rubro || "", es_principal: false })
+      .select()
+      .single();
+    if (error) { console.error("crearSucursal:", error); throw new Error(error.message); }
+    await _sb.from("caja").insert({ negocio_id: neg.id, abierta: false, monto: 0 });
+    await _sb.from("miembros").insert({ negocio_id: neg.id, user_id: userId, rol: "dueno", permisos: ["*"] });
+    return neg;
   },
   async updateNegocio(data) {
     const { error } = await _sb.from("negocios").update(data).eq("id", this._negocioId);
@@ -539,6 +588,480 @@ function StatCard({ icon, bg, label, value, badge, textColor, badgeBg, badgeColo
 // ═══════════════════════════════════════════════════════════
 // MODALS
 // ═══════════════════════════════════════════════════════════
+
+// Secciones que se le pueden habilitar a un empleado
+const SECCIONES_PERMISOS = [
+  { id:"venta", label:"Nueva Venta", desc:"Cobrar y registrar ventas" },
+  { id:"dashboard", label:"Dashboard", desc:"Resumen del día y del mes" },
+  { id:"inventario", label:"Productos e Inventario", desc:"Ver y editar productos y stock" },
+  { id:"historial", label:"Historial", desc:"Ver todas las ventas anteriores" },
+  { id:"estadisticas", label:"Estadísticas", desc:"Gráficos y análisis de ventas" },
+  { id:"proyeccion", label:"Proyección", desc:"Metas y proyección del mes" },
+  { id:"finanzas", label:"Finanzas", desc:"Ingresos, gastos y ganancias" },
+  { id:"calculadora", label:"Calculadora de precios", desc:"Calcular precios de venta" },
+  { id:"remitos", label:"Remitos", desc:"Remitos y proveedores" },
+];
+
+function ConsolidadoPage({ ctx }) {
+  const { config, sucursales } = ctx;
+  const [datos, setDatos] = useState(null);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [periodo, setPeriodo] = useState("mes");
+
+  useEffect(() => {
+    const cargar = async () => {
+      setCargando(true);
+      try {
+        const hoy = todayStr();
+        const desde = periodo === "hoy" ? hoy
+          : periodo === "semana" ? subDays(hoy, 7)
+          : periodo === "mes" ? hoy.slice(0,8) + "01"
+          : subDays(hoy, 365);
+
+        const ids = sucursales.map(s => s.id);
+        // Las políticas de seguridad ya limitan a los negocios propios,
+        // pero filtramos igual para no traer de más.
+        const { data: ventas, error: errV } = await _sb
+          .from("ventas")
+          .select("negocio_id, fecha, total, anulada, items")
+          .in("negocio_id", ids)
+          .gte("fecha", desde)
+          .lte("fecha", hoy);
+        if (errV) throw new Error(errV.message);
+
+        const { data: productos, error: errP } = await _sb
+          .from("productos")
+          .select("negocio_id, stock, costo, precio")
+          .in("negocio_id", ids);
+        if (errP) throw new Error(errP.message);
+
+        const porSucursal = {};
+        sucursales.forEach(s => {
+          porSucursal[s.id] = {
+            id: s.id, nombre: s.nombre,
+            ingresos: 0, ventas: 0, unidades: 0,
+            productos: 0, valorStock: 0,
+          };
+        });
+
+        (ventas || []).forEach(v => {
+          if (v.anulada) return;
+          const b = porSucursal[v.negocio_id];
+          if (!b) return;
+          b.ingresos += parseFloat(v.total) || 0;
+          b.ventas += 1;
+          b.unidades += Array.isArray(v.items) ? v.items.reduce((a,i) => a + (i.cantidad||0), 0) : 0;
+        });
+
+        (productos || []).forEach(p => {
+          const b = porSucursal[p.negocio_id];
+          if (!b) return;
+          b.productos += 1;
+          b.valorStock += (parseFloat(p.costo)||0) * (p.stock||0);
+        });
+
+        const lista = Object.values(porSucursal).sort((a,b) => b.ingresos - a.ingresos);
+        setDatos({
+          sucursales: lista,
+          totalIngresos: lista.reduce((a,s) => a+s.ingresos, 0),
+          totalVentas: lista.reduce((a,s) => a+s.ventas, 0),
+          totalUnidades: lista.reduce((a,s) => a+s.unidades, 0),
+          totalStock: lista.reduce((a,s) => a+s.valorStock, 0),
+        });
+        setError("");
+      } catch (e) {
+        setError(e.message);
+      }
+      setCargando(false);
+    };
+    if (sucursales.length > 0) cargar();
+  }, [periodo, sucursales]);
+
+  const PERIODOS = [["hoy","Hoy"],["semana","7 días"],["mes","Este mes"],["anio","Último año"]];
+
+  return (
+    <div className="app-page-pad" style={G.page}>
+      <div style={{ marginBottom:20 }}>
+        <h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Todos los locales</h1>
+        <p style={{ margin:0, color:"#888", fontSize:14 }}>Comparativa entre tus {sucursales.length} sucursales</p>
+      </div>
+
+      <div style={{ display:"flex", gap:8, marginBottom:22, flexWrap:"wrap" }}>
+        {PERIODOS.map(([id,l]) => (
+          <button key={id} onClick={() => setPeriodo(id)} style={{
+            background: periodo===id ? "#111" : "#fff", color: periodo===id ? "#fff" : "#666",
+            border:"1px solid #e5e7eb", borderRadius:20, padding:"7px 16px",
+            fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit",
+          }}>{l}</button>
+        ))}
+      </div>
+
+      {error && (
+        <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:10, padding:"12px 16px", marginBottom:18, fontSize:13.5, color:"#dc2626" }}>
+          {error}
+        </div>
+      )}
+
+      {cargando || !datos ? (
+        <div style={{ textAlign:"center", padding:"40px 0", color:"#aaa" }}>Sumando los números de todos los locales...</div>
+      ) : (
+        <>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:24 }}>
+            <StatCard icon={<DollarSign size={19}/>} bg="#dcfce7" label="Facturación total" value={fmtMoney(datos.totalIngresos, config.moneda)} />
+            <StatCard icon={<ShoppingBag size={19}/>} bg="#dbeafe" label="Ventas totales" value={datos.totalVentas} />
+            <StatCard icon={<Package size={19}/>} bg="#ede9fe" label="Unidades vendidas" value={datos.totalUnidades} />
+            <StatCard icon={<TrendingUp size={19}/>} bg="#fef3c7" label="Invertido en stock" value={fmtMoney(datos.totalStock, config.moneda)} />
+          </div>
+
+          <div style={{ ...G.card(), marginBottom:20 }}>
+            <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Facturación por local</h3>
+            <p style={{ margin:"0 0 18px", fontSize:12.5, color:"#999" }}>Comparativa del período elegido</p>
+            {datos.totalIngresos === 0 ? (
+              <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>No hay ventas en este período.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={Math.max(180, datos.sucursales.length * 52)}>
+                <BarChart data={datos.sucursales.map(s => ({ label:s.nombre, total:Math.round(s.ingresos) }))} layout="vertical" margin={{ top:4, right:24, left:4, bottom:4 }}>
+                  <XAxis type="number" tick={{ fontSize:11, fill:"#999" }} axisLine={false} tickLine={false} tickFormatter={v => `$${v>=1000000?(v/1000000).toFixed(1)+"M":v>=1000?(v/1000).toFixed(0)+"k":v}`}/>
+                  <YAxis type="category" dataKey="label" tick={{ fontSize:12.5, fill:"#333" }} axisLine={false} tickLine={false} width={130}/>
+                  <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [fmtMoney(v, config.moneda), "facturado"]}/>
+                  <Bar dataKey="total" fill="#9238FF" radius={[0,8,8,0]} maxBarSize={30}/>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          <div style={{ ...G.card() }}>
+            <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Detalle por local</h3>
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13.5 }}>
+                <thead>
+                  <tr style={{ background:"#f9fafb", borderBottom:"1px solid #e5e7eb" }}>
+                    {["Local","Facturado","Ventas","Unidades","Ticket prom.","Productos","Invertido"].map(h => (
+                      <th key={h} style={{ padding:"11px 14px", textAlign:"left", fontWeight:600, color:"#666", whiteSpace:"nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {datos.sucursales.map(s => {
+                    const pct = datos.totalIngresos > 0 ? (s.ingresos/datos.totalIngresos)*100 : 0;
+                    return (
+                      <tr key={s.id} style={{ borderBottom:"1px solid #f3f4f6" }}>
+                        <td style={{ padding:"11px 14px" }}>
+                          <div style={{ fontWeight:600 }}>{s.nombre}</div>
+                          <div style={{ fontSize:11.5, color:"#aaa" }}>{pct.toFixed(0)}% del total</div>
+                        </td>
+                        <td style={{ padding:"11px 14px", fontWeight:700, color:"#16a34a", whiteSpace:"nowrap" }}>{fmtMoney(s.ingresos, config.moneda)}</td>
+                        <td style={{ padding:"11px 14px" }}>{s.ventas}</td>
+                        <td style={{ padding:"11px 14px" }}>{s.unidades}</td>
+                        <td style={{ padding:"11px 14px", whiteSpace:"nowrap" }}>{fmtMoney(s.ventas > 0 ? s.ingresos/s.ventas : 0, config.moneda)}</td>
+                        <td style={{ padding:"11px 14px" }}>{s.productos}</td>
+                        <td style={{ padding:"11px 14px", whiteSpace:"nowrap", color:"#666" }}>{fmtMoney(s.valorStock, config.moneda)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p style={{ margin:"14px 0 0", fontSize:12, color:"#aaa", lineHeight:1.5 }}>
+              El stock no se suma entre locales porque cada sucursal tiene su propio catálogo de productos.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function EquipoPage({ ctx }) {
+  const { config } = ctx;
+  const [equipo, setEquipo] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [showNuevo, setShowNuevo] = useState(false);
+  const [editando, setEditando] = useState(null);
+  const [procesando, setProcesando] = useState(false);
+
+  const llamar = async (body) => {
+    const session = await sb.getSession();
+    const resp = await fetch(`${SUPABASE_FUNC_URL}/equipo`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, negocio_id: sb._negocioId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "Algo salió mal");
+    return data;
+  };
+
+  const cargar = async () => {
+    try {
+      const data = await llamar({ accion: "listar" });
+      setEquipo(data.equipo || []);
+      setError("");
+    } catch (e) { setError(e.message); }
+    setCargando(false);
+  };
+
+  useEffect(() => { cargar(); }, []);
+
+  const eliminar = async (m) => {
+    if (!confirm(`¿Sacar a ${m.nombre || m.email} del equipo?\n\nNo va a poder entrar más a este negocio.`)) return;
+    setProcesando(true);
+    try { await llamar({ accion: "eliminar", miembro_id: m.id }); await cargar(); }
+    catch (e) { alert("Error: " + e.message); }
+    setProcesando(false);
+  };
+
+  return (
+    <div className="app-page-pad" style={G.page}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:14, marginBottom:24 }}>
+        <div>
+          <h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Equipo</h1>
+          <p style={{ margin:0, color:"#888", fontSize:14 }}>Cuentas con acceso a {config.nombre}</p>
+        </div>
+        <button onClick={() => setShowNuevo(true)} style={{ ...G.btn("dark") }}>
+          <Plus size={15}/> Agregar persona
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:10, padding:"12px 16px", marginBottom:18, fontSize:13.5, color:"#dc2626" }}>
+          {error}
+        </div>
+      )}
+
+      {cargando ? (
+        <div style={{ textAlign:"center", padding:"40px 0", color:"#aaa" }}>Cargando equipo...</div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          {equipo.map(m => (
+            <div key={m.id} style={{ ...G.card(), display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:14, flexWrap:"wrap" }}>
+              <div style={{ minWidth:0, flex:1 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:5, flexWrap:"wrap" }}>
+                  <span style={{ fontWeight:700, fontSize:15 }}>{m.nombre || m.email || "Sin nombre"}</span>
+                  <span style={{
+                    background: m.esDueno ? "#f4ecff" : "#f3f4f6",
+                    color: m.esDueno ? "#7c3aed" : "#6b7280",
+                    fontSize:11, fontWeight:700, padding:"2px 9px", borderRadius:20,
+                  }}>{m.esDueno ? "Dueño" : "Empleado"}</span>
+                </div>
+                <div style={{ fontSize:13, color:"#888", marginBottom:8 }}>{m.email}</div>
+                {!m.esDueno && (
+                  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                    {(m.permisos || []).map(p => {
+                      const sec = SECCIONES_PERMISOS.find(s => s.id === p);
+                      return (
+                        <span key={p} style={{ background:"#f9fafb", border:"1px solid #e5e7eb", borderRadius:20, padding:"3px 10px", fontSize:11.5, color:"#555" }}>
+                          {sec?.label || p}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {m.esDueno && <div style={{ fontSize:12.5, color:"#aaa" }}>Acceso completo a todas las secciones</div>}
+              </div>
+              {!m.esDueno && (
+                <div style={{ display:"flex", gap:7, flexShrink:0 }}>
+                  <button onClick={() => setEditando(m)} disabled={procesando}
+                    style={{ background:"#f3f4f6", border:"none", borderRadius:7, padding:"8px 13px", fontSize:12.5, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                    Permisos
+                  </button>
+                  <button onClick={() => eliminar(m)} disabled={procesando}
+                    style={{ background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:7, padding:"8px 13px", fontSize:12.5, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                    Sacar
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showNuevo && (
+        <MiembroModal
+          onGuardar={async (datos) => { await llamar({ accion:"crear", ...datos }); await cargar(); }}
+          onClose={() => setShowNuevo(false)}
+        />
+      )}
+      {editando && (
+        <MiembroModal
+          miembro={editando}
+          onGuardar={async (datos) => { await llamar({ accion:"actualizar", miembro_id: editando.id, ...datos }); await cargar(); }}
+          onClose={() => setEditando(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function MiembroModal({ miembro, onGuardar, onClose }) {
+  const esEdicion = !!miembro;
+  const [nombre, setNombre] = useState(miembro?.nombre || "");
+  const [email, setEmail] = useState(miembro?.email || "");
+  const [password, setPassword] = useState("");
+  const [permisos, setPermisos] = useState(miembro?.permisos || ["venta"]);
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState("");
+
+  const toggle = (id) => {
+    setPermisos(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
+  };
+
+  const guardar = async () => {
+    if (guardando) return;
+    if (!esEdicion && (!email.trim() || password.length < 6)) {
+      setError("Completá el email y una contraseña de al menos 6 caracteres");
+      return;
+    }
+    if (permisos.length === 0) { setError("Elegí al menos una sección"); return; }
+    setGuardando(true);
+    setError("");
+    try {
+      await onGuardar(esEdicion ? { permisos, nombre } : { email, password, nombre, permisos });
+      onClose();
+    } catch (e) {
+      setError(e.message);
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={esEdicion ? `Permisos de ${miembro.nombre || miembro.email}` : "Agregar persona al equipo"}
+      subtitle={esEdicion ? "Elegí qué secciones puede ver" : "Creale una cuenta y definí a qué accede"}
+      onClose={onClose}
+      width={520}
+    >
+      {!esEdicion && (
+        <>
+          <FieldRow label="Nombre">
+            <input style={G.inp()} value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: Martín (empleado)" />
+          </FieldRow>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:14 }}>
+            <FieldRow label="Email *">
+              <input style={G.inp()} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="empleado@email.com" />
+            </FieldRow>
+            <FieldRow label="Contraseña *">
+              <input style={G.inp()} type="text" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" />
+            </FieldRow>
+          </div>
+          <div style={{ background:"#f4ecff", borderRadius:9, padding:"10px 14px", marginBottom:18, fontSize:12.5, color:"#6b21a8", lineHeight:1.5 }}>
+            💡 Pasale vos estos datos para que pueda entrar. Después puede cambiar la contraseña desde su cuenta.
+          </div>
+        </>
+      )}
+
+      <label style={{ ...G.label, marginBottom:10, display:"block" }}>¿Qué puede ver y hacer?</label>
+      <div style={{ display:"flex", flexDirection:"column", gap:7, marginBottom:18, maxHeight:300, overflowY:"auto" }}>
+        {SECCIONES_PERMISOS.map(s => {
+          const activo = permisos.includes(s.id);
+          return (
+            <label key={s.id} onClick={() => toggle(s.id)} style={{
+              display:"flex", alignItems:"flex-start", gap:11, cursor:"pointer",
+              border: activo ? "2px solid #9238FF" : "1px solid #e5e7eb",
+              background: activo ? "#f9f5ff" : "#fff",
+              borderRadius:10, padding:"11px 14px",
+            }}>
+              <div style={{
+                width:19, height:19, borderRadius:5, flexShrink:0, marginTop:1,
+                background: activo ? "#9238FF" : "#fff",
+                border: activo ? "none" : "2px solid #d1d5db",
+                display:"flex", alignItems:"center", justifyContent:"center",
+              }}>
+                {activo && <CheckCircle2 size={13} color="#fff"/>}
+              </div>
+              <div>
+                <div style={{ fontSize:13.5, fontWeight:600, color:"#111" }}>{s.label}</div>
+                <div style={{ fontSize:12, color:"#999", marginTop:1 }}>{s.desc}</div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+
+      <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:9, padding:"10px 14px", marginBottom:18, fontSize:12.5, color:"#92400e", lineHeight:1.5 }}>
+        🔒 Suscripción, Configuración y Equipo son siempre exclusivas del dueño.
+      </div>
+
+      {error && (
+        <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:9, padding:"10px 14px", marginBottom:14, fontSize:13, color:"#dc2626" }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={onClose} style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }}>Cancelar</button>
+        <button onClick={guardar} disabled={guardando} style={{ ...G.btn(guardando ? "light" : "dark"), flex:1, justifyContent:"center" }}>
+          {guardando ? "Guardando..." : esEdicion ? "Guardar permisos" : "Crear cuenta"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function NuevaSucursalModal({ onCrear, onClose }) {
+  const [nombre, setNombre] = useState("");
+  const [rubro, setRubro] = useState("");
+  const [creando, setCreando] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleCrear = async () => {
+    if (!nombre.trim() || creando) return;
+    setCreando(true);
+    setError("");
+    try {
+      await onCrear(nombre.trim(), rubro);
+      onClose();
+    } catch (e) {
+      setError(e.message || "No se pudo crear la sucursal");
+      setCreando(false);
+    }
+  };
+
+  return (
+    <Modal title="Agregar sucursal" subtitle="Cada sucursal tiene su propio stock, caja y ventas" onClose={onClose} width={430}>
+      <FieldRow label="Nombre de la sucursal *">
+        <input
+          style={G.inp()}
+          value={nombre}
+          onChange={e => setNombre(e.target.value)}
+          placeholder="Ej: Sucursal Centro"
+          autoFocus
+          onKeyDown={e => { if (e.key === "Enter") handleCrear(); }}
+        />
+      </FieldRow>
+      <FieldRow label="Rubro">
+        <select style={G.inp()} value={rubro} onChange={e => setRubro(e.target.value)}>
+          <option value="">Elegí un rubro</option>
+          {RUBROS.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </FieldRow>
+
+      <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"12px 16px", marginBottom:18, fontSize:12.5, color:"#92400e", lineHeight:1.5 }}>
+        ⚠️ Esta sucursal arranca vacía: sus productos, stock y caja son independientes del resto.
+        Se cobra como una suscripción aparte.
+      </div>
+
+      {error && (
+        <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:10, padding:"10px 16px", marginBottom:14, fontSize:13, color:"#dc2626" }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={onClose} style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }}>Cancelar</button>
+        <button
+          onClick={handleCrear}
+          disabled={!nombre.trim() || creando}
+          style={{ ...G.btn(nombre.trim() && !creando ? "dark" : "light"), flex:1, justifyContent:"center" }}
+        >
+          {creando ? "Creando..." : "Crear sucursal"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
 
 function SugerenciaModal({ onSave, onClose }) {
   const [texto, setTexto] = useState("");
@@ -6093,6 +6616,8 @@ function AdminPage({ onVolver }) {
   const [ventasAdmin, setVentasAdmin] = useState([]);
   const [uso, setUso] = useState(null);
   const [perfilAbierto, setPerfilAbierto] = useState(null);
+  const [confirmCancelarMP, setConfirmCancelarMP] = useState(null);
+  const [textoConfirmMP, setTextoConfirmMP] = useState("");
   const [filtroActividad, setFiltroActividad] = useState("active");
   const [filtroSugerencias, setFiltroSugerencias] = useState("nueva");
   const [tabAdmin, setTabAdmin] = useState("resumen");
@@ -7208,28 +7733,82 @@ function AdminPage({ onVolver }) {
               </div>
 
               {puedeAccionar && (
-                <div style={{ display:"flex", gap:8 }}>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                   <button
                     onClick={() => ejecutarAccion(n.id, "regalar_mes")}
                     disabled={procesando === n.id + "regalar_mes"}
-                    style={{ flex:1, background:"#f4ecff", color:"#7c3aed", border:"none", borderRadius:9, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+                    style={{ flex:"1 1 45%", background:"#f4ecff", color:"#7c3aed", border:"none", borderRadius:9, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
                   >
                     {procesando === n.id + "regalar_mes" ? "..." : "🎁 Regalar mes"}
                   </button>
                   {tieneCortesia(n) && (
                     <button
                       onClick={() => { setConfirmCancelar(n); setPerfilAbierto(null); }}
-                      style={{ flex:1, background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:9, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+                      style={{ flex:"1 1 45%", background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:9, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
                     >
                       Quitar regalo
                     </button>
                   )}
                 </div>
               )}
+
+              {/* Cancelar la suscripción real en Mercado Pago */}
+              {n.mp_preapproval_id && n.subscription_status !== "cancelled" && (
+                <div style={{ marginTop:16, paddingTop:16, borderTop:"1px solid #f0f0f0" }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:10, textTransform:"uppercase", letterSpacing:"0.5px" }}>Zona de riesgo</div>
+                  <button
+                    onClick={() => { setConfirmCancelarMP(n); setPerfilAbierto(null); }}
+                    style={{ width:"100%", background:"#fff", color:"#dc2626", border:"2px solid #fecaca", borderRadius:9, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+                  >
+                    Cancelar suscripción en Mercado Pago
+                  </button>
+                  <p style={{ margin:"8px 0 0", fontSize:11.5, color:"#aaa", lineHeight:1.45 }}>
+                    Deja de cobrarle definitivamente. No se puede deshacer desde acá: si vuelve, tiene que suscribirse de nuevo.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         );
       })()}
+
+      {/* Modal de confirmación para CANCELAR LA SUSCRIPCIÓN EN MERCADO PAGO */}
+      {confirmCancelarMP && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }} onClick={() => { setConfirmCancelarMP(null); setTextoConfirmMP(""); }}>
+          <div style={{ background:"#fff", borderRadius:12, padding:"26px 28px", width:"90%", maxWidth:440 }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin:"0 0 12px", fontSize:17, fontWeight:800, color:"#dc2626" }}>Cancelar la suscripción de {confirmCancelarMP.nombre}</h3>
+            <p style={{ margin:"0 0 14px", fontSize:14, color:"#444", lineHeight:1.55 }}>
+              Se va a cancelar el cobro automático en Mercado Pago. <b>No le vas a poder volver a cobrar desde acá</b> — si quiere volver, tiene que suscribirse de nuevo desde la app.
+            </p>
+            <p style={{ margin:"0 0 8px", fontSize:13, color:"#666" }}>
+              Para confirmar, escribí <b>{confirmCancelarMP.nombre}</b>:
+            </p>
+            <input
+              value={textoConfirmMP}
+              onChange={e => setTextoConfirmMP(e.target.value)}
+              placeholder={confirmCancelarMP.nombre}
+              autoFocus
+              style={{ width:"100%", padding:"11px 14px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:14, marginBottom:18, fontFamily:"inherit" }}
+            />
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={() => { setConfirmCancelarMP(null); setTextoConfirmMP(""); }} style={{ flex:1, background:"#f3f4f6", border:"none", borderRadius:8, padding:"11px", cursor:"pointer", fontFamily:"inherit", fontWeight:600 }}>Volver</button>
+              <button
+                disabled={textoConfirmMP.trim() !== confirmCancelarMP.nombre || procesando === confirmCancelarMP.id + "cancelar_suscripcion_mp"}
+                onClick={async () => { await ejecutarAccion(confirmCancelarMP.id, "cancelar_suscripcion_mp"); setConfirmCancelarMP(null); setTextoConfirmMP(""); }}
+                style={{
+                  flex:1,
+                  background: textoConfirmMP.trim() === confirmCancelarMP.nombre ? "#dc2626" : "#fca5a5",
+                  color:"#fff", border:"none", borderRadius:8, padding:"11px",
+                  cursor: textoConfirmMP.trim() === confirmCancelarMP.nombre ? "pointer" : "not-allowed",
+                  fontFamily:"inherit", fontWeight:700
+                }}
+              >
+                {procesando === confirmCancelarMP.id + "cancelar_suscripcion_mp" ? "Cancelando..." : "Sí, cancelar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de confirmación para quitar el mes regalado */}
       {confirmCancelar && (
@@ -7596,6 +8175,13 @@ function SuscripcionPage({ config, onSuscribir, onCancelar }) {
 
 export default function App() {
   const [page, setPage] = useState("dashboard");
+  // ── Multi-sucursal ──
+  const [sucursales, setSucursales] = useState([]);
+  const [miRol, setMiRol] = useState("dueno");
+  const [misPermisos, setMisPermisos] = useState(["*"]);
+  const [cambiandoSucursal, setCambiandoSucursal] = useState(false);
+  const [menuSucursales, setMenuSucursales] = useState(false);
+  const [showNuevaSucursal, setShowNuevaSucursal] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [token, setToken] = useState(null);
@@ -7691,18 +8277,55 @@ export default function App() {
   // ── Cargar datos cuando hay token ────────────────────────
   useEffect(() => {
     if (!token) return;
+    if (loaded) return;   // ya cargado: evita el bucle al setLoaded(true)
     const loadData = async () => {
       try {
         const userId = token.userId;
-        let negocio = await sb.getNegocio(userId);
-        // Si no hay negocio, crear uno automáticamente
-        if (!negocio) {
-          const { data: neg } = await _sb.from("negocios").insert({ user_id: userId, nombre: "Mi Negocio" }).select().single();
-          negocio = neg;
-          if (neg) await _sb.from("caja").insert({ negocio_id: neg.id, abierta: false, monto: 0 });
+
+        // Traemos TODAS las sucursales a las que este usuario tiene acceso
+        const negocios = await sb.getMisNegocios();
+
+        // undefined = la consulta falló (red, permisos, etc). En ese caso NO creamos
+        // nada: si creáramos, generaríamos cuentas vacías duplicadas.
+        if (negocios === undefined) {
+          console.error("No se pudo verificar los negocios del usuario. No se crea uno nuevo por seguridad.");
+          setAuthReady(true);
+          setLoaded(true);
+          return;
         }
+
+        let negocio;
+        if (negocios.length === 0) {
+          // Confirmado que no tiene ninguno → recién ahí creamos el primero
+          const { data: neg, error: errCrear } = await _sb
+            .from("negocios")
+            .insert({ user_id: userId, nombre: "Mi Negocio", es_principal: true })
+            .select()
+            .single();
+          if (errCrear) {
+            console.error("Error creando negocio:", errCrear);
+            setAuthReady(true);
+            setLoaded(true);
+            return;
+          }
+          negocio = neg;
+          await _sb.from("caja").insert({ negocio_id: neg.id, abierta: false, monto: 0 });
+          await _sb.from("miembros").insert({ negocio_id: neg.id, user_id: userId, rol: "dueno", permisos: ["*"] });
+        } else {
+          // Respetamos la última sucursal elegida, si sigue siendo accesible
+          const guardado = localStorage.getItem("milocal_sucursal");
+          negocio = negocios.find(n => n.id === guardado) || negocios[0];
+        }
+
         if (!negocio) { setAuthReady(true); setLoaded(true); return; }
         sb._negocioId = negocio.id;
+        setSucursales(negocios.length ? negocios : [negocio]);
+
+        // Rol y permisos del usuario en ESTA sucursal
+        const membresia = await sb.getMembresia(negocio.id, userId);
+        const esDuenoReal = negocio.user_id === userId;
+        setMiRol(esDuenoReal ? "dueno" : (membresia?.rol || "empleado"));
+        setMisPermisos(esDuenoReal ? ["*"] : (membresia?.permisos || ["venta"]));
 
         const [prods, ventasData, cajaData, gastosData, remitosData, provData] = await Promise.all([
           sb.get("productos", "nombre"),
@@ -7734,7 +8357,7 @@ export default function App() {
       setAuthReady(true); setLoaded(true);
     };
     loadData();
-  }, [token]);
+  }, [token, loaded]);
 
   // ── Revisión periódica del estado de suscripción ──────────
   // Sin esto, si el usuario deja la pestaña abierta durante días, no se entera
@@ -7788,7 +8411,30 @@ export default function App() {
   }, [page, token, loaded]);
 
   const handleLogin = (access_token, userId) => { setToken({ access_token, userId }); setAuthReady(false); };
-  const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); navegar("login"); };
+  const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); setSucursales([]); localStorage.removeItem("milocal_sucursal"); navegar("login"); };
+
+  // ── Cambiar de sucursal: recarga todos los datos del local elegido ──
+  const cambiarSucursal = async (negocioId) => {
+    if (negocioId === sb._negocioId || cambiandoSucursal) return;
+    setCambiandoSucursal(true);
+    try {
+      localStorage.setItem("milocal_sucursal", negocioId);
+      setLoaded(false);          // dispara la recarga completa de datos
+      setPage("dashboard");      // evitamos quedar en una sección sin permiso
+    } finally {
+      setCambiandoSucursal(false);
+    }
+  };
+
+  // ── Crear una sucursal nueva (solo el dueño) ──
+  const crearSucursal = async (nombre, rubro) => {
+    if (!token?.userId) throw new Error("Sesión no válida");
+    const neg = await sb.crearSucursal(token.userId, nombre, rubro);
+    setSucursales(prev => [...prev, neg]);
+    await cambiarSucursal(neg.id);
+    return neg;
+  };
+
 
   // ── Guardar config en Supabase ───────────────────────────
   const saveConfig = async (newConfig) => {
@@ -7920,12 +8566,14 @@ export default function App() {
   const ctx = { config, setConfig: saveConfig, products, setProducts, sales, setSales, caja, setCaja, gastos, setGastos, remitos, setRemitos, proveedores, setProveedores, setPage,
     // Supabase DB operations
     saveProduct, saveProducts, deleteProduct, saveVenta, saveCaja, saveGasto, deleteGasto, saveProveedor, deleteProveedor, saveRemito, saveSugerencia,
+    sucursales, miRol, misPermisos, cambiarSucursal, crearSucursal,
     handleLogout,
   };
 
-  const NAV = [
+  const NAV_COMPLETO = [
     { id:"venta", label:"Nueva Venta", icon:<ShoppingCart size={16}/> },
     { id:"dashboard", label:"Dashboard", icon:<LayoutDashboard size={16}/> },
+    { id:"consolidado", label:"Todos los locales", icon:<BarChart2 size={16}/>, soloDueno:true, soloMultiple:true },
     { id:"inventario", label:"Productos e Inventario", icon:<Package size={16}/> },
     { id:"historial", label:"Historial", icon:<Clock size={16}/> },
     { id:"estadisticas", label:"Estadísticas", icon:<TrendingUp size={16}/> },
@@ -7933,9 +8581,29 @@ export default function App() {
     { id:"finanzas", label:"Finanzas", icon:<DollarSign size={16}/> },
     { id:"calculadora", label:"Calculadora de precios", icon:<Calculator size={16}/> },
     { id:"remitos", label:"Remitos", icon:<FileText size={16}/> },
-    { id:"suscripcion", label:"Suscripción", icon:<DollarSign size={16}/> },
-    { id:"config", label:"Configuración", icon:<Settings size={16}/> },
+    { id:"equipo", label:"Equipo", icon:<User size={16}/>, soloDueno:true },
+    { id:"suscripcion", label:"Suscripción", icon:<DollarSign size={16}/>, soloDueno:true },
+    { id:"config", label:"Configuración", icon:<Settings size={16}/>, soloDueno:true },
   ];
+
+  // El dueño ve todo ("*"). Un empleado solo lo que se le habilitó.
+  const puedeVer = (seccionId) => {
+    if (miRol === "dueno" || misPermisos.includes("*")) return true;
+    return misPermisos.includes(seccionId);
+  };
+
+  const NAV = NAV_COMPLETO.filter(n => {
+    if (n.soloMultiple && sucursales.length < 2) return false;
+    if (n.soloDueno) return miRol === "dueno";
+    return puedeVer(n.id);
+  });
+
+  // Si el usuario quedó parado en una sección que no puede ver, lo movemos a la primera permitida
+  useEffect(() => {
+    if (!loaded || NAV.length === 0) return;
+    const permitida = NAV.some(n => n.id === page);
+    if (!permitida) setPage(NAV[0].id);
+  }, [miRol, misPermisos, loaded]);
 
   // ── Handlers de suscripción ──
   const handleSuscribir = async () => {
@@ -7956,6 +8624,8 @@ export default function App() {
     proyeccion:<ProyeccionPage ctx={ctx}/>,
     finanzas:<FinanzasPage ctx={ctx}/>,
     calculadora:<CalculadoraPreciosPage ctx={ctx}/>,
+    equipo:<EquipoPage ctx={ctx}/>,
+    consolidado:<ConsolidadoPage ctx={ctx}/>,
     remitos:<RemitosPage ctx={ctx}/>,
     suscripcion:<SuscripcionPage config={config} onSuscribir={handleSuscribir} onCancelar={handleCancelar}/>,
     config:<ConfigPage ctx={ctx}/>
@@ -8049,6 +8719,62 @@ export default function App() {
               <X size={20}/>
             </button>
           </div>
+
+          {/* ── Selector de sucursal (solo si hay más de una, o si es dueño) ── */}
+          {(sucursales.length > 1 || miRol === "dueno") && (
+            <div style={{ padding:"12px 12px 0", position:"relative" }}>
+              <button
+                onClick={() => setMenuSucursales(v => !v)}
+                style={{
+                  width:"100%", display:"flex", alignItems:"center", gap:8,
+                  background:"var(--bg-card)", border:"1px solid var(--border-mid)", borderRadius:8,
+                  padding:"9px 12px", cursor:"pointer", fontFamily:"inherit", textAlign:"left",
+                }}
+              >
+                <Store size={14} style={{ color:"var(--accent)", flexShrink:0 }}/>
+                <span style={{ flex:1, fontSize:13, fontWeight:600, color:"var(--text)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {config.nombre}
+                </span>
+                <ChevronRight size={13} style={{ color:"var(--text-muted)", flexShrink:0, transform: menuSucursales ? "rotate(90deg)" : "none", transition:"transform .15s" }}/>
+              </button>
+
+              {menuSucursales && (
+                <>
+                  <div onClick={() => setMenuSucursales(false)} style={{ position:"fixed", inset:0, zIndex:10 }}/>
+                  <div style={{ position:"absolute", top:"calc(100% + 4px)", left:12, right:12, background:"#fff", border:"1px solid var(--border-mid)", borderRadius:9, boxShadow:"0 10px 28px rgba(0,0,0,0.12)", zIndex:11, overflow:"hidden" }}>
+                    {sucursales.map(s => {
+                      const activa = s.id === sb._negocioId;
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => { setMenuSucursales(false); setSidebarOpen(false); cambiarSucursal(s.id); }}
+                          style={{
+                            width:"100%", display:"flex", alignItems:"center", gap:8, padding:"10px 13px",
+                            background: activa ? "var(--accent-soft)" : "transparent", border:"none",
+                            borderBottom:"1px solid var(--border)", cursor:"pointer", textAlign:"left", fontFamily:"inherit",
+                          }}
+                        >
+                          <span style={{ flex:1, fontSize:13, fontWeight: activa ? 700 : 500, color: activa ? "var(--accent)" : "var(--text2)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                            {s.nombre}
+                            {s.es_principal && <span style={{ fontSize:10, color:"var(--text-muted)", marginLeft:6 }}>principal</span>}
+                          </span>
+                          {activa && <CheckCircle2 size={13} style={{ color:"var(--accent)", flexShrink:0 }}/>}
+                        </button>
+                      );
+                    })}
+                    {miRol === "dueno" && (
+                      <button
+                        onClick={() => { setMenuSucursales(false); setShowNuevaSucursal(true); }}
+                        style={{ width:"100%", display:"flex", alignItems:"center", gap:8, padding:"11px 13px", background:"transparent", border:"none", cursor:"pointer", textAlign:"left", fontFamily:"inherit", color:"var(--accent)", fontWeight:600, fontSize:13 }}
+                      >
+                        <Plus size={14}/> Agregar sucursal
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <nav style={{ flex:1, padding:"14px 12px", display:"flex", flexDirection:"column", gap:3, overflowY:"auto" }}>
             {NAV.map(n => {
               const isActive = page === n.id;
@@ -8081,6 +8807,7 @@ export default function App() {
               💡 Sugerir mejora
             </button>
             {showSugerencia && <SugerenciaModal onSave={saveSugerencia} onClose={() => setShowSugerencia(false)} />}
+            {showNuevaSucursal && <NuevaSucursalModal onCrear={crearSucursal} onClose={() => setShowNuevaSucursal(false)} />}
             <button onClick={handleLogout} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", background:"none", border:"1px solid var(--border-mid)", borderRadius:7, padding:"9px 12px", cursor:"pointer", fontSize:13.5, color:"var(--text-muted)", marginBottom:10, fontFamily:"inherit" }}>
               <LogOut size={13}/> Cerrar sesión
             </button>
@@ -8103,7 +8830,24 @@ export default function App() {
             <PastDueBanner daysLeft={subState.daysLeft} onSuscribir={() => setPage("suscripcion")} />
           )}
           <ErrorBoundary>
-            {PAGES[page] ?? PAGES.dashboard}
+            {puedeVer(page) || (NAV_COMPLETO.find(n => n.id === page)?.soloDueno && miRol === "dueno")
+              ? (PAGES[page] ?? PAGES.dashboard)
+              : (
+                <div className="app-page-pad" style={{ ...G.page, display:"flex", alignItems:"center", justifyContent:"center", minHeight:"60vh" }}>
+                  <div style={{ textAlign:"center", maxWidth:380 }}>
+                    <div style={{ width:56, height:56, borderRadius:14, background:"#f3f4f6", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" }}>
+                      <Lock size={24} color="#9ca3af"/>
+                    </div>
+                    <h2 style={{ margin:"0 0 8px", fontSize:19, fontWeight:700 }}>No tenés acceso a esta sección</h2>
+                    <p style={{ margin:"0 0 18px", fontSize:14, color:"#888", lineHeight:1.5 }}>
+                      Pedile al dueño del negocio que te habilite el permiso si lo necesitás.
+                    </p>
+                    <button onClick={() => setPage(NAV[0]?.id || "venta")} style={{ ...G.btn("dark") }}>
+                      Volver
+                    </button>
+                  </div>
+                </div>
+              )}
           </ErrorBoundary>
         </main>
       </div>
