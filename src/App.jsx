@@ -1038,6 +1038,101 @@ function MiembroModal({ miembro, onGuardar, onClose }) {
   );
 }
 
+function AccionSucursalModal({ tipo, sucursal, esActual, onListo, onClose }) {
+  const esEliminar = tipo === "eliminar";
+  const [texto, setTexto] = useState("");
+  const [procesando, setProcesando] = useState(false);
+  const [error, setError] = useState("");
+
+  const ejecutar = async () => {
+    if (procesando) return;
+    if (esEliminar && texto.trim() !== sucursal.nombre) return;
+    setProcesando(true);
+    setError("");
+    try {
+      const session = await sb.getSession();
+      const resp = await fetch(`${SUPABASE_FUNC_URL}/sucursales`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: tipo, negocio_id: sucursal.id }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Algo salió mal");
+      await onListo();
+    } catch (e) {
+      setError(e.message);
+      setProcesando(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={esEliminar ? `Eliminar ${sucursal.nombre}` : `Cancelar el pago de ${sucursal.nombre}`}
+      subtitle={esEliminar ? "Esta acción no se puede deshacer" : "Dejás de pagar la mensualidad de esta sucursal"}
+      onClose={onClose}
+      width={450}
+    >
+      {esEliminar ? (
+        <>
+          <div style={{ background:"#fee2e2", border:"2px solid #fca5a5", borderRadius:11, padding:"16px 18px", marginBottom:18, fontSize:13.5, color:"#991b1b", lineHeight:1.6 }}>
+            <b>Se borra todo lo de esta sucursal:</b> sus productos, su historial de ventas, su caja, sus gastos y remitos.
+            <br/><br/>
+            También se cancela su mensualidad en Mercado Pago.
+            <br/><br/>
+            <b>No hay forma de recuperarlo.</b>
+          </div>
+          {esActual && (
+            <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"11px 15px", marginBottom:16, fontSize:12.5, color:"#92400e" }}>
+              Estás parado en esta sucursal. Al eliminarla, te vamos a mover a otra automáticamente.
+            </div>
+          )}
+          <p style={{ margin:"0 0 8px", fontSize:13, color:"#666" }}>
+            Para confirmar, escribí <b>{sucursal.nombre}</b>:
+          </p>
+          <input
+            value={texto}
+            onChange={e => setTexto(e.target.value)}
+            placeholder={sucursal.nombre}
+            autoFocus
+            style={{ ...G.inp(), marginBottom:18 }}
+          />
+        </>
+      ) : (
+        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:11, padding:"16px 18px", marginBottom:18, fontSize:13.5, color:"#92400e", lineHeight:1.6 }}>
+          Se cancela el débito automático de esta sucursal en Mercado Pago.
+          <br/><br/>
+          <b>Tus datos no se borran</b> — productos, ventas e historial quedan intactos. Pero vas a perder el acceso a esta sucursal hasta que vuelvas a suscribirte.
+          <br/><br/>
+          Las otras sucursales no se ven afectadas.
+        </div>
+      )}
+
+      {error && (
+        <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:10, padding:"10px 15px", marginBottom:14, fontSize:13, color:"#dc2626" }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={onClose} style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }}>Volver</button>
+        <button
+          onClick={ejecutar}
+          disabled={procesando || (esEliminar && texto.trim() !== sucursal.nombre)}
+          style={{
+            flex:1, justifyContent:"center", border:"none", borderRadius:8, padding:"12px",
+            fontSize:14, fontWeight:700, fontFamily:"inherit",
+            background: (esEliminar && texto.trim() !== sucursal.nombre) ? "#fca5a5" : esEliminar ? "#dc2626" : "#d97706",
+            color:"#fff",
+            cursor: procesando ? "wait" : (esEliminar && texto.trim() !== sucursal.nombre) ? "not-allowed" : "pointer",
+          }}
+        >
+          {procesando ? "Procesando..." : esEliminar ? "Eliminar sucursal" : "Cancelar el pago"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function NuevaSucursalModal({ onCrear, onClose }) {
   const [nombre, setNombre] = useState("");
   const [rubro, setRubro] = useState("");
@@ -5191,9 +5286,10 @@ function ComprobanteModal({ venta, config, onClose }) {
 }
 
 function ConfigPage({ ctx }) {
-  const { config, setConfig, setPage, products, deleteProduct } = ctx;
+  const { config, setConfig, setPage, products, deleteProduct, sucursales = [], miRol = "dueno" } = ctx;
   const [f, setF] = useState({ ...config });
   const [saved, setSaved] = useState(false);
+  const [accionSucursal, setAccionSucursal] = useState(null);  // { tipo, sucursal }
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState("");
   const [resetting, setResetting] = useState(false);
@@ -5386,6 +5482,76 @@ function ConfigPage({ ctx }) {
         </button>
       </div>
 
+      {/* ── Sucursales ── */}
+      {miRol === "dueno" && sucursales.length > 0 && (
+        <div style={{ ...G.card(), marginBottom:20 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, flexWrap:"wrap", gap:10 }}>
+            <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>Mis sucursales</h3>
+            <span style={{ fontSize:12.5, color:"#999" }}>{sucursales.length} {sucursales.length === 1 ? "local" : "locales"}</span>
+          </div>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Cada sucursal tiene su propia mensualidad de {fmtMoney(30000, "$")}</p>
+
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {sucursales.map(s => {
+              const esActual = s.id === sb._negocioId;
+              const estado = getSubscriptionState(dbToConfig(s));
+              const badge = {
+                trial: { t:"En prueba", bg:"#fef3c7", c:"#92400e" },
+                trial_expired: { t:"Prueba vencida", bg:"#fee2e2", c:"#dc2626" },
+                active: { t:"Al día", bg:"#dcfce7", c:"#15803d" },
+                past_due: { t:"Pago pendiente", bg:"#fee2e2", c:"#dc2626" },
+                cancelled: { t:"Cancelada", bg:"#f3f4f6", c:"#6b7280" },
+                grace_period: { t:"Período de gracia", bg:"#fef3c7", c:"#92400e" },
+              }[estado.status] || { t:estado.status, bg:"#f3f4f6", c:"#6b7280" };
+
+              return (
+                <div key={s.id} style={{ border:"1px solid #e5e7eb", borderRadius:11, padding:"14px 16px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, flexWrap:"wrap" }}>
+                    <div style={{ minWidth:0, flex:1 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 }}>
+                        <span style={{ fontWeight:700, fontSize:14.5 }}>{s.nombre}</span>
+                        {s.es_principal && <span style={{ fontSize:10.5, color:"#7c3aed", background:"#f4ecff", padding:"2px 8px", borderRadius:20, fontWeight:700 }}>Principal</span>}
+                        {esActual && <span style={{ fontSize:10.5, color:"#15803d", background:"#dcfce7", padding:"2px 8px", borderRadius:20, fontWeight:700 }}>Estás acá</span>}
+                      </div>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                        <span style={{ fontSize:11, fontWeight:700, background:badge.bg, color:badge.c, padding:"2px 9px", borderRadius:20 }}>{badge.t}</span>
+                        <span style={{ fontSize:12, color:"#aaa" }}>{s.rubro || "Sin rubro"}</span>
+                      </div>
+                    </div>
+                    <div style={{ display:"flex", gap:7, flexShrink:0, flexWrap:"wrap" }}>
+                      {!esActual && (
+                        <button onClick={() => ctx.cambiarSucursal(s.id)}
+                          style={{ background:"#f3f4f6", border:"none", borderRadius:7, padding:"7px 12px", fontSize:12.5, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                          Ir
+                        </button>
+                      )}
+                      {s.subscription_status === "active" && (
+                        <button onClick={() => setAccionSucursal({ tipo:"cancelar_pago", sucursal:s })}
+                          style={{ background:"#fef3c7", color:"#92400e", border:"none", borderRadius:7, padding:"7px 12px", fontSize:12.5, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                          Cancelar pago
+                        </button>
+                      )}
+                      {sucursales.length > 1 && (
+                        <button onClick={() => setAccionSucursal({ tipo:"eliminar", sucursal:s })}
+                          style={{ background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:7, padding:"7px 12px", fontSize:12.5, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                          Eliminar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {sucursales.length === 1 && (
+            <p style={{ margin:"14px 0 0", fontSize:12, color:"#aaa", lineHeight:1.5 }}>
+              Para eliminar una sucursal necesitás tener más de una. Si querés dar de baja tu cuenta, cancelá la suscripción desde <b>Suscripción</b>.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* ── Zona de peligro ── */}
       <div style={{ marginTop:48, marginBottom:24, background:"#fef2f2", border:"1.5px solid #fecaca", borderRadius:12, padding:"20px 24px" }}>
         <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:6 }}>
@@ -5422,6 +5588,19 @@ function ConfigPage({ ctx }) {
       </div>
 
       {/* Modal de confirmación */}
+      {accionSucursal && (
+        <AccionSucursalModal
+          tipo={accionSucursal.tipo}
+          sucursal={accionSucursal.sucursal}
+          esActual={accionSucursal.sucursal.id === sb._negocioId}
+          onListo={async () => {
+            setAccionSucursal(null);
+            await ctx.recargarSucursales();
+          }}
+          onClose={() => setAccionSucursal(null)}
+        />
+      )}
+
       {showResetModal && (
         <Modal title="¿Borrar todos los productos?" subtitle="Esta acción es irreversible" onClose={() => { setShowResetModal(false); setResetConfirmText(""); }} width={440}>
           <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:8, padding:"12px 14px", marginBottom:18, display:"flex", gap:10, alignItems:"flex-start" }}>
@@ -8015,10 +8194,17 @@ function PastDueBanner({ daysLeft, onSuscribir }) {
 }
 
 // ─── Pantalla de bloqueo cuando trial/pago venció ──────────
-function AccesoBloqueadoScreen({ config, onSuscribir, onLogout }) {
+function AccesoBloqueadoScreen({ config, onSuscribir, onLogout, sucursales = [], negocioActualId, onCambiarSucursal }) {
   const state = getSubscriptionState(config);
   const isTrial = state.status === 'trial_expired';
   const isCancelled = state.status === 'cancelled';
+
+  // Otras sucursales a las que sí puede entrar (para no dejarlo encerrado acá)
+  const otrasDisponibles = sucursales.filter(s => {
+    if (s.id === negocioActualId) return false;
+    const st = getSubscriptionState(dbToConfig(s));
+    return !st.isBlocked;
+  });
 
   const [loading, setLoading] = useState(false);
   const handleSuscribir = async () => {
@@ -8082,7 +8268,33 @@ function AccesoBloqueadoScreen({ config, onSuscribir, onLogout }) {
           >
             {loading ? "Un momento..." : "Suscribirme por $30.000/mes"}
           </button>
-          <button onClick={onLogout} style={{ width: "100%", background: "transparent", color: C.mut, border: "none", padding: "8px", fontSize: 13, cursor: "pointer", fontFamily: font }}>
+
+          {/* Si tiene otras sucursales al día, que pueda entrar ahí en vez de quedar encerrado */}
+          {otrasDisponibles.length > 0 && (
+            <div style={{ borderTop: `1px solid ${C.line}`, marginTop: 18, paddingTop: 18 }}>
+              <p style={{ fontSize: 13, color: C.body, margin: "0 0 12px", lineHeight: 1.5 }}>
+                Esto afecta solo a <b>{config.nombre}</b>. Tus otras sucursales siguen funcionando:
+              </p>
+              {otrasDisponibles.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => onCambiarSucursal(s.id)}
+                  style={{
+                    width: "100%", display: "flex", alignItems: "center", gap: 9,
+                    background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8,
+                    padding: "12px 14px", marginBottom: 8, cursor: "pointer",
+                    fontFamily: font, fontSize: 14, fontWeight: 600, color: C.ink, textAlign: "left",
+                  }}
+                >
+                  <Store size={15} style={{ color: C.purple, flexShrink: 0 }}/>
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.nombre}</span>
+                  <ChevronRight size={14} style={{ color: C.mut, flexShrink: 0 }}/>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <button onClick={onLogout} style={{ width: "100%", background: "transparent", color: C.mut, border: "none", padding: "8px", fontSize: 13, cursor: "pointer", fontFamily: font, marginTop: otrasDisponibles.length > 0 ? 4 : 12 }}>
             Cerrar sesión
           </button>
 
@@ -8510,6 +8722,22 @@ export default function App() {
     return neg;
   };
 
+  // Releer las sucursales después de eliminar o cancelar una.
+  // Si la que estaba abierta ya no existe, movemos al usuario a otra.
+  const recargarSucursales = async () => {
+    const lista = await sb.getMisNegocios();
+    if (!lista) return;
+    setSucursales(lista);
+    const sigueExistiendo = lista.some(s => s.id === sb._negocioId);
+    if (!sigueExistiendo && lista.length > 0) {
+      localStorage.setItem("milocal_sucursal", lista[0].id);
+      setPage("dashboard");
+      setLoaded(false);   // recarga completa con la sucursal nueva
+    } else {
+      setLoaded(false);   // refresca el estado de suscripción de la actual
+    }
+  };
+
 
   // ── Guardar config en Supabase ───────────────────────────
   const saveConfig = async (newConfig) => {
@@ -8641,7 +8869,7 @@ export default function App() {
   const ctx = { config, setConfig: saveConfig, products, setProducts, sales, setSales, caja, setCaja, gastos, setGastos, remitos, setRemitos, proveedores, setProveedores, setPage,
     // Supabase DB operations
     saveProduct, saveProducts, deleteProduct, saveVenta, saveCaja, saveGasto, deleteGasto, saveProveedor, deleteProveedor, saveRemito, saveSugerencia,
-    sucursales, miRol, misPermisos, cambiarSucursal, crearSucursal,
+    sucursales, miRol, misPermisos, cambiarSucursal, crearSucursal, recargarSucursales,
     handleLogout,
   };
 
@@ -8710,7 +8938,8 @@ export default function App() {
 
   // ── Bloqueo por suscripción vencida ──
   if (subState.isBlocked) {
-    return <AccesoBloqueadoScreen config={config} onSuscribir={handleSuscribir} onLogout={handleLogout} />;
+    return <AccesoBloqueadoScreen config={config} onSuscribir={handleSuscribir} onLogout={handleLogout}
+             sucursales={sucursales} negocioActualId={sb._negocioId} onCambiarSucursal={cambiarSucursal} />;
   }
 
   return (
