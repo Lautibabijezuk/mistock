@@ -8,8 +8,8 @@
     <meta name="google-site-verification" content="fjabgP4GmMr-a0E9TJ1YR7Oe-AVE4RpLybcq9cN7mr0" />
 
     <!-- SEO PRINCIPAL -->
-    <title>MiLocal — Software de gestión de ventas y stock para comercios</title>
-    <meta name="description" content="Sistema de gestión para comercios argentinos: controlá ventas, stock, caja y ganancias desde el celu o la compu. Ideal para kioscos, indumentaria, ferreterías y más. Probalo 7 días gratis." />
+    <title>MiLocal — Software de gestión de ventas y stock</title>
+    <meta name="description" content="Sistema de gestión para comercios argentinos: controlá ventas, stock, caja y ganancias desde el celu. Probalo 7 días gratis, sin tarjeta." />
     <link rel="canonical" href="https://www.milocal.com.ar/" />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="author" content="MiLocal" />
@@ -117,16 +117,65 @@
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       body { font-family: 'DM Sans', 'Segoe UI', system-ui, -apple-system, sans-serif; }
+
+      /* --- Contenido estatico inicial (SEO + fallback de carga) ---
+         Replica el mismo texto que muestra la app en React.
+         React lo reemplaza al montar; mientras tanto funciona como
+         pantalla de carga y es lo que leen los crawlers. */
+      #pre { max-width: 1080px; margin: 0 auto; padding: 56px 24px 72px; color: #0A0A0A; }
+      #pre .brand { font-size: 20px; font-weight: 800; letter-spacing: -.5px; margin-bottom: 56px; }
+      #pre h1 { font-size: 56px; line-height: 1.02; font-weight: 500; letter-spacing: -2.5px; margin-bottom: 24px; }
+      #pre .lead { font-size: 18px; line-height: 1.55; color: #4B5563; max-width: 520px; margin-bottom: 30px; }
+      #pre .cta { display: inline-block; background: #9238FF; color: #fff; text-decoration: none;
+                  border-radius: 4px; font-weight: 600; font-size: 16px; padding: 14px 28px; }
+      #pre .trust { margin-top: 30px; font-size: 13.5px; color: #6B7280; }
+      #pre h2 { font-size: 30px; font-weight: 700; letter-spacing: -1px; margin: 64px 0 28px; }
+      #pre ul { list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 20px; }
+      #pre li strong { display: block; font-size: 17px; margin-bottom: 5px; }
+      #pre li span { font-size: 15px; color: #4B5563; line-height: 1.5; }
+      #pre .precio { margin-top: 64px; padding: 34px; background: #F4ECFF; border-radius: 16px; text-align: center; }
+      #pre .precio b { display: block; font-size: 42px; letter-spacing: -2px; }
+      #pre nav { margin-top: 56px; font-size: 14px; color: #6B7280; }
+      #pre nav a { color: #6B7280; margin-right: 14px; }
+      @media (max-width: 720px) { #pre h1 { font-size: 38px; } #pre { padding: 32px 20px 56px; } }
     </style>
   </head>
   <body>
     <div id="root">
-      <noscript>
-        <h1>MiLocal - Software de gestion de ventas y stock para comercios</h1>
-        <p>Sistema de gestion para comercios y emprendedores de Argentina. Controla tus ventas, tu stock, tu caja y tus ganancias desde un solo lugar.</p>
-        <p>Ideal para kioscos, locales de indumentaria, ferreterias, almacenes, pet shops, vinotecas y mas de 20 rubros.</p>
-        <p>Probalo 7 dias gratis, sin tarjeta, en milocal.com.ar</p>
-      </noscript>
+      <div id="pre">
+        <div class="brand">MiLocal</div>
+
+        <h1>Menos planillas. Más ventas.</h1>
+        <p class="lead">MiLocal reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás y controlás el stock — todo desde un mismo lugar.</p>
+        <a class="cta" href="/login">¡Empezar gratis!</a>
+        <p class="trust">Sin tarjeta de crédito · Sin instalaciones · Listo en 2 minutos</p>
+
+        <h2>Por qué MiLocal</h2>
+        <ul>
+          <li><strong>Control total del stock</strong><span>Alta y baja de productos, stock por talle y color, y alertas de faltantes automáticas.</span></li>
+          <li><strong>Ventas y ganancias visibles</strong><span>Cada venta queda registrada con precio, cantidad y margen. Sabés cuánto ganás por día.</span></li>
+          <li><strong>Escaneo de códigos de barra</strong><span>Cargá y vendé más rápido escaneando con la cámara o un lector USB.</span></li>
+          <li><strong>Ahorro de tiempo real</strong><span>Vendé en segundos, sin hacer cuentas mentales. Descontá stock y calculá vuelto solo.</span></li>
+          <li><strong>Estadísticas que sirven</strong><span>Qué se vende, qué no, a qué hora y qué día. Decisiones con datos, no a ojo.</span></li>
+          <li><strong>Todo en la nube</strong><span>Acceso desde cualquier dispositivo con internet. Sin instalar, sin perder datos, siempre al día.</span></li>
+        </ul>
+
+        <div class="precio">
+          <h2 style="margin:0 0 10px">Un precio. Todo el sistema.</h2>
+          <b>$30.000</b>
+          <p>por mes · todas las funciones incluidas · 7 días de prueba gratis</p>
+        </div>
+
+        <nav>
+          MiLocal funciona en más de 20 rubros:
+          <a href="/sistema-para-kioscos">kioscos y maxikioscos</a>
+          <a href="/sistema-para-locales-de-ropa">locales de indumentaria</a>
+          <a href="/sistema-para-almacenes">despensas y autoservicios</a>
+          <a href="/sistema-para-ferreterias">ferreterías</a>
+          <a href="/sistema-para-pet-shop">pet shops</a>
+          <a href="/control-de-stock-y-ventas">control de stock y ventas</a>
+        </nav>
+      </div>
     </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
