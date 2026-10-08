@@ -2444,7 +2444,7 @@ function TicketVentaModal({ venta, config, onClose }) {
         {/* Factura info si aplica */}
         {venta.factura?.estado === "emitida" && (
           <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:10, padding:"10px 14px", marginBottom:16, fontSize:12 }}>
-            <div style={{ fontWeight:700, color:"#16a34a", marginBottom:2 }}>✓ Factura {venta.factura.tipo} electrónica</div>
+            <div style={{ fontWeight:700, color:"#16a34a", marginBottom:2 }}>✓ Factura {venta.factura.tipo} electrónica{venta.factura.ambiente === "homo" ? " (PRUEBA — sin validez fiscal)" : ""}</div>
             <div style={{ color:"#555" }}>N° {venta.factura.numero} · CAE: {venta.factura.cae}</div>
           </div>
         )}
@@ -2508,6 +2508,22 @@ function DetalleVentaModal({ venta, moneda, config, onAnular, onClose, onVerComp
         {venta.descuento > 0 && <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#dc2626", marginBottom:4 }}><span>Descuento</span><span>-{fmtMoney(venta.descuento, moneda)}</span></div>}
         <div style={{ display:"flex", justifyContent:"space-between", fontWeight:700, fontSize:16 }}><span>Total</span><span>{fmtMoney(venta.total, moneda)}</span></div>
       </div>
+      {venta.factura?.estado === "emitida" && (
+        <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:10, padding:"10px 14px", marginBottom:16, fontSize:12 }}>
+          <div style={{ fontWeight:700, color:"#15803d", marginBottom:2, display:"flex", gap:6, alignItems:"center" }}>✓ Factura {venta.factura.tipo} {venta.factura.numero}{venta.factura.ambiente === "homo" && <BadgePrueba/>}</div>
+          <div style={{ color:"#555" }}>CAE {venta.factura.cae}{venta.factura.receptor?.nombre ? ` · ${venta.factura.receptor.nombre}` : ""}</div>
+          {(venta.factura.observaciones||[]).length > 0 && (
+            <div style={{ color:"#6b7280", marginTop:6 }}>Observaciones de ARCA: {venta.factura.observaciones.map(o => o.mensaje).join(" · ")}</div>
+          )}
+          {!venta.anulada && <div style={{ color:"#92400e", marginTop:6 }}>Si anulás esta venta, la factura sigue vigente en ARCA: para cancelarla hace falta una nota de crédito.</div>}
+        </div>
+      )}
+      {venta.factura?.estado === "rechazada" && (
+        <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"10px 14px", marginBottom:16, fontSize:12 }}>
+          <div style={{ fontWeight:700, color:"#b91c1c", marginBottom:2 }}>Factura rechazada por ARCA</div>
+          <div style={{ color:"#7f1d1d" }}>{venta.factura.motivo}</div>
+        </div>
+      )}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
         <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cerrar</button>
         <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={() => setVerTicket(true)}>🖨️ Ticket</button>
@@ -3034,10 +3050,12 @@ function VentaPage({ ctx }) {
     });
     setProducts(updatedProducts);
     setSales(prev => [...prev, venta]);
-    setVentaParaFacturar(venta);
-    // Guardar en Supabase (await para asegurar persistencia)
+    // Guardar en Supabase (await para asegurar persistencia).
+    // La factura se ofrece recién cuando la venta ya existe en la base: el servidor la busca por su id.
     await ctx.saveVenta(venta);
     await ctx.saveProducts(updatedProducts.filter(p => affectedIds.has(p.id)));
+    if (config.facturacionActiva) setVentaParaFacturar(venta);
+    else setVentaExito(venta);
     setCart([]); setCliente(""); setMetodoPago(""); setDescValor(""); setEfectivoDado("");
     setSplitMonto1(""); setSplitMonto2(""); setShowCobro(false);
     } finally {
@@ -3051,16 +3069,14 @@ function VentaPage({ ctx }) {
       {ventaExito && !ventaParaFacturar && <VentaExitoModal venta={ventaExito} config={config} onClose={() => setVentaExito(null)} />}
       {ventaParaFacturar && (
         <FacturarModal
-          venta={ventaParaFacturar} config={config} sales={sales}
-          onFacturar={async (facturaData) => {
-            const updatedVenta = { ...ventaParaFacturar, factura: facturaData };
-            setSales(prev => prev.map(s => s.id === ventaParaFacturar.id ? updatedVenta : s));
-            setVentaParaFacturar(null);
-            setVentaExito(ventaParaFacturar);
-            await ctx.saveVenta(updatedVenta);
+          venta={ventaParaFacturar} config={config} conEleccion
+          onResultado={(factura) => {
+            // El servidor ya guardó la factura; acá sólo actualizamos la pantalla.
+            setSales(prev => prev.map(s => s.id === ventaParaFacturar.id ? { ...s, factura } : s));
+            setVentaParaFacturar(v => v ? { ...v, factura } : v);
           }}
-          onSinFactura={() => { setVentaParaFacturar(null); setVentaExito(ventaParaFacturar); }}
-          onClose={() => { setVentaParaFacturar(null); setVentaExito(ventaParaFacturar); }}
+          onSinFactura={() => { const v = ventaParaFacturar; setVentaParaFacturar(null); setVentaExito(v); }}
+          onClose={() => { const v = ventaParaFacturar; setVentaParaFacturar(null); setVentaExito(v); }}
         />
       )}
       {comprobanteVer && <ComprobanteModal venta={comprobanteVer} config={config} onClose={() => setComprobanteVer(null)} />}
@@ -3930,8 +3946,8 @@ function InventarioPage({ ctx }) {
 }
 
 function HistorialPage({ ctx }) {
-  const { config, sales, setSales } = ctx;
-  const [search, setSearch] = useState(""), [filterPago, setFilterPago] = useState("Todos"), [filterPeriod, setFilterPeriod] = useState("Todos"), [detalle, setDetalle] = useState(null), [comprobanteVer, setComprobanteVer] = useState(null);
+  const { config, sales, setSales, products, setProducts } = ctx;
+  const [search, setSearch] = useState(""), [filterPago, setFilterPago] = useState("Todos"), [filterPeriod, setFilterPeriod] = useState("Todos"), [detalle, setDetalle] = useState(null), [comprobanteVer, setComprobanteVer] = useState(null), [aFacturar, setAFacturar] = useState(null);
   const hoy = todayStr();
   const filtered = useMemo(() => sales.filter(s => { const ms = (s.cliente||"").toLowerCase().includes(search.toLowerCase())||String(s.numero).includes(search); const mp = filterPago==="Todos"||s.metodoPago===filterPago; const mf = filterPeriod==="Todos"||(filterPeriod==="Hoy"&&s.fecha===hoy)||(filterPeriod==="Esta semana"&&s.fecha>=subDays(hoy,7))||(filterPeriod==="Este mes"&&s.fecha.startsWith(hoy.slice(0,7))); return ms&&mp&&mf; }).sort((a,b) => b.numero-a.numero), [sales, search, filterPago, filterPeriod, hoy]);
   const totalFilt = filtered.filter(s => !s.anulada).reduce((a,s) => a+s.total, 0);
@@ -3970,6 +3986,11 @@ function HistorialPage({ ctx }) {
     <div className="app-page-pad" style={G.page}>
       {detalle && <DetalleVentaModal venta={detalle} moneda={config.moneda} config={config} onAnular={() => anular(detalle.id)} onClose={() => setDetalle(null)} onVerComprobante={detalle.factura?.estado==="emitida" ? () => { setComprobanteVer(detalle); setDetalle(null); } : null} />}
       {comprobanteVer && <ComprobanteModal venta={comprobanteVer} config={config} onClose={() => setComprobanteVer(null)} />}
+      {aFacturar && (
+        <FacturarModal venta={aFacturar} config={config}
+          onResultado={(factura) => setSales(prev => prev.map(s => s.id === aFacturar.id ? { ...s, factura } : s))}
+          onClose={() => setAFacturar(null)} />
+      )}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
         <div><h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Historial de Ventas</h1><p style={{ margin:0, color:"#888", fontSize:14 }}>{filtered.length} ventas registradas · Total: {fmtMoney(totalFilt, config.moneda)}</p></div>
         {sales.length > 0 && <button style={G.btn("outline")} onClick={() => exportarVentas(sales, config)}><Download size={14}/> Exportar Excel</button>}
@@ -3991,14 +4012,8 @@ function HistorialPage({ ctx }) {
                 <td style={{ padding:"12px 16px", color:"#888" }}>{s.metodoPago}</td>
                 <td style={{ padding:"12px 16px", fontWeight:700, color:s.anulada?"#dc2626":"#16a34a" }}>{fmtMoney(s.total, config.moneda)}</td>
                 <td style={{ padding:"12px 16px" }}><span style={{ background:s.anulada?"#fee2e2":"#dcfce7", color:s.anulada?"#dc2626":"#16a34a", padding:"2px 9px", borderRadius:20, fontSize:11, fontWeight:600 }}>{s.anulada?"Anulada":"Completada"}</span></td>
-                <td style={{ padding:"12px 16px" }}>
-                  {s.factura?.estado === "emitida" ? (
-                    <button onClick={() => setDetalle(s)} style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:20, padding:"2px 10px", fontSize:11, fontWeight:600, color:"#16a34a", cursor:"pointer" }}>
-                      Fact. {s.factura.tipo} ✓
-                    </button>
-                  ) : (
-                    <span style={{ fontSize:11, color:"#bbb" }}>Sin factura</span>
-                  )}
+                <td style={{ padding:"10px 16px" }}>
+                  <CeldaFactura venta={s} config={config} onFacturar={() => setAFacturar(s)} onVer={() => setComprobanteVer(s)} />
                 </td>
                 <td style={{ padding:"12px 16px" }}><button onClick={() => setDetalle(s)} style={{ background:"none", border:"none", cursor:"pointer", color:"#666", fontSize:12 }}>Ver <ChevronRight size={12}/></button></td>
               </tr>
@@ -4918,239 +4933,298 @@ function RemitosPage({ ctx }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// FACTURACIÓN — constantes y helpers
+// FACTURACIÓN ELECTRÓNICA (ARCA) — helpers
+// La emisión real la hace la función "afip" en el servidor:
+// el navegador nunca ve certificados ni tokens de ARCA.
 // ─────────────────────────────────────────────────────────────
-const CONDICIONES_IVA = ["Responsable Inscripto","Monotributista","Exento","Consumidor Final","No Responsable"];
-const TIPOS_DOC = ["DNI","CUIT","CUIL","Pasaporte","Sin identificar"];
+const RECEPTORES_FACTURA = [
+  { id: "cf",     label: "Consumidor Final" },
+  { id: "ri",     label: "Resp. Inscripto" },
+  { id: "mono",   label: "Monotributista" },
+  { id: "exento", label: "Exento" },
+];
 
-function tipoFactura(tipoContrib, condicionReceptor) {
+// Mismo criterio que el servidor (que es quien decide en última instancia):
+// emisor RI → A a RI/Monotributo, B a CF/Exento. Emisor monotributista → siempre C.
+function tipoFactura(tipoContrib, condReceptor) {
   if (tipoContrib === "responsable_inscripto") {
-    if (condicionReceptor === "Responsable Inscripto") return "A";
-    return "B";
+    return (condReceptor === "ri" || condReceptor === "mono") ? "A" : "B";
   }
-  return "C"; // Monotributista siempre emite C
+  return "C";
 }
 
-function nroComprobante(puntoVenta, nro) {
-  const pv = String(puntoVenta||"1").padStart(4,"0");
-  const n  = String(nro||1).padStart(8,"0");
-  return `${pv}-${n}`;
+function cuitValido(c) {
+  const d = String(c || "").replace(/\D/g, "");
+  if (d.length !== 11) return false;
+  const w = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+  const s = w.reduce((a, x, i) => a + x * Number(d[i]), 0);
+  let r = 11 - (s % 11);
+  if (r === 11) r = 0;
+  if (r === 10) r = 9;
+  return r === Number(d[10]);
 }
 
-function generarCAE() {
-  // Simula un CAE de 14 dígitos (en producción viene de AFIP)
-  return Array.from({length:14}, () => Math.floor(Math.random()*10)).join("");
+function fmtCuit(c) {
+  const d = String(c || "").replace(/\D/g, "").slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 10) return `${d.slice(0, 2)}-${d.slice(2)}`;
+  return `${d.slice(0, 2)}-${d.slice(2, 10)}-${d.slice(10)}`;
 }
 
-// ─── Modal de facturación (abre al completar venta) ───────────
-function FacturarModal({ venta, config, sales, onFacturar, onSinFactura, onClose }) {
-  const [step, setStep] = useState(1); // 1=elegir, 2=datos receptor, 3=procesando, 4=exito
-  const [tipoDoc, setTipoDoc] = useState("DNI");
-  const [nroDoc, setNroDoc] = useState("");
-  const [nombreReceptor, setNombreReceptor] = useState("Consumidor Final");
-  const [condReceptor, setCondReceptor] = useState("Consumidor Final");
-  const [cae, setCae] = useState("");
-  const [caeVto, setCaeVto] = useState("");
+// Neto e IVA 21% en centavos enteros (igual que el servidor)
+function montosFactura(total) {
+  const t = Math.round(Number(total || 0) * 100);
+  const neto = Math.round(t / 1.21);
+  return { total: t / 100, neto: neto / 100, iva: (t - neto) / 100 };
+}
 
-  const tipo = tipoFactura(config.tipoContrib, condReceptor);
-  // Número secuencial: tomar el más alto ya emitido + 1 (AFIP exige correlatividad sin duplicados)
-  const nroFacturasEmitidas = sales.reduce((mx, s) => {
-    if (s.factura?.estado === "emitida" && s.factura?.numero) {
-      const n = parseInt(String(s.factura.numero).split("-").pop(), 10) || 0;
-      return Math.max(mx, n);
+async function llamarAfip(body) {
+  const session = await sb.getSession();
+  let resp;
+  try {
+    resp = await fetch(`${SUPABASE_FUNC_URL}/afip`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, negocio_id: sb._negocioId }),
+    });
+  } catch {
+    return { httpOk: false, codigo: "RED", error: "No hay conexión. Revisá internet y reintentá." };
+  }
+  const data = await resp.json().catch(() => ({}));
+  return { httpOk: resp.ok, ...data };
+}
+
+function BadgePrueba() {
+  return <span title="Emitida en el entorno de prueba de ARCA: no tiene validez fiscal" style={{ background:"#fef3c7", color:"#92400e", fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:20, whiteSpace:"nowrap" }}>Prueba</span>;
+}
+
+// Celda "Factura" del Historial de Ventas
+function CeldaFactura({ venta, config, onFacturar, onVer }) {
+  const f = venta.factura;
+  if (f?.estado === "emitida") {
+    return (
+      <button onClick={onVer} style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, fontWeight:700, color:"#15803d", whiteSpace:"nowrap" }}>
+          <CheckCircle2 size={13}/> Factura {f.tipo} {f.numero}
+          {f.ambiente === "homo" && <BadgePrueba/>}
+        </div>
+        {f.cae && <div style={{ fontSize:11, color:"#6b7280", fontFamily:"monospace", marginTop:2 }}>CAE {f.cae}</div>}
+      </button>
+    );
+  }
+  if (venta.anulada) return <span style={{ fontSize:11, color:"#9ca3af" }}>No se factura</span>;
+  if (!config.facturacionActiva) return <span style={{ fontSize:11, color:"#bbb" }}>Sin factura</span>;
+  if (f?.estado === "rechazada") {
+    return (
+      <div style={{ maxWidth:220 }}>
+        <div style={{ fontSize:12, fontWeight:700, color:"#b91c1c" }}>Rechazada por ARCA</div>
+        <div title={f.motivo} style={{ fontSize:11, color:"#6b7280", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", marginBottom:4 }}>{f.motivo}</div>
+        <button onClick={onFacturar} style={{ background:"#fff", border:"1px solid #fecaca", color:"#b91c1c", borderRadius:20, padding:"2px 10px", fontSize:11, fontWeight:700, cursor:"pointer" }}>Reintentar</button>
+      </div>
+    );
+  }
+  if (f?.estado === "procesando") {
+    return (
+      <div>
+        <div style={{ fontSize:12, fontWeight:700, color:"#92400e", marginBottom:4 }}>Sin confirmar</div>
+        <button onClick={onFacturar} style={{ background:"#fff", border:"1px solid #fde68a", color:"#92400e", borderRadius:20, padding:"2px 10px", fontSize:11, fontWeight:700, cursor:"pointer" }}>Verificar</button>
+      </div>
+    );
+  }
+  return (
+    <button onClick={onFacturar} style={{ background:"#9238ff", color:"#fff", border:"none", borderRadius:20, padding:"5px 14px", fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
+      Facturar
+    </button>
+  );
+}
+
+// ─── Modal de facturación ─────────────────────────────────────
+// conEleccion=true: al terminar una venta (ofrece "Sin comprobante").
+// conEleccion=false: desde el Historial (va directo a los datos del cliente).
+// onResultado(factura) se llama con lo que guardó el servidor (emitida, rechazada o procesando).
+function FacturarModal({ venta, config, conEleccion = false, onResultado, onSinFactura, onClose }) {
+  const previa = venta.factura;
+  const [step, setStep] = useState(conEleccion ? "elegir" : "datos"); // elegir | datos | enviando | ok | rechazada | error
+  const [cond, setCond] = useState(previa?.receptor?.condIVA ? ({ "Responsable Inscripto":"ri", "Monotributista":"mono", "Exento":"exento" }[previa.receptor.condIVA] || "cf") : "cf");
+  const [cuit, setCuit] = useState(previa?.receptor?.nroDoc ? fmtCuit(previa.receptor.nroDoc) : "");
+  const [nombre, setNombre] = useState(previa?.receptor?.nombre && previa.receptor.nombre !== "Consumidor Final" ? previa.receptor.nombre : "");
+  const [resultado, setResultado] = useState(null);
+  const [error, setError] = useState("");
+
+  const tipo = tipoFactura(config.tipoContrib, cond);
+  const m = montosFactura(venta.total);
+  const pideCuit = cond !== "cf";
+  const cuitOk = !pideCuit || cuitValido(cuit);
+  const cuitDigitos = cuit.replace(/\D/g, "");
+
+  const emitir = async () => {
+    if (step === "enviando" || !cuitOk) return;
+    setStep("enviando"); setError("");
+    const r = await llamarAfip({
+      accion: "facturar_venta",
+      venta_id: venta.id,
+      receptor: { condicion: cond, cuit: pideCuit ? cuitDigitos : "", nombre: nombre.trim() },
+    });
+    if (r.factura) {
+      setResultado(r.factura);
+      onResultado && onResultado(r.factura);
+      setStep(r.factura.estado === "emitida" ? "ok" : "rechazada");
+      return;
     }
-    return mx;
-  }, 0);
-  const nroComprobante = nroComprobante_fn(config.puntoVenta, nroFacturasEmitidas + 1);
-
-  function nroComprobante_fn(pv, n) {
-    return `${String(pv||"1").padStart(4,"0")}-${String(n).padStart(8,"0")}`;
-  }
-
-  const emitir = () => {
-    if (step === 3) return; // ya procesando: evita doble emisión
-    setStep(3);
-    // Simula llamada a AFIP (en producción: llamada real a la API)
-    setTimeout(() => {
-      const caeNum = generarCAE();
-      const vto = addDays(todayStr(), 10);
-      setCae(caeNum);
-      setCaeVto(vto);
-      setStep(4);
-      const facturaData = {
-        tipo, numero: nroComprobante,
-        fecha: todayStr(), cae: caeNum, caeVto: vto,
-        estado: "emitida",
-        receptor: { nombre: nombreReceptor || "Consumidor Final", tipoDoc, nroDoc, condIVA: condReceptor }
-      };
-      onFacturar(facturaData);
-    }, 2000);
+    // Sin factura en la respuesta: algo falló antes o durante el envío.
+    if (r.codigo === "SIN_RESPUESTA") onResultado && onResultado({ estado: "procesando" });
+    setError(r.error || "No pudimos emitir la factura. Reintentá en un momento.");
+    setStep("error");
   };
 
-  // ── Step 1: Elegir ────────────────────────────────────────
-  if (step === 1) return (
+
+  // ── Elegir (sólo al terminar una venta) ──
+  if (step === "elegir") return (
     <Modal title="¿Cómo querés registrar esta venta?" onClose={onClose} width={440}>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:12, marginBottom:20 }}>
-        <button onClick={onSinFactura} style={{ background:"#fff", border:"2px solid #e5e7eb", borderRadius:12, padding:"24px 16px", cursor:"pointer", textAlign:"center", transition:"border-color .15s" }}
+        <button onClick={onSinFactura} style={{ background:"#fff", border:"2px solid #e5e7eb", borderRadius:12, padding:"24px 16px", cursor:"pointer", textAlign:"center" }}
           onMouseEnter={e=>e.currentTarget.style.borderColor="#111"} onMouseLeave={e=>e.currentTarget.style.borderColor="#e5e7eb"}>
           <div style={{ fontSize:32, marginBottom:10 }}>🧾</div>
           <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>Sin comprobante</div>
-          <div style={{ fontSize:12, color:"#888", lineHeight:1.4 }}>Ticket interno. No se envía a AFIP.</div>
+          <div style={{ fontSize:12, color:"#888", lineHeight:1.4 }}>Ticket interno. Podés facturarla después desde el Historial.</div>
         </button>
-        <button onClick={() => { if (!config.facturacionActiva || !config.cuit) { setStep(0); } else setStep(2); }}
-          style={{ background:config.facturacionActiva?"#fff":"#fafafa", border:`2px solid ${config.facturacionActiva?"#e5e7eb":"#e5e7eb"}`, borderRadius:12, padding:"24px 16px", cursor:"pointer", textAlign:"center", transition:"border-color .15s", position:"relative" }}
-          onMouseEnter={e=>{if(config.facturacionActiva)e.currentTarget.style.borderColor="#111"}} onMouseLeave={e=>e.currentTarget.style.borderColor="#e5e7eb"}>
-          {!config.facturacionActiva && <div style={{ position:"absolute", top:10, right:10, background:"#fef3c7", color:"#92400e", fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20 }}>Config. requerida</div>}
+        <button onClick={() => setStep("datos")} style={{ background:"#fff", border:"2px solid #e5e7eb", borderRadius:12, padding:"24px 16px", cursor:"pointer", textAlign:"center" }}
+          onMouseEnter={e=>e.currentTarget.style.borderColor="#9238ff"} onMouseLeave={e=>e.currentTarget.style.borderColor="#e5e7eb"}>
           <div style={{ fontSize:32, marginBottom:10 }}>🏛️</div>
-          <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>Factura Electrónica</div>
-          <div style={{ fontSize:12, color:"#888", lineHeight:1.4 }}>Se envía a AFIP. Genera CAE.</div>
-        </button>
-      </div>
-      {!config.facturacionActiva && (
-        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", fontSize:13, color:"#92400e" }}>
-          <b>Facturación no configurada.</b> Completá los datos fiscales en Configuración → Facturación para habilitarla.
-        </div>
-      )}
-    </Modal>
-  );
-
-  // ── Step 0: Config incompleta ─────────────────────────────
-  if (step === 0) return (
-    <Modal title="Configuración requerida" onClose={onClose} width={400}>
-      <p style={{ fontSize:14, color:"#666", margin:"0 0 20px" }}>Para emitir facturas electrónicas necesitás completar los datos fiscales en Configuración.</p>
-      <div style={{ display:"flex", gap:10 }}>
-        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onSinFactura}>Continuar sin factura</button>
-        <button style={{ ...G.btn("dark"), flex:1, justifyContent:"center" }} onClick={onClose}>Ir a Configuración</button>
-      </div>
-    </Modal>
-  );
-
-  // ── Step 2: Datos del receptor ────────────────────────────
-  if (step === 2) return (
-    <Modal title={`Emitir Factura ${tipo}`} subtitle={`Comprobante ${nroComprobante} · ${fmtDate(todayStr())}`} onClose={onClose} width={500}>
-      {/* Tipo de factura badge */}
-      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
-        <div style={{ background:"#111", color:"#fff", borderRadius:10, padding:"8px 20px", fontWeight:900, fontSize:22, letterSpacing:2 }}>
-          {tipo}
-        </div>
-        <div>
-          <div style={{ fontWeight:700, fontSize:14 }}>Factura {tipo} Electrónica</div>
-          <div style={{ fontSize:12, color:"#888" }}>
-            {tipo==="A" ? "Operación entre Responsables Inscriptos" : tipo==="B" ? "Receptor Exento o Consumidor Final (RI)" : "Emisor Monotributista"}
-          </div>
-        </div>
-      </div>
-
-      <div style={{ background:"#f9fafb", borderRadius:10, padding:"12px 16px", marginBottom:20, fontSize:13 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-          <span style={{ color:"#666" }}>Emisor</span>
-          <span style={{ fontWeight:600 }}>{config.razonSocial || config.nombre}</span>
-        </div>
-        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-          <span style={{ color:"#666" }}>CUIT</span>
-          <span style={{ fontWeight:600 }}>{config.cuit}</span>
-        </div>
-        <div style={{ display:"flex", justifyContent:"space-between" }}>
-          <span style={{ color:"#666" }}>Condición IVA</span>
-          <span style={{ fontWeight:600 }}>{config.condicionIVA}</span>
-        </div>
-      </div>
-
-      <FieldRow label="Condición IVA del receptor">
-        <select style={G.inp()} value={condReceptor} onChange={e => {
-          setCondReceptor(e.target.value);
-          if (e.target.value === "Consumidor Final") { setNombreReceptor("Consumidor Final"); setTipoDoc("DNI"); setNroDoc(""); }
-        }}>
-          {CONDICIONES_IVA.map(c => <option key={c}>{c}</option>)}
-        </select>
-      </FieldRow>
-
-      <div style={{ display:"grid", gridTemplateColumns:"140px 1fr", gap:12 }}>
-        <FieldRow label="Tipo de documento">
-          <select style={G.inp()} value={tipoDoc} onChange={e => setTipoDoc(e.target.value)}>
-            {TIPOS_DOC.map(d => <option key={d}>{d}</option>)}
-          </select>
-        </FieldRow>
-        <FieldRow label="Número">
-          <input style={G.inp()} value={nroDoc} onChange={e => setNroDoc(e.target.value)} placeholder={tipoDoc==="CUIT"?"20-12345678-0":"12345678"} />
-        </FieldRow>
-      </div>
-
-      <FieldRow label="Nombre / Razón social del receptor">
-        <input style={G.inp()} value={nombreReceptor} onChange={e => setNombreReceptor(e.target.value)} placeholder="Consumidor Final" />
-      </FieldRow>
-
-      {/* Resumen de la factura */}
-      <div style={{ background:"#f9fafb", borderRadius:10, padding:"14px 16px", marginBottom:20 }}>
-        <div style={{ fontWeight:700, fontSize:13, marginBottom:10, color:"#111" }}>Resumen</div>
-        {(venta.items||[]).map((it,i) => (
-          <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
-            <span style={{ color:"#666" }}>{it.nombre} x{it.cantidad}</span>
-            <span>{fmtMoney(it.precio*it.cantidad, config.moneda)}</span>
-          </div>
-        ))}
-        {venta.descuento > 0 && <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#dc2626", marginBottom:4 }}><span>Descuento</span><span>-{fmtMoney(venta.descuento, config.moneda)}</span></div>}
-        <div style={{ display:"flex", justifyContent:"space-between", fontWeight:700, fontSize:16, borderTop:"1px solid #e5e7eb", paddingTop:10, marginTop:6 }}>
-          <span>Total</span><span>{fmtMoney(venta.total, config.moneda)}</span>
-        </div>
-      </div>
-
-      <div style={{ display:"flex", gap:10 }}>
-        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={() => setStep(1)}>← Volver</button>
-        <button style={{ ...G.btn("dark"), flex:2, justifyContent:"center", padding:"12px" }} onClick={emitir}>
-          Emitir Factura {tipo} →
+          <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>Factura electrónica</div>
+          <div style={{ fontSize:12, color:"#888", lineHeight:1.4 }}>Se envía a ARCA y obtiene CAE.</div>
         </button>
       </div>
     </Modal>
   );
 
-  // ── Step 3: Procesando ────────────────────────────────────
-  if (step === 3) return (
+  // ── Enviando ──
+  if (step === "enviando") return (
     <Modal title="" onClose={() => {}} width={380}>
       <div style={{ textAlign:"center", padding:"32px 0" }}>
-        <div style={{ fontSize:48, marginBottom:16, animation:"spin 1s linear infinite" }}>⚙️</div>
-        <div style={{ fontWeight:700, fontSize:18, marginBottom:8 }}>Enviando a AFIP...</div>
-        <div style={{ fontSize:13, color:"#888" }}>Aguardá mientras se procesa la factura electrónica</div>
-        <style>{`@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }`}</style>
+        <div style={{ width:44, height:44, border:"4px solid #f4ecff", borderTopColor:"#9238ff", borderRadius:"50%", margin:"0 auto 18px", animation:"spinFact 0.9s linear infinite" }} />
+        <div style={{ fontWeight:700, fontSize:18, marginBottom:8 }}>Enviando a ARCA…</div>
+        <div style={{ fontSize:13, color:"#888" }}>Esto tarda unos segundos. No cierres la ventana.</div>
+        <style>{`@keyframes spinFact { to { transform: rotate(360deg) } }`}</style>
       </div>
     </Modal>
   );
 
-  // ── Step 4: Éxito ─────────────────────────────────────────
-  if (step === 4) return (
+  // ── Emitida ──
+  if (step === "ok" && resultado) return (
     <Modal title="" onClose={onClose} width={460}>
       <div style={{ textAlign:"center", padding:"16px 0 8px" }}>
         <div style={{ color:"#16a34a", marginBottom:12 }}><CheckCircle2 size={56}/></div>
         <h3 style={{ margin:"0 0 4px", fontSize:22, fontWeight:800 }}>¡Factura emitida!</h3>
-        <p style={{ margin:"0 0 20px", color:"#888", fontSize:13 }}>CAE generado correctamente</p>
-        <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:12, padding:"16px 20px", marginBottom:20, textAlign:"left" }}>
-          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
-            <span style={{ fontSize:13, color:"#666" }}>Tipo</span>
-            <span style={{ fontWeight:700 }}>Factura {tipo} · {nroComprobante}</span>
+        <p style={{ margin:"0 0 20px", color:"#888", fontSize:13 }}>ARCA la aprobó y le asignó CAE.</p>
+        <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:12, padding:"16px 20px", marginBottom:16, textAlign:"left" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8, gap:12 }}>
+            <span style={{ fontSize:13, color:"#666" }}>Comprobante</span>
+            <span style={{ fontWeight:700, display:"flex", gap:6, alignItems:"center" }}>Factura {resultado.tipo} {resultado.numero}{resultado.ambiente === "homo" && <BadgePrueba/>}</span>
           </div>
           <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
-            <span style={{ fontSize:13, color:"#666" }}>CAE N°</span>
-            <span style={{ fontWeight:700, fontFamily:"monospace", fontSize:14 }}>{cae}</span>
+            <span style={{ fontSize:13, color:"#666" }}>CAE</span>
+            <span style={{ fontWeight:700, fontFamily:"monospace", fontSize:14 }}>{resultado.cae}</span>
           </div>
           <div style={{ display:"flex", justifyContent:"space-between" }}>
             <span style={{ fontSize:13, color:"#666" }}>Vto. CAE</span>
-            <span style={{ fontWeight:600 }}>{fmtDate(caeVto)}</span>
+            <span style={{ fontWeight:600 }}>{fmtDate(resultado.caeVto)}</span>
           </div>
         </div>
-        <button style={{ ...G.btn("dark"), width:"100%", justifyContent:"center", padding:"12px" }} onClick={onClose}>
-          Cerrar
-        </button>
+        {resultado.ambiente === "homo" && <p style={{ fontSize:12, color:"#92400e", margin:"0 0 16px" }}>Emitida en el entorno de prueba de ARCA: no tiene validez fiscal.</p>}
+        <button style={{ ...G.btn("dark"), width:"100%", justifyContent:"center", padding:"12px" }} onClick={onClose}>Listo</button>
       </div>
     </Modal>
   );
 
-  return null;
+  // ── Rechazada por ARCA ──
+  if (step === "rechazada" && resultado) return (
+    <Modal title="ARCA rechazó la factura" onClose={onClose} width={460}>
+      <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"12px 16px", marginBottom:16, fontSize:13, color:"#7f1d1d" }}>
+        {(resultado.errores?.length ? resultado.errores : [{ mensaje: resultado.motivo }]).map((e, i) => (
+          <div key={i} style={{ marginBottom:4 }}>{e.codigo ? <b>[{e.codigo}] </b> : null}{e.mensaje}</div>
+        ))}
+      </div>
+      <p style={{ fontSize:13, color:"#666", margin:"0 0 18px" }}>No se emitió ningún comprobante. Corregí los datos del cliente y volvé a intentar.</p>
+      <div style={{ display:"flex", gap:10 }}>
+        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cerrar</button>
+        <button style={{ ...G.btn("dark"), flex:1, justifyContent:"center" }} onClick={() => setStep("datos")}>Corregir datos</button>
+      </div>
+    </Modal>
+  );
+
+  // ── Error (red, ARCA caída, permisos…) ──
+  if (step === "error") return (
+    <Modal title="No se pudo facturar" onClose={onClose} width={440}>
+      <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"12px 16px", marginBottom:18, fontSize:13, color:"#92400e" }}>{error}</div>
+      <div style={{ display:"flex", gap:10 }}>
+        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cerrar</button>
+        <button style={{ ...G.btn("dark"), flex:1, justifyContent:"center" }} onClick={emitir}>Reintentar</button>
+      </div>
+    </Modal>
+  );
+
+  // ── Datos del cliente ──
+  const chip = (activo) => ({ border:`1.5px solid ${activo ? "#9238ff" : "#e4e4e7"}`, background: activo ? "#f4ecff" : "#fff", color: activo ? "#4c1d95" : "#374151", borderRadius:20, padding:"7px 14px", fontSize:13, fontWeight:600, cursor:"pointer" });
+  const fila = { display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:6 };
+  return (
+    <Modal title={`Facturar venta #${venta.numero}`} subtitle={`${fmtDate(venta.fecha)} · ${fmtMoney(venta.total, config.moneda)}`} onClose={onClose} width={500}>
+      <div style={{ fontSize:12, fontWeight:700, color:"#6b7280", marginBottom:8, textTransform:"uppercase", letterSpacing:.4 }}>¿A quién le facturás?</div>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:18 }}>
+        {RECEPTORES_FACTURA.map(r => <button key={r.id} style={chip(cond === r.id)} onClick={() => setCond(r.id)}>{r.label}</button>)}
+      </div>
+
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
+        <div style={{ background:"#111", color:"#fff", borderRadius:10, padding:"6px 16px", fontWeight:900, fontSize:22 }}>{tipo}</div>
+        <div style={{ fontSize:13, color:"#4b5563", lineHeight:1.4 }}>
+          <b style={{ color:"#111" }}>Factura {tipo}</b><br/>
+          {tipo === "A" ? "Discrimina IVA. El cliente necesita CUIT." : tipo === "B" ? "IVA incluido en el precio." : "Emisor monotributista: sin IVA discriminado."}
+        </div>
+      </div>
+
+      {pideCuit && (
+        <FieldRow label="CUIT del cliente">
+          <input style={G.inp({ borderColor: cuitDigitos.length === 11 && !cuitOk ? "#dc2626" : undefined })} inputMode="numeric" value={cuit}
+            onChange={e => setCuit(fmtCuit(e.target.value))} placeholder="20-12345678-9" />
+          {cuitDigitos.length === 11 && !cuitOk && <div style={{ fontSize:12, color:"#dc2626", marginTop:4 }}>Ese CUIT no es válido. Revisá los números.</div>}
+        </FieldRow>
+      )}
+      <FieldRow label={pideCuit ? "Nombre o razón social" : "Nombre del cliente (opcional)"}>
+        <input style={G.inp()} value={nombre} onChange={e => setNombre(e.target.value)} placeholder={pideCuit ? "Ej: Distribuidora Sur SRL" : "Consumidor Final"} />
+      </FieldRow>
+
+      <div style={{ background:"#f9fafb", borderRadius:10, padding:"14px 16px", margin:"4px 0 20px" }}>
+        {tipo !== "C" && <>
+          <div style={fila}><span style={{ color:"#666" }}>Neto gravado</span><span>{fmtMoney(m.neto, config.moneda)}</span></div>
+          <div style={fila}><span style={{ color:"#666" }}>IVA 21%</span><span>{fmtMoney(m.iva, config.moneda)}</span></div>
+        </>}
+        <div style={{ display:"flex", justifyContent:"space-between", fontWeight:800, fontSize:16, borderTop: tipo !== "C" ? "1px solid #e5e7eb" : "none", paddingTop: tipo !== "C" ? 8 : 0, marginTop: tipo !== "C" ? 4 : 0 }}>
+          <span>Total</span><span>{fmtMoney(m.total, config.moneda)}</span>
+        </div>
+      </div>
+
+      <div style={{ display:"flex", gap:10 }}>
+        {conEleccion
+          ? <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={() => setStep("elegir")}>← Volver</button>
+          : <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cancelar</button>}
+        <button disabled={!cuitOk} style={{ ...G.btn("dark"), flex:2, justifyContent:"center", padding:"12px", background: cuitOk ? "#9238ff" : "#d4d4d8", borderColor: cuitOk ? "#9238ff" : "#d4d4d8", cursor: cuitOk ? "pointer" : "not-allowed" }} onClick={emitir}>
+          Emitir Factura {tipo}
+        </button>
+      </div>
+    </Modal>
+  );
 }
 
 // ─── Comprobante visual imprimible ────────────────────────────
 function ComprobanteModal({ venta, config, onClose }) {
   const f = venta.factura;
   if (!f) return null;
+  const emisor = f.emisor || {};
+  const pv = f.pto_vta != null ? String(f.pto_vta).padStart(4, "0") : String(config.puntoVenta || "1").padStart(4, "0");
+  const neto = f.neto != null ? f.neto : montosFactura(venta.total).neto;
+  const iva = f.iva != null ? f.iva : montosFactura(venta.total).iva;
+  const total = f.total != null ? f.total : venta.total;
+  const condEmisor = emisor.condicion === "ri" ? "Responsable Inscripto" : emisor.condicion === "mono" ? "Monotributista" : config.condicionIVA;
 
   const handlePrint = () => {
     const printContent = document.getElementById("comprobante-print");
@@ -5161,8 +5235,6 @@ function ComprobanteModal({ venta, config, onClose }) {
       table { width: 100%; border-collapse: collapse; }
       td, th { padding: 8px; border: 1px solid #ddd; font-size: 13px; }
       th { background: #f5f5f5; font-weight: 700; }
-      .header { display: flex; justify-content: space-between; margin-bottom: 20px; }
-      .tipo-box { border: 3px solid #000; padding: 10px 20px; font-size: 36px; font-weight: 900; text-align: center; }
       @media print { button { display: none; } }
     </style></head><body>${printContent.innerHTML}</body></html>`);
     w.document.close();
@@ -5170,49 +5242,45 @@ function ComprobanteModal({ venta, config, onClose }) {
   };
 
   return (
-    <Modal title="Comprobante Electrónico" onClose={onClose} width={620}>
+    <Modal title="Comprobante electrónico" onClose={onClose} width={620}>
+      {f.ambiente === "homo" && (
+        <div style={{ background:"#fef3c7", border:"1px solid #fde68a", borderRadius:10, padding:"8px 14px", marginBottom:14, fontSize:12, color:"#92400e", fontWeight:600 }}>
+          Comprobante de PRUEBA (homologación de ARCA): no tiene validez fiscal.
+        </div>
+      )}
       <div id="comprobante-print" style={{ border:"2px solid #e5e7eb", borderRadius:10, padding:"24px", marginBottom:20 }}>
-        {/* Header */}
+        {f.ambiente === "homo" && <div style={{ textAlign:"center", fontWeight:800, color:"#b45309", fontSize:12, letterSpacing:1, marginBottom:10 }}>COMPROBANTE DE PRUEBA — SIN VALIDEZ FISCAL</div>}
         <div style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", gap:16, marginBottom:20, alignItems:"center" }}>
-          {/* Datos emisor */}
           <div>
             {config.logo && <img src={config.logo} alt="logo" style={{ height:40, marginBottom:8, display:"block" }} onError={e=>e.target.style.display="none"} />}
-            <div style={{ fontWeight:800, fontSize:16 }}>{config.razonSocial || config.nombre}</div>
-            <div style={{ fontSize:12, color:"#666", marginTop:4 }}>CUIT: {config.cuit}</div>
-            <div style={{ fontSize:12, color:"#666" }}>Condición IVA: {config.condicionIVA}</div>
-            {config.telefono && <div style={{ fontSize:12, color:"#666" }}>Tel: {config.telefono}</div>}
+            <div style={{ fontWeight:800, fontSize:16 }}>{emisor.razonSocial || config.razonSocial || config.nombre}</div>
+            <div style={{ fontSize:12, color:"#666", marginTop:4 }}>CUIT: {fmtCuit(emisor.cuit || config.cuit)}</div>
+            <div style={{ fontSize:12, color:"#666" }}>{condEmisor}</div>
+            {config.direccion && <div style={{ fontSize:12, color:"#666" }}>{config.direccion}</div>}
           </div>
-          {/* Tipo de comprobante */}
           <div style={{ textAlign:"center", border:"3px solid #111", padding:"12px 20px", borderRadius:8 }}>
             <div style={{ fontWeight:900, fontSize:40, lineHeight:1 }}>{f.tipo}</div>
             <div style={{ fontSize:10, color:"#666", marginTop:4 }}>FACTURA</div>
-            <div style={{ fontSize:10, marginTop:6, fontWeight:600 }}>Nro: {f.numero}</div>
+            <div style={{ fontSize:9, color:"#666", marginTop:2 }}>Cód. {String(f.cbte_tipo ?? { A:1, B:6, C:11 }[f.tipo] ?? "").padStart(3, "0")}</div>
           </div>
-          {/* Número y fecha */}
           <div style={{ textAlign:"right" }}>
-            <div style={{ fontSize:13, color:"#666", marginBottom:4 }}>Punto de venta: {String(config.puntoVenta||"1").padStart(4,"0")}</div>
-            <div style={{ fontSize:13, color:"#666", marginBottom:4 }}>Fecha: {fmtDate(f.fecha)}</div>
-            <div style={{ fontSize:11, color:"#888" }}>Fecha de vto. pago: {fmtDate(f.fecha)}</div>
+            <div style={{ fontSize:13, fontWeight:700, marginBottom:4 }}>N° {f.numero}</div>
+            <div style={{ fontSize:13, color:"#666", marginBottom:4 }}>Punto de venta: {pv}</div>
+            <div style={{ fontSize:13, color:"#666" }}>Fecha: {fmtDate(f.fecha)}</div>
           </div>
         </div>
 
         <div style={{ height:1, background:"#e5e7eb", margin:"0 0 16px" }} />
 
-        {/* Receptor */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, marginBottom:16 }}>
-          <div>
-            <div style={{ fontSize:11, color:"#888", marginBottom:4 }}>RECEPTOR</div>
-            <div style={{ fontWeight:700 }}>{f.receptor?.nombre || "Consumidor Final"}</div>
-            <div style={{ fontSize:12, color:"#666" }}>Condición IVA: {f.receptor?.condIVA}</div>
-          </div>
-          <div>
-            {f.receptor?.nroDoc && <div style={{ fontSize:12, color:"#666" }}>{f.receptor?.tipoDoc}: {f.receptor?.nroDoc}</div>}
-          </div>
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:11, color:"#888", marginBottom:4 }}>CLIENTE</div>
+          <div style={{ fontWeight:700 }}>{f.receptor?.nombre || "Consumidor Final"}</div>
+          <div style={{ fontSize:12, color:"#666" }}>Condición IVA: {f.receptor?.condIVA || "Consumidor Final"}</div>
+          {f.receptor?.nroDoc && <div style={{ fontSize:12, color:"#666" }}>{f.receptor?.tipoDoc}: {f.receptor?.tipoDoc === "CUIT" ? fmtCuit(f.receptor.nroDoc) : f.receptor.nroDoc}</div>}
         </div>
 
         <div style={{ height:1, background:"#e5e7eb", margin:"0 0 16px" }} />
 
-        {/* Items */}
         <table style={{ width:"100%", borderCollapse:"collapse", marginBottom:16, fontSize:13 }}>
           <thead>
             <tr style={{ background:"#f9fafb" }}>
@@ -5234,7 +5302,6 @@ function ComprobanteModal({ venta, config, onClose }) {
           </tbody>
         </table>
 
-        {/* Totales */}
         <div style={{ display:"flex", justifyContent:"flex-end" }}>
           <div style={{ minWidth:240 }}>
             {venta.descuento > 0 && (
@@ -5245,34 +5312,29 @@ function ComprobanteModal({ venta, config, onClose }) {
             {f.tipo === "A" && (
               <>
                 <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
-                  <span style={{ color:"#666" }}>Subtotal neto</span>
-                  <span>{fmtMoney(venta.total / 1.21, config.moneda)}</span>
+                  <span style={{ color:"#666" }}>Neto gravado</span><span>{fmtMoney(neto, config.moneda)}</span>
                 </div>
                 <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
-                  <span style={{ color:"#666" }}>IVA 21%</span>
-                  <span>{fmtMoney(venta.total - venta.total/1.21, config.moneda)}</span>
+                  <span style={{ color:"#666" }}>IVA 21%</span><span>{fmtMoney(iva, config.moneda)}</span>
                 </div>
               </>
             )}
             <div style={{ display:"flex", justifyContent:"space-between", fontWeight:800, fontSize:18, borderTop:"2px solid #111", paddingTop:8, marginTop:4 }}>
-              <span>TOTAL</span><span>{fmtMoney(venta.total, config.moneda)}</span>
+              <span>TOTAL</span><span>{fmtMoney(total, config.moneda)}</span>
             </div>
+            {f.tipo === "B" && (
+              <div style={{ fontSize:11, color:"#666", marginTop:6, textAlign:"right" }}>IVA contenido: {fmtMoney(iva, config.moneda)}</div>
+            )}
           </div>
         </div>
 
         <div style={{ height:1, background:"#e5e7eb", margin:"16px 0" }} />
 
-        {/* CAE */}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, fontSize:12 }}>
-          <div>
-            <span style={{ color:"#666" }}>CAE N°: </span>
-            <span style={{ fontWeight:700, fontFamily:"monospace" }}>{f.cae}</span>
-          </div>
-          <div style={{ textAlign:"right" }}>
-            <span style={{ color:"#666" }}>Fecha Vto. CAE: </span>
-            <span style={{ fontWeight:600 }}>{fmtDate(f.caeVto)}</span>
-          </div>
+          <div><span style={{ color:"#666" }}>CAE N°: </span><span style={{ fontWeight:700, fontFamily:"monospace" }}>{f.cae}</span></div>
+          <div style={{ textAlign:"right" }}><span style={{ color:"#666" }}>Vto. CAE: </span><span style={{ fontWeight:600 }}>{fmtDate(f.caeVto)}</span></div>
         </div>
+        <div style={{ fontSize:10, color:"#999", marginTop:10 }}>Comprobante autorizado por ARCA.</div>
       </div>
 
       <div style={{ display:"flex", gap:10 }}>
@@ -5410,16 +5472,31 @@ function ConfigPage({ ctx }) {
         </div>
       </div>
 
-      {/* Facturación Electrónica — Próximamente */}
-      <div style={{ ...G.card({ marginBottom:24 }) }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-          <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>🏛️ Facturación Electrónica (AFIP/ARCA)</h3>
-          <span style={{ background:"#f4ecff", color:"#7c3aed", fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Próximamente</span>
+      {/* Facturación Electrónica */}
+      {config.facturacionActiva ? (
+        <div style={{ ...G.card({ marginBottom:24 }) }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, gap:12, flexWrap:"wrap" }}>
+            <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>🏛️ Facturación Electrónica (ARCA)</h3>
+            <span style={{ background:"#dcfce7", color:"#15803d", fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Activa</span>
+          </div>
+          <p style={{ margin:"0 0 6px", fontSize:13, color:"#666", lineHeight:1.5 }}>
+            {config.razonSocial || config.nombre}{config.cuit ? ` · CUIT ${fmtCuit(config.cuit)}` : ""}{config.condicionIVA ? ` · ${config.condicionIVA}` : ""}{config.puntoVenta ? ` · Punto de venta ${String(config.puntoVenta).padStart(4,"0")}` : ""}
+          </p>
+          <p style={{ margin:0, fontSize:13, color:"#888", lineHeight:1.5 }}>
+            Facturá al terminar cada venta o después, desde el Historial de Ventas. Para cambiar estos datos escribinos.
+          </p>
         </div>
-        <p style={{ margin:0, fontSize:13, color:"#888", lineHeight:1.5 }}>
-          Estamos preparando la emisión de facturas electrónicas con CAE, integrada a AFIP. Vas a poder activarla directamente desde acá apenas esté disponible.
-        </p>
-      </div>
+      ) : (
+        <div style={{ ...G.card({ marginBottom:24 }) }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+            <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>🏛️ Facturación Electrónica (ARCA)</h3>
+            <span style={{ background:"#f4ecff", color:"#7c3aed", fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Próximamente</span>
+          </div>
+          <p style={{ margin:0, fontSize:13, color:"#888", lineHeight:1.5 }}>
+            Estamos preparando la emisión de facturas electrónicas con CAE, integrada a ARCA. Vas a poder activarla directamente desde acá apenas esté disponible.
+          </p>
+        </div>
+      )}
 
       <div style={{ display:"flex", gap:12 }}>
         <button style={{ ...G.btn(saved?"green":"dark"), fontSize:14, padding:"12px 28px" }} onClick={save}>
@@ -6028,7 +6105,7 @@ function LandingPage({ onIngresar }) {
     { q: "¿Necesito instalar algo?", a: "No. MiLocal funciona 100% en la web. Entrás desde cualquier computadora, tablet o celular con internet, sin descargar ni instalar nada." },
     { q: "¿Mis datos están seguros?", a: "Sí. Toda tu información se guarda en la nube con respaldo automático. Cada negocio ve únicamente sus propios datos, protegidos con tu usuario y contraseña." },
     { q: "¿Sirve para mi rubro?", a: "MiLocal es multirrubro. Se adapta a indumentaria, calzado, electrónica, kioscos, farmacias y prácticamente cualquier comercio minorista. Al crear tu cuenta elegís tu rubro y el sistema se configura solo." },
-    { q: "¿Puedo emitir facturas?", a: "Sí. El sistema emite comprobantes tipo A, B y C con numeración correlativa, listos para AFIP. También podés dar tickets de venta comunes cuando no hace falta factura." },
+    { q: "¿Puedo emitir facturas?", a: "Estamos sumando la facturación electrónica con ARCA (facturas A, B y C con CAE), incluida en el plan sin costo extra. Mientras tanto, cada venta genera su ticket para entregarle al cliente." },
     { q: "¿Puedo usar MiLocal desde el celular?", a: "Sí. La app se adapta a cualquier dispositivo. Vendé desde el mostrador con la compu y controlá el negocio desde el celular cuando estás afuera." },
     { q: "¿Qué pasa si tengo un problema?", a: "Nos escribís por WhatsApp y te ayudamos. Estamos para que puedas vender tranquilo." },
   ];
@@ -6180,7 +6257,7 @@ function LandingPage({ onIngresar }) {
             {[
               { n: "1", t: "Registrate gratis", d: "Creá tu cuenta rápido, gratis y sin tarjeta. Podés hacerlo desde tu celular o computadora.", nota: "✅ No necesitás descargar nada ni instalar programas. Funciona 100% online." },
               { n: "2", t: "Cargá tus productos", d: "Elegí tu rubro y cargá tus productos manualmente o importalos desde un Excel/CSV.", nota: "✅ El sistema se adapta a tu rubro con talles, colores, categorías y todo lo que necesites." },
-              { n: "3", t: "Empezá a vender", d: "Buscá productos por nombre, cobrá con cualquier método y emití factura AFIP si hace falta. Cada venta descuenta stock automáticamente.", nota: "✅ Cada venta genera datos útiles: qué se vendió más, alertas de stock bajo y reportes." },
+              { n: "3", t: "Empezá a vender", d: "Buscá productos por nombre, cobrá con cualquier método y entregá el ticket al cliente. Cada venta descuenta stock automáticamente.", nota: "✅ Cada venta genera datos útiles: qué se vendió más, alertas de stock bajo y reportes." },
             ].map((s, i) => (
               <div key={i} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: "32px 28px", position: "relative" }}>
                 <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.purple, color: "#fff", fontWeight: 700, fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>{s.n}</div>
