@@ -3,6 +3,7 @@ import { Html5Qrcode } from "html5-qrcode";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
 import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu, MoreVertical, Calculator, Target } from "lucide-react";
 import * as XLSX from "xlsx";
+import QRCode from "qrcode";
 
 // ═══════════════════════════════════════════════════════════
 // SUPABASE CLIENT
@@ -5054,7 +5055,12 @@ function FacturarModal({ venta, config, conEleccion = false, onResultado, onSinF
   const tipo = tipoFactura(config.tipoContrib, cond);
   const m = montosFactura(venta.total);
   const pideCuit = cond !== "cf";
-  const cuitOk = !pideCuit || cuitValido(cuit);
+  const [dni, setDni] = useState(previa?.receptor?.tipoDoc === "DNI" ? previa.receptor.nroDoc : "");
+  // RG 5700/2025: a consumidor final se lo identifica desde $10.000.000
+  const pideDni = !pideCuit && Number(venta.total) >= 10000000;
+  const dniDigitos = dni.replace(/\D/g, "");
+  const dniOk = !pideDni || /^\d{7,8}$/.test(dniDigitos);
+  const cuitOk = (!pideCuit || cuitValido(cuit)) && dniOk;
   const cuitDigitos = cuit.replace(/\D/g, "");
 
   const emitir = async () => {
@@ -5063,7 +5069,7 @@ function FacturarModal({ venta, config, conEleccion = false, onResultado, onSinF
     const r = await llamarAfip({
       accion: "facturar_venta",
       venta_id: venta.id,
-      receptor: { condicion: cond, cuit: pideCuit ? cuitDigitos : "", nombre: nombre.trim() },
+      receptor: { condicion: cond, cuit: pideCuit ? cuitDigitos : "", nombre: nombre.trim(), dni: pideDni ? dniDigitos : "" },
     });
     if (r.factura) {
       setResultado(r.factura);
@@ -5182,6 +5188,12 @@ function FacturarModal({ venta, config, conEleccion = false, onResultado, onSinF
         </div>
       </div>
 
+      {pideDni && (
+        <FieldRow label="DNI del cliente">
+          <input style={G.inp()} inputMode="numeric" value={dni} onChange={e => setDni(e.target.value.replace(/\D/g, "").slice(0, 8))} placeholder="12345678" />
+          <div style={{ fontSize:12, color:"#6b7280", marginTop:4 }}>ARCA pide identificar al consumidor final en ventas de $10.000.000 o más.</div>
+        </FieldRow>
+      )}
       {pideCuit && (
         <FieldRow label="CUIT del cliente">
           <input style={G.inp({ borderColor: cuitDigitos.length === 11 && !cuitOk ? "#dc2626" : undefined })} inputMode="numeric" value={cuit}
@@ -5218,6 +5230,11 @@ function FacturarModal({ venta, config, conEleccion = false, onResultado, onSinF
 // ─── Comprobante visual imprimible ────────────────────────────
 function ComprobanteModal({ venta, config, onClose }) {
   const f = venta.factura;
+  const [qrImg, setQrImg] = useState("");
+  useEffect(() => {
+    if (!f?.qr) return;
+    QRCode.toDataURL(f.qr, { margin: 1, width: 220 }).then(setQrImg).catch(() => setQrImg(""));
+  }, [f?.qr]);
   if (!f) return null;
   const emisor = f.emisor || {};
   const pv = f.pto_vta != null ? String(f.pto_vta).padStart(4, "0") : String(config.puntoVenta || "1").padStart(4, "0");
@@ -5334,7 +5351,13 @@ function ComprobanteModal({ venta, config, onClose }) {
           <div><span style={{ color:"#666" }}>CAE N°: </span><span style={{ fontWeight:700, fontFamily:"monospace" }}>{f.cae}</span></div>
           <div style={{ textAlign:"right" }}><span style={{ color:"#666" }}>Vto. CAE: </span><span style={{ fontWeight:600 }}>{fmtDate(f.caeVto)}</span></div>
         </div>
-        <div style={{ fontSize:10, color:"#999", marginTop:10 }}>Comprobante autorizado por ARCA.</div>
+        <div style={{ display:"flex", alignItems:"center", gap:14, marginTop:14 }}>
+          {qrImg && <img src={qrImg} alt="Código QR de ARCA" style={{ width:96, height:96, display:"block" }} />}
+          <div style={{ fontSize:11, color:"#666", lineHeight:1.5 }}>
+            <b style={{ color:"#111" }}>Comprobante Autorizado</b><br/>
+            Esta factura fue autorizada por ARCA. Escaneá el código para verificarla.
+          </div>
+        </div>
       </div>
 
       <div style={{ display:"flex", gap:10 }}>
@@ -5344,6 +5367,90 @@ function ComprobanteModal({ venta, config, onClose }) {
         </button>
       </div>
     </Modal>
+  );
+}
+
+// ─── Activación de facturación (self-service para clientes) ───
+const MILOCAL_CUIT = "20-44118961-4";
+function ActivarFacturacionCard({ config, esDueno }) {
+  const [abierto, setAbierto] = useState(false);
+  const [cuit, setCuit] = useState(config.cuit ? fmtCuit(config.cuit) : "");
+  const [razon, setRazon] = useState(config.razonSocial || "");
+  const [condicion, setCondicion] = useState(config.tipoContrib === "responsable_inscripto" ? "ri" : "mono");
+  const [pv, setPv] = useState("");
+  const [estado, setEstado] = useState(""); // "" | verificando | ok
+  const [error, setError] = useState("");
+  const cuitOk = cuitValido(cuit);
+  const listo = cuitOk && razon.trim().length >= 3 && /^\d{1,5}$/.test(pv);
+
+  const verificar = async () => {
+    if (!listo || estado === "verificando") return;
+    setEstado("verificando"); setError("");
+    const r = await llamarAfip({ accion: "activar_facturacion", datos: { cuit: cuit.replace(/\D/g, ""), razon_social: razon.trim(), condicion, punto_venta: Number(pv) } });
+    if (r.httpOk && r.ok) { setEstado("ok"); setTimeout(() => window.location.reload(), 1800); return; }
+    setEstado(""); setError(r.error || "No pudimos verificar con ARCA. Probá de nuevo en unos minutos.");
+  };
+
+  const paso = (n, titulo, cuerpo) => (
+    <div style={{ display:"flex", gap:12, marginBottom:16 }}>
+      <div style={{ flex:"0 0 26px", height:26, borderRadius:"50%", background:"#f4ecff", color:"#6d28d9", fontWeight:800, fontSize:13, display:"flex", alignItems:"center", justifyContent:"center" }}>{n}</div>
+      <div style={{ fontSize:13, color:"#4b5563", lineHeight:1.55 }}><b style={{ color:"#111", display:"block", marginBottom:2 }}>{titulo}</b>{cuerpo}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ ...G.card({ marginBottom:24 }) }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, gap:12, flexWrap:"wrap" }}>
+        <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>🏛️ Facturación Electrónica (ARCA)</h3>
+        <span style={{ background:"#f4ecff", color:"#7c3aed", fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Incluida en tu plan</span>
+      </div>
+      <p style={{ margin:"0 0 14px", fontSize:13, color:"#666", lineHeight:1.5 }}>
+        Emití facturas A, B y C con CAE desde cada venta o desde el Historial, sin pagar otro sistema. Se activa una sola vez, en unos 10 minutos.
+      </p>
+      {!esDueno ? (
+        <p style={{ margin:0, fontSize:13, color:"#92400e" }}>La facturación la activa el dueño del negocio desde su cuenta.</p>
+      ) : !abierto ? (
+        <button style={{ ...G.btn("dark"), background:"#9238ff", borderColor:"#9238ff" }} onClick={() => setAbierto(true)}>Activar facturación</button>
+      ) : estado === "ok" ? (
+        <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:10, padding:"12px 16px", fontSize:14, color:"#15803d", fontWeight:700 }}>
+          ✓ ¡Listo! ARCA confirmó todo. La facturación quedó activa.
+        </div>
+      ) : (
+        <div>
+          <div style={{ fontSize:12, color:"#6b7280", marginBottom:14 }}>Hacé los pasos 1 y 2 en la web de ARCA con tu clave fiscal (nivel 3) y volvé acá.</div>
+          {paso(1, "Autorizá a MiLocal a facturar por vos", <>En ARCA entrá a <b>Administrador de Relaciones de Clave Fiscal</b> → <b>Nueva Relación</b> → <b>Buscar</b> → ARCA → WebServices → <b>Facturación Electrónica</b>. En "Representante" poné el CUIT de MiLocal: <b style={{ fontFamily:"monospace" }}>{MILOCAL_CUIT}</b> y confirmá. Nosotros aceptamos la relación en el día.</>)}
+          {paso(2, "Creá un punto de venta para MiLocal", <>Entrá a <b>Administración de puntos de venta y domicilios</b> → tu nombre → <b>A/B/M de puntos de venta</b> → <b>Agregar</b>. Elegí un número que no uses (por ejemplo 5) y en sistema elegí <b>{condicion === "ri" ? "RECE para aplicativo y web services" : "Factura Electrónica - Monotributo - Web Services"}</b>. Tiene que ser uno nuevo: no sirve el de "Comprobantes en línea".</>)}
+          {paso(3, "Completá tus datos y verificá", "Revisamos con ARCA que la autorización y el punto de venta estén bien. Si algo falta, te decimos qué.")}
+
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:12, marginTop:4 }}>
+            <FieldRow label="Tu CUIT">
+              <input style={G.inp()} inputMode="numeric" value={cuit} onChange={e => setCuit(fmtCuit(e.target.value))} placeholder="20-12345678-9" />
+              {cuit.replace(/\D/g, "").length === 11 && !cuitOk && <div style={{ fontSize:12, color:"#dc2626", marginTop:4 }}>Ese CUIT no es válido.</div>}
+            </FieldRow>
+            <FieldRow label="Nombre o razón social (como en ARCA)">
+              <input style={G.inp()} value={razon} onChange={e => setRazon(e.target.value)} placeholder="Ej: PEREZ JUAN" />
+            </FieldRow>
+            <FieldRow label="Condición frente al IVA">
+              <select style={G.inp()} value={condicion} onChange={e => setCondicion(e.target.value)}>
+                <option value="mono">Monotributista (Factura C)</option>
+                <option value="ri">Responsable Inscripto (Factura A y B)</option>
+              </select>
+            </FieldRow>
+            <FieldRow label="Punto de venta del paso 2">
+              <input style={G.inp()} inputMode="numeric" value={pv} onChange={e => setPv(e.target.value.replace(/\D/g, "").slice(0, 5))} placeholder="Ej: 5" />
+            </FieldRow>
+          </div>
+          {error && <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 14px", margin:"4px 0 14px", fontSize:13, color:"#92400e" }}>{error}</div>}
+          <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+            <button style={G.btn("outline")} onClick={() => setAbierto(false)}>Después</button>
+            <button disabled={!listo || estado === "verificando"} onClick={verificar}
+              style={{ ...G.btn("dark"), background: listo ? "#9238ff" : "#d4d4d8", borderColor: listo ? "#9238ff" : "#d4d4d8", cursor: listo ? "pointer" : "not-allowed" }}>
+              {estado === "verificando" ? "Verificando con ARCA…" : "Verificar y activar"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -5487,15 +5594,7 @@ function ConfigPage({ ctx }) {
           </p>
         </div>
       ) : (
-        <div style={{ ...G.card({ marginBottom:24 }) }}>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-            <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>🏛️ Facturación Electrónica (ARCA)</h3>
-            <span style={{ background:"#f4ecff", color:"#7c3aed", fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Próximamente</span>
-          </div>
-          <p style={{ margin:0, fontSize:13, color:"#888", lineHeight:1.5 }}>
-            Estamos preparando la emisión de facturas electrónicas con CAE, integrada a ARCA. Vas a poder activarla directamente desde acá apenas esté disponible.
-          </p>
-        </div>
+        <ActivarFacturacionCard config={config} esDueno={miRol === "dueno"} />
       )}
 
       <div style={{ display:"flex", gap:12 }}>
