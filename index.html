@@ -9,7 +9,7 @@
 
     <!-- SEO PRINCIPAL -->
     <title>MiLocal — Software de gestión de ventas y stock</title>
-    <meta name="description" content="Sistema de gestión para comercios argentinos: controlá ventas, stock, caja y ganancias desde el celu. Probalo 7 días gratis, sin tarjeta." />
+    <meta name="description" content="Sistema de gestión para comercios argentinos: ventas, stock, caja y factura electrónica ARCA incluida. Probalo 7 días gratis, sin tarjeta." />
     <link rel="canonical" href="https://www.milocal.com.ar/" />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="author" content="MiLocal" />
@@ -55,6 +55,7 @@
         "availability": "https://schema.org/InStock"
       },
       "featureList": [
+        "Factura electronica ARCA (A, B y C) con CAE y codigo QR",
         "Control de stock por talle y color",
         "Punto de venta con escaner de codigo de barras",
         "Cobro en efectivo, tarjeta, transferencia o combinado",
@@ -96,6 +97,14 @@
         },
         {
           "@type": "Question",
+          "name": "Puedo emitir factura electronica con MiLocal?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Si. MiLocal emite factura electronica de ARCA (A, B o C, con CAE y codigo QR) al terminar cada venta o despues desde el historial, con tu propio CUIT y punto de venta. Esta incluida en el plan, sin costo extra."
+          }
+        },
+        {
+          "@type": "Question",
           "name": "Para que tipo de negocios sirve?",
           "acceptedAnswer": {
             "@type": "Answer",
@@ -124,6 +133,7 @@
          pantalla de carga y es lo que leen los crawlers. */
       #pre { max-width: 1080px; margin: 0 auto; padding: 56px 24px 72px; color: #0A0A0A; }
       #pre .brand { font-size: 20px; font-weight: 800; letter-spacing: -.5px; margin-bottom: 56px; }
+      #pre .nuevo { display: inline-block; background: #F4ECFF; color: #6d28d9; border-radius: 999px; padding: 7px 14px; font-size: 14px; font-weight: 600; margin-bottom: 22px; }
       #pre h1 { font-size: 56px; line-height: 1.02; font-weight: 500; letter-spacing: -2.5px; margin-bottom: 24px; }
       #pre .lead { font-size: 18px; line-height: 1.55; color: #4B5563; max-width: 520px; margin-bottom: 30px; }
       #pre .cta { display: inline-block; background: #9238FF; color: #fff; text-decoration: none;
@@ -145,13 +155,15 @@
       <div id="pre">
         <div class="brand">MiLocal</div>
 
+        <p class="nuevo">Nuevo · Factura electrónica automática con ARCA</p>
         <h1>Menos planillas. Más ventas.</h1>
-        <p class="lead">MiLocal reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás y controlás el stock — todo desde un mismo lugar.</p>
+        <p class="lead">MiLocal reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás, facturás con ARCA en un clic y controlás el stock — todo desde un mismo lugar.</p>
         <a class="cta" href="/login">¡Empezar gratis!</a>
-        <p class="trust">Sin tarjeta de crédito · Sin instalaciones · Listo en 2 minutos</p>
+        <p class="trust">Sin tarjeta de crédito · Sin instalaciones · Listo en 2 minutos · Factura ARCA incluida</p>
 
         <h2>Por qué MiLocal</h2>
         <ul>
+          <li><strong>Factura electrónica automática</strong><span>Facturá con ARCA en un clic al cobrar: A, B o C según el cliente, con CAE y QR. Incluida en el plan.</span></li>
           <li><strong>Control total del stock</strong><span>Alta y baja de productos, stock por talle y color, y alertas de faltantes automáticas.</span></li>
           <li><strong>Ventas y ganancias visibles</strong><span>Cada venta queda registrada con precio, cantidad y margen. Sabés cuánto ganás por día.</span></li>
           <li><strong>Escaneo de códigos de barra</strong><span>Cargá y vendé más rápido escaneando con la cámara o un lector USB.</span></li>
