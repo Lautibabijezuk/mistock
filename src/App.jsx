@@ -200,6 +200,7 @@ const ventaToDb = (v, negocioId) => ({
   cliente: v.cliente||'', metodo_pago: v.metodoPago, items: v.items||[],
   subtotal: v.subtotal||0, descuento: v.descuento||0, descuento_tipo: v.descuentoTipo||'monto',
   total: v.total||0, efectivo_dado: v.efectivoDado||0, cambio: v.cambio||0,
+  anulada: !!v.anulada,
   factura: v.factura||null, pagos_combinados: v.pagosCombinados||null,
 });
 const dbToConfig = n => ({
@@ -5461,7 +5462,7 @@ function ComprobanteModal({ venta, config, onClose, doc = "factura" }) {
           {qrImg && <img src={qrImg} alt="Código QR de ARCA" style={{ width:96, height:96, display:"block" }} />}
           <div style={{ fontSize:11, color:"#666", lineHeight:1.5 }}>
             <b style={{ color:"#111" }}>Comprobante Autorizado</b><br/>
-            Esta factura fue autorizada por ARCA. Escaneá el código para verificarla.
+            Este comprobante fue autorizado por ARCA. Escaneá el código para verificarlo.
           </div>
         </div>
       </div>
