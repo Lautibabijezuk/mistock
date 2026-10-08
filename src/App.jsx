@@ -5388,6 +5388,7 @@ function ActivarFacturacionCard({ config, esDueno }) {
     setEstado("verificando"); setError("");
     const r = await llamarAfip({ accion: "activar_facturacion", datos: { cuit: cuit.replace(/\D/g, ""), razon_social: razon.trim(), condicion, punto_venta: Number(pv) } });
     if (r.httpOk && r.ok) { setEstado("ok"); setTimeout(() => window.location.reload(), 1800); return; }
+    if (r.codigo === "SIN_DELEGACION") { setEstado("esperando"); setError(""); return; }
     setEstado(""); setError(r.error || "No pudimos verificar con ARCA. Probá de nuevo en unos minutos.");
   };
 
@@ -5411,6 +5412,16 @@ function ActivarFacturacionCard({ config, esDueno }) {
         <p style={{ margin:0, fontSize:13, color:"#92400e" }}>La facturación la activa el dueño del negocio desde su cuenta.</p>
       ) : !abierto ? (
         <button style={{ ...G.btn("dark"), background:"#9238ff", borderColor:"#9238ff" }} onClick={() => setAbierto(true)}>Activar facturación</button>
+      ) : estado === "esperando" ? (
+        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"14px 16px", fontSize:13, color:"#92400e", lineHeight:1.55 }}>
+          <b style={{ display:"block", fontSize:14, marginBottom:4 }}>⏳ Falta que MiLocal acepte tu autorización en ARCA</b>
+          Ya nos llegó tu pedido. Cuando aceptemos la autorización, la facturación se activa sola (normalmente en el día) y no tenés que hacer nada más.
+          Si todavía no hiciste el paso 1 (autorizar a MiLocal en ARCA), hacelo ahora.
+          <div style={{ marginTop:10, display:"flex", gap:8, flexWrap:"wrap" }}>
+            <button style={G.btn("outline")} onClick={() => setEstado("")}>Revisar mis datos</button>
+            <button style={G.btn("outline")} onClick={verificar}>Volver a verificar</button>
+          </div>
+        </div>
       ) : estado === "ok" ? (
         <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:10, padding:"12px 16px", fontSize:14, color:"#15803d", fontWeight:700 }}>
           ✓ ¡Listo! ARCA confirmó todo. La facturación quedó activa.
@@ -6204,12 +6215,13 @@ function LandingPage({ onIngresar }) {
     { q: "¿Necesito instalar algo?", a: "No. MiLocal funciona 100% en la web. Entrás desde cualquier computadora, tablet o celular con internet, sin descargar ni instalar nada." },
     { q: "¿Mis datos están seguros?", a: "Sí. Toda tu información se guarda en la nube con respaldo automático. Cada negocio ve únicamente sus propios datos, protegidos con tu usuario y contraseña." },
     { q: "¿Sirve para mi rubro?", a: "MiLocal es multirrubro. Se adapta a indumentaria, calzado, electrónica, kioscos, farmacias y prácticamente cualquier comercio minorista. Al crear tu cuenta elegís tu rubro y el sistema se configura solo." },
-    { q: "¿Puedo emitir facturas?", a: "Estamos sumando la facturación electrónica con ARCA (facturas A, B y C con CAE), incluida en el plan sin costo extra. Mientras tanto, cada venta genera su ticket para entregarle al cliente." },
+    { q: "¿Puedo emitir facturas?", a: "Sí. MiLocal emite factura electrónica de ARCA (A, B o C, con CAE y código QR) al terminar cada venta o después desde el historial, con tu propio CUIT y punto de venta. Está incluida en el plan, sin pagar otro sistema. La activás una sola vez desde Configuración." },
     { q: "¿Puedo usar MiLocal desde el celular?", a: "Sí. La app se adapta a cualquier dispositivo. Vendé desde el mostrador con la compu y controlá el negocio desde el celular cuando estás afuera." },
     { q: "¿Qué pasa si tengo un problema?", a: "Nos escribís por WhatsApp y te ayudamos. Estamos para que puedas vender tranquilo." },
   ];
 
   const funciones = [
+    { t: "Factura electrónica automática", d: "Facturá con ARCA en un clic al cobrar: A, B o C según el cliente, con CAE y QR. Incluida en el plan.", ic: <FileText size={24}/> },
     { t: "Control total del stock", d: "Alta y baja de productos, stock por talle y color, y alertas de faltantes automáticas.", ic: <Package size={24}/> },
     { t: "Ventas y ganancias visibles", d: "Cada venta queda registrada con precio, cantidad y margen. Sabés cuánto ganás por día.", ic: <TrendingUp size={24}/> },
     { t: "Escaneo de códigos de barra", d: "Cargá y vendé más rápido escaneando con la cámara o un lector USB.", ic: <ScanLine size={24}/> },
@@ -6251,11 +6263,15 @@ function LandingPage({ onIngresar }) {
       <section style={{ ...wrap, padding: "80px 24px 60px" }}>
         <div className="hero-grid" style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 60, alignItems: "center" }}>
           <div>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#F4ECFF", color: "#6d28d9", borderRadius: 999, padding: "7px 14px 7px 8px", fontSize: 14, fontWeight: 600, marginBottom: 22 }}>
+              <span style={{ background: C.purple, color: "#fff", borderRadius: 999, padding: "2px 9px", fontSize: 12, fontWeight: 700 }}>Nuevo</span>
+              Factura electrónica automática con ARCA
+            </div>
             <h1 className="hero-h1" style={{ fontSize: 68, lineHeight: 1.02, fontWeight: 500, letterSpacing: "-2.5px", margin: "0 0 24px" }}>
               Menos planillas.<br/>Más ventas.
             </h1>
             <p style={{ fontSize: 18, lineHeight: 1.55, color: C.body, margin: "0 0 32px", maxWidth: 520 }}>
-              MiLocal reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás y controlás el stock — todo desde un mismo lugar.
+              MiLocal reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás, facturás con ARCA en un clic y controlás el stock — todo desde un mismo lugar.
             </p>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "14px 28px", fontFamily: font }}>¡Empezar gratis!</button>
@@ -6265,6 +6281,7 @@ function LandingPage({ onIngresar }) {
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Sin tarjeta de crédito</span>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Sin instalaciones</span>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Listo en 2 minutos</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Factura ARCA incluida</span>
             </div>
           </div>
 
@@ -6356,7 +6373,7 @@ function LandingPage({ onIngresar }) {
             {[
               { n: "1", t: "Registrate gratis", d: "Creá tu cuenta rápido, gratis y sin tarjeta. Podés hacerlo desde tu celular o computadora.", nota: "✅ No necesitás descargar nada ni instalar programas. Funciona 100% online." },
               { n: "2", t: "Cargá tus productos", d: "Elegí tu rubro y cargá tus productos manualmente o importalos desde un Excel/CSV.", nota: "✅ El sistema se adapta a tu rubro con talles, colores, categorías y todo lo que necesites." },
-              { n: "3", t: "Empezá a vender", d: "Buscá productos por nombre, cobrá con cualquier método y entregá el ticket al cliente. Cada venta descuenta stock automáticamente.", nota: "✅ Cada venta genera datos útiles: qué se vendió más, alertas de stock bajo y reportes." },
+              { n: "3", t: "Empezá a vender", d: "Buscá productos por nombre, cobrá con cualquier método y emití la factura de ARCA en un clic. Cada venta descuenta stock automáticamente.", nota: "✅ Cada venta genera datos útiles: qué se vendió más, alertas de stock bajo y reportes." },
             ].map((s, i) => (
               <div key={i} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: "32px 28px", position: "relative" }}>
                 <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.purple, color: "#fff", fontWeight: 700, fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>{s.n}</div>
@@ -7005,6 +7022,58 @@ function NuevaPasswordScreen({ onDone, onCancelar }) {
 // ══════════════════════════════════════════════════════════
 // ADMIN PANEL — solo el dueño de MiLocal puede ver esto
 // ══════════════════════════════════════════════════════════
+// ─── Admin: clientes esperando que aceptes su autorización en ARCA ───
+function SolicitudesFacturacionAdmin() {
+  const [lista, setLista] = useState(null);
+  const [procesando, setProcesando] = useState(false);
+  const [resultado, setResultado] = useState(null);
+  const cargar = async () => {
+    const r = await llamarAfip({ accion: "solicitudes" });
+    setLista(r.ok ? (r.solicitudes || []) : []);
+  };
+  useEffect(() => { cargar(); }, []);
+  if (!lista || lista.length === 0) return null;
+
+  const reverificar = async () => {
+    setProcesando(true); setResultado(null);
+    const r = await llamarAfip({ accion: "reverificar_solicitudes" });
+    setResultado(r.ok ? r.resultados : [{ activa: false, motivo: r.error }]);
+    setProcesando(false);
+    cargar();
+  };
+  const descartar = async (negocio_id) => {
+    await llamarAfip({ accion: "descartar_solicitud", negocio_id_solicitud: negocio_id });
+    cargar();
+  };
+  const activadas = (resultado || []).filter(x => x.activa).length;
+
+  return (
+    <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:12, padding:"16px 18px", margin:"0 0 20px" }}>
+      <div style={{ fontWeight:800, fontSize:15, color:"#92400e", marginBottom:4 }}>🏛️ {lista.length} {lista.length === 1 ? "cliente espera" : "clientes esperan"} que aceptes su autorización en ARCA</div>
+      <div style={{ fontSize:13, color:"#78350f", marginBottom:12, lineHeight:1.5 }}>
+        Entrá a ARCA → <b>Administrador de Relaciones</b> y aceptá las autorizaciones de "Facturación Electrónica" eligiendo el computador fiscal <b>milocal</b>. Después tocá "Ya acepté": las activamos sin que el cliente haga nada.
+      </div>
+      <div style={{ display:"grid", gap:6, marginBottom:12 }}>
+        {lista.map(s => (
+          <div key={s.negocio_id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, background:"#fff", border:"1px solid #fde68a", borderRadius:8, padding:"8px 12px", fontSize:13, flexWrap:"wrap" }}>
+            <span><b>{s.negocios?.nombre || "Negocio"}</b> · {s.razon_social} · CUIT {fmtCuit(s.cuit)} · PV {s.punto_venta} · {s.condicion === "ri" ? "RI" : "Monotributo"} <span style={{ color:"#a16207" }}>· desde {fmtDate(String(s.created_at).slice(0,10))}</span></span>
+            <button onClick={() => descartar(s.negocio_id)} style={{ background:"none", border:"none", color:"#a16207", cursor:"pointer", fontSize:12 }}>Descartar</button>
+          </div>
+        ))}
+      </div>
+      <button disabled={procesando} onClick={reverificar} style={{ background:"#9238ff", color:"#fff", border:"none", borderRadius:8, padding:"9px 16px", fontWeight:700, fontSize:13, cursor:"pointer" }}>
+        {procesando ? "Verificando con ARCA…" : "Ya acepté en ARCA → activar"}
+      </button>
+      {resultado && (
+        <div style={{ marginTop:10, fontSize:13, color:"#78350f" }}>
+          {activadas > 0 && <div style={{ color:"#15803d", fontWeight:700 }}>✓ {activadas} activada{activadas === 1 ? "" : "s"}.</div>}
+          {resultado.filter(x => !x.activa).map((x, i) => <div key={i}>• {x.cuit ? `CUIT ${fmtCuit(x.cuit)}: ` : ""}{x.motivo}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdminPage({ onVolver }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -7324,6 +7393,8 @@ function AdminPage({ onVolver }) {
           </button>
         ))}
       </div>
+
+      <SolicitudesFacturacionAdmin />
 
       {tabAdmin === "resumen" && (
       <>
