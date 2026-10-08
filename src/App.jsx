@@ -2495,7 +2495,9 @@ function VentaExitoModal({ venta, config, onClose }) {
   );
 }
 
-function DetalleVentaModal({ venta, moneda, config, onAnular, onClose, onVerComprobante }) {
+function DetalleVentaModal({ venta, moneda, config, onAnular, onClose, onVerComprobante, onVerNC }) {
+  const f = venta.factura;
+  const requiereNC = f?.estado === "emitida" && f.ambiente === "prod" && f.nc?.estado !== "emitida";
   const [verTicket, setVerTicket] = useState(false);
   if (verTicket) return <TicketVentaModal venta={venta} config={config} onClose={() => setVerTicket(false)} />;
   return (
@@ -2516,7 +2518,13 @@ function DetalleVentaModal({ venta, moneda, config, onAnular, onClose, onVerComp
           {(venta.factura.observaciones||[]).length > 0 && (
             <div style={{ color:"#6b7280", marginTop:6 }}>Observaciones de ARCA: {venta.factura.observaciones.map(o => o.mensaje).join(" · ")}</div>
           )}
-          {!venta.anulada && <div style={{ color:"#92400e", marginTop:6 }}>Si anulás esta venta, la factura sigue vigente en ARCA: para cancelarla hace falta una nota de crédito.</div>}
+          {venta.factura.nc?.estado === "emitida" && (
+            <div style={{ color:"#b91c1c", marginTop:6, fontWeight:600 }}>Anulada con Nota de Crédito {venta.factura.tipo} {venta.factura.nc.numero} · CAE {venta.factura.nc.cae}</div>
+          )}
+          {venta.factura.nc?.estado === "rechazada" && (
+            <div style={{ color:"#b91c1c", marginTop:6 }}>La nota de crédito fue rechazada: {venta.factura.nc.motivo}</div>
+          )}
+          {!venta.anulada && requiereNC && <div style={{ color:"#92400e", marginTop:6 }}>Para anular esta venta se emite una nota de crédito que cancela la factura en ARCA.</div>}
         </div>
       )}
       {venta.factura?.estado === "rechazada" && (
@@ -2531,7 +2539,10 @@ function DetalleVentaModal({ venta, moneda, config, onAnular, onClose, onVerComp
         {venta.factura?.estado === "emitida" && onVerComprobante && (
           <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onVerComprobante}>🏛️ Factura {venta.factura.tipo}</button>
         )}
-        {!venta.anulada && <button style={{ ...G.btn("red"), flex:1, justifyContent:"center" }} onClick={onAnular}>Anular</button>}
+        {venta.factura?.nc?.estado === "emitida" && onVerNC && (
+          <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onVerNC}>🧾 Nota de crédito</button>
+        )}
+        {!venta.anulada && <button style={{ ...G.btn("red"), flex:1, justifyContent:"center" }} onClick={onAnular}>{requiereNC ? "Anular con nota de crédito" : "Anular"}</button>}
       </div>
     </Modal>
   );
@@ -3948,14 +3959,17 @@ function InventarioPage({ ctx }) {
 
 function HistorialPage({ ctx }) {
   const { config, sales, setSales, products, setProducts } = ctx;
-  const [search, setSearch] = useState(""), [filterPago, setFilterPago] = useState("Todos"), [filterPeriod, setFilterPeriod] = useState("Todos"), [detalle, setDetalle] = useState(null), [comprobanteVer, setComprobanteVer] = useState(null), [aFacturar, setAFacturar] = useState(null);
+  const [search, setSearch] = useState(""), [filterPago, setFilterPago] = useState("Todos"), [filterPeriod, setFilterPeriod] = useState("Todos"), [detalle, setDetalle] = useState(null), [comprobanteVer, setComprobanteVer] = useState(null), [aFacturar, setAFacturar] = useState(null), [ncVenta, setNcVenta] = useState(null), [ncVer, setNcVer] = useState(null);
   const hoy = todayStr();
   const filtered = useMemo(() => sales.filter(s => { const ms = (s.cliente||"").toLowerCase().includes(search.toLowerCase())||String(s.numero).includes(search); const mp = filterPago==="Todos"||s.metodoPago===filterPago; const mf = filterPeriod==="Todos"||(filterPeriod==="Hoy"&&s.fecha===hoy)||(filterPeriod==="Esta semana"&&s.fecha>=subDays(hoy,7))||(filterPeriod==="Este mes"&&s.fecha.startsWith(hoy.slice(0,7))); return ms&&mp&&mf; }).sort((a,b) => b.numero-a.numero), [sales, search, filterPago, filterPeriod, hoy]);
   const totalFilt = filtered.filter(s => !s.anulada).reduce((a,s) => a+s.total, 0);
-  const anular = async (id) => {
-    const venta = sales.find(s => s.id === id);
+  const anular = async (id, ventaActualizada) => {
+    const venta = ventaActualizada || sales.find(s => s.id === id);
     if (!venta) return;
     if (venta.anulada) return; // ya anulada: no devolver stock dos veces
+    // Una venta con factura real se anula sólo con nota de crédito
+    const f = venta.factura;
+    if (f?.estado === "emitida" && f.ambiente === "prod" && f.nc?.estado !== "emitida") { setDetalle(null); setNcVenta(venta); return; }
     const updated = { ...venta, anulada: true };
     setSales(prev => prev.map(s => s.id===id ? updated : s));
     setDetalle(null);
@@ -3985,7 +3999,19 @@ function HistorialPage({ ctx }) {
 
   return (
     <div className="app-page-pad" style={G.page}>
-      {detalle && <DetalleVentaModal venta={detalle} moneda={config.moneda} config={config} onAnular={() => anular(detalle.id)} onClose={() => setDetalle(null)} onVerComprobante={detalle.factura?.estado==="emitida" ? () => { setComprobanteVer(detalle); setDetalle(null); } : null} />}
+      {detalle && <DetalleVentaModal venta={detalle} moneda={config.moneda} config={config} onAnular={() => anular(detalle.id)} onClose={() => setDetalle(null)} onVerComprobante={detalle.factura?.estado==="emitida" ? () => { setComprobanteVer(detalle); setDetalle(null); } : null} onVerNC={detalle.factura?.nc?.estado==="emitida" ? () => { setNcVer(detalle); setDetalle(null); } : null} />}
+      {ncVer && <ComprobanteModal venta={ncVer} config={config} doc="nc" onClose={() => setNcVer(null)} />}
+      {ncVenta && (
+        <NotaCreditoModal venta={ncVenta} config={config} onClose={() => setNcVenta(null)}
+          onEmitida={async (factura, rechazada) => {
+            const actualizada = { ...ncVenta, factura };
+            setSales(prev => prev.map(s => s.id === ncVenta.id ? actualizada : s));
+            if (rechazada) return;
+            setNcVenta(null);
+            await anular(ncVenta.id, actualizada);
+            setNcVer({ ...actualizada, anulada: true });
+          }} />
+      )}
       {comprobanteVer && <ComprobanteModal venta={comprobanteVer} config={config} onClose={() => setComprobanteVer(null)} />}
       {aFacturar && (
         <FacturarModal venta={aFacturar} config={config}
@@ -4014,7 +4040,7 @@ function HistorialPage({ ctx }) {
                 <td style={{ padding:"12px 16px", fontWeight:700, color:s.anulada?"#dc2626":"#16a34a" }}>{fmtMoney(s.total, config.moneda)}</td>
                 <td style={{ padding:"12px 16px" }}><span style={{ background:s.anulada?"#fee2e2":"#dcfce7", color:s.anulada?"#dc2626":"#16a34a", padding:"2px 9px", borderRadius:20, fontSize:11, fontWeight:600 }}>{s.anulada?"Anulada":"Completada"}</span></td>
                 <td style={{ padding:"10px 16px" }}>
-                  <CeldaFactura venta={s} config={config} onFacturar={() => setAFacturar(s)} onVer={() => setComprobanteVer(s)} />
+                  <CeldaFactura venta={s} config={config} onFacturar={() => setAFacturar(s)} onVer={() => s.factura?.nc?.estado === "emitida" ? setNcVer(s) : setComprobanteVer(s)} onNC={() => setNcVenta(s)} />
                 </td>
                 <td style={{ padding:"12px 16px" }}><button onClick={() => setDetalle(s)} style={{ background:"none", border:"none", cursor:"pointer", color:"#666", fontSize:12 }}>Ver <ChevronRight size={12}/></button></td>
               </tr>
@@ -5000,8 +5026,25 @@ function BadgePrueba() {
 }
 
 // Celda "Factura" del Historial de Ventas
-function CeldaFactura({ venta, config, onFacturar, onVer }) {
+function CeldaFactura({ venta, config, onFacturar, onVer, onNC }) {
   const f = venta.factura;
+  if (f?.estado === "emitida" && f.nc?.estado === "emitida") {
+    return (
+      <button onClick={onVer} style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left" }}>
+        <div style={{ fontSize:12, fontWeight:600, color:"#6b7280", textDecoration:"line-through", whiteSpace:"nowrap" }}>Factura {f.tipo} {f.numero}</div>
+        <div style={{ fontSize:11, fontWeight:700, color:"#b91c1c", whiteSpace:"nowrap", marginTop:2 }}>Anulada con NC {f.nc.numero}</div>
+      </button>
+    );
+  }
+  if (f?.estado === "emitida" && f.nc?.estado === "rechazada" && !venta.anulada) {
+    return (
+      <div style={{ maxWidth:220 }}>
+        <div style={{ fontSize:12, fontWeight:700, color:"#15803d", whiteSpace:"nowrap" }}>Factura {f.tipo} {f.numero}</div>
+        <div title={f.nc.motivo} style={{ fontSize:11, color:"#b91c1c", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", margin:"2px 0 4px" }}>NC rechazada: {f.nc.motivo}</div>
+        {onNC && <button onClick={onNC} style={{ background:"#fff", border:"1px solid #fecaca", color:"#b91c1c", borderRadius:20, padding:"2px 10px", fontSize:11, fontWeight:700, cursor:"pointer" }}>Reintentar NC</button>}
+      </div>
+    );
+  }
   if (f?.estado === "emitida") {
     return (
       <button onClick={onVer} style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left" }}>
@@ -5227,9 +5270,71 @@ function FacturarModal({ venta, config, conEleccion = false, onResultado, onSinF
   );
 }
 
-// ─── Comprobante visual imprimible ────────────────────────────
-function ComprobanteModal({ venta, config, onClose }) {
+// ─── Nota de crédito: anula la factura y después la venta ─────
+function NotaCreditoModal({ venta, config, onEmitida, onClose }) {
   const f = venta.factura;
+  const [step, setStep] = useState("confirmar"); // confirmar | enviando | rechazada | error
+  const [error, setError] = useState("");
+  const [motivo, setMotivo] = useState("");
+  const emitir = async () => {
+    if (step === "enviando") return;
+    setStep("enviando"); setError("");
+    const r = await llamarAfip({ accion: "nota_credito_venta", venta_id: venta.id });
+    if (r.factura?.nc?.estado === "emitida") { onEmitida(r.factura); return; }
+    if (r.factura?.nc?.estado === "rechazada") { setMotivo(r.factura.nc.motivo); setStep("rechazada"); onEmitida && onEmitida(r.factura, true); return; }
+    setError(r.error || "No pudimos emitir la nota de crédito. Reintentá en un momento.");
+    setStep("error");
+  };
+
+  if (step === "enviando") return (
+    <Modal title="" onClose={() => {}} width={380}>
+      <div style={{ textAlign:"center", padding:"32px 0" }}>
+        <div style={{ width:44, height:44, border:"4px solid #fee2e2", borderTopColor:"#dc2626", borderRadius:"50%", margin:"0 auto 18px", animation:"spinFact 0.9s linear infinite" }} />
+        <div style={{ fontWeight:700, fontSize:18, marginBottom:8 }}>Enviando nota de crédito a ARCA…</div>
+        <div style={{ fontSize:13, color:"#888" }}>No cierres la ventana.</div>
+        <style>{`@keyframes spinFact { to { transform: rotate(360deg) } }`}</style>
+      </div>
+    </Modal>
+  );
+  if (step === "rechazada") return (
+    <Modal title="ARCA rechazó la nota de crédito" onClose={onClose} width={440}>
+      <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"12px 16px", marginBottom:16, fontSize:13, color:"#7f1d1d" }}>{motivo}</div>
+      <p style={{ fontSize:13, color:"#666", margin:"0 0 18px" }}>La factura sigue vigente y la venta no se anuló.</p>
+      <button style={{ ...G.btn("dark"), width:"100%", justifyContent:"center" }} onClick={onClose}>Cerrar</button>
+    </Modal>
+  );
+  if (step === "error") return (
+    <Modal title="No se pudo emitir la nota de crédito" onClose={onClose} width={440}>
+      <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"12px 16px", marginBottom:18, fontSize:13, color:"#92400e" }}>{error}</div>
+      <div style={{ display:"flex", gap:10 }}>
+        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cerrar</button>
+        <button style={{ ...G.btn("dark"), flex:1, justifyContent:"center" }} onClick={emitir}>Reintentar</button>
+      </div>
+    </Modal>
+  );
+  return (
+    <Modal title="Anular venta con nota de crédito" subtitle={`Venta #${venta.numero} · ${fmtMoney(venta.total, config.moneda)}`} onClose={onClose} width={460}>
+      <p style={{ fontSize:14, color:"#374151", lineHeight:1.55, margin:"0 0 14px" }}>
+        Esta venta tiene la <b>Factura {f.tipo} {f.numero}</b>. Para anularla se emite una <b>Nota de Crédito {f.tipo}</b> por el total ({fmtMoney(f.total ?? venta.total, config.moneda)}) que la cancela en ARCA.
+      </p>
+      <ul style={{ fontSize:13, color:"#4b5563", lineHeight:1.6, margin:"0 0 18px", paddingLeft:18 }}>
+        <li>La nota de crédito es un comprobante fiscal y no se puede deshacer.</li>
+        <li>Después la venta queda anulada y el stock vuelve al inventario.</li>
+      </ul>
+      <div style={{ display:"flex", gap:10 }}>
+        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cancelar</button>
+        <button style={{ ...G.btn("red"), flex:2, justifyContent:"center" }} onClick={emitir}>Emitir nota de crédito y anular</button>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Comprobante visual imprimible ────────────────────────────
+function ComprobanteModal({ venta, config, onClose, doc = "factura" }) {
+  const base = venta.factura;
+  const esNC = doc === "nc" && base?.nc?.estado === "emitida";
+  const f = esNC ? { ...base, ...base.nc, emisor: base.emisor, receptor: base.receptor, ambiente: base.ambiente } : base;
+  const nombreDoc = esNC ? "NOTA DE CRÉDITO" : "FACTURA";
   const [qrImg, setQrImg] = useState("");
   useEffect(() => {
     if (!f?.qr) return;
@@ -5247,7 +5352,7 @@ function ComprobanteModal({ venta, config, onClose }) {
     const printContent = document.getElementById("comprobante-print");
     if (!printContent) return;
     const w = window.open("", "_blank");
-    w.document.write(`<html><head><title>Factura ${f.tipo} ${f.numero}</title><style>
+    w.document.write(`<html><head><title>${esNC ? "Nota de crédito" : "Factura"} ${f.tipo} ${f.numero}</title><style>
       body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
       table { width: 100%; border-collapse: collapse; }
       td, th { padding: 8px; border: 1px solid #ddd; font-size: 13px; }
@@ -5277,7 +5382,7 @@ function ComprobanteModal({ venta, config, onClose }) {
           </div>
           <div style={{ textAlign:"center", border:"3px solid #111", padding:"12px 20px", borderRadius:8 }}>
             <div style={{ fontWeight:900, fontSize:40, lineHeight:1 }}>{f.tipo}</div>
-            <div style={{ fontSize:10, color:"#666", marginTop:4 }}>FACTURA</div>
+            <div style={{ fontSize:10, color:"#666", marginTop:4 }}>{nombreDoc}</div>
             <div style={{ fontSize:9, color:"#666", marginTop:2 }}>Cód. {String(f.cbte_tipo ?? { A:1, B:6, C:11 }[f.tipo] ?? "").padStart(3, "0")}</div>
           </div>
           <div style={{ textAlign:"right" }}>
@@ -5294,6 +5399,7 @@ function ComprobanteModal({ venta, config, onClose }) {
           <div style={{ fontWeight:700 }}>{f.receptor?.nombre || "Consumidor Final"}</div>
           <div style={{ fontSize:12, color:"#666" }}>Condición IVA: {f.receptor?.condIVA || "Consumidor Final"}</div>
           {f.receptor?.nroDoc && <div style={{ fontSize:12, color:"#666" }}>{f.receptor?.tipoDoc}: {f.receptor?.tipoDoc === "CUIT" ? fmtCuit(f.receptor.nroDoc) : f.receptor.nroDoc}</div>}
+          {esNC && <div style={{ fontSize:12, color:"#111", marginTop:6, fontWeight:600 }}>Anula la Factura {base.tipo} N° {base.numero} del {fmtDate(base.fecha)}</div>}
         </div>
 
         <div style={{ height:1, background:"#e5e7eb", margin:"0 0 16px" }} />
