@@ -4037,7 +4037,7 @@ function HistorialPage({ ctx }) {
                 <td style={{ padding:"12px 16px", color:"#bbb" }}>#{s.numero}</td>
                 <td style={{ padding:"12px 16px" }}>{fmtDate(s.fecha)}</td>
                 <td style={{ padding:"12px 16px", fontWeight:600 }}>{s.cliente||"—"}</td>
-                <td style={{ padding:"12px 16px", color:"#888" }}>{s.metodoPago}</td>
+                <td style={{ padding:"12px 16px", color:"#888" }}>{s.metodoPago}{" "}<BadgeTiendanube venta={s} /></td>
                 <td style={{ padding:"12px 16px", fontWeight:700, color:s.anulada?"#dc2626":"#16a34a" }}>{fmtMoney(s.total, config.moneda)}</td>
                 <td style={{ padding:"12px 16px" }}><span style={{ background:s.anulada?"#fee2e2":"#dcfce7", color:s.anulada?"#dc2626":"#16a34a", padding:"2px 9px", borderRadius:20, fontSize:11, fontWeight:600 }}>{s.anulada?"Anulada":"Completada"}</span></td>
                 <td style={{ padding:"10px 16px" }}>
@@ -5572,6 +5572,375 @@ function ActivarFacturacionCard({ config, esDueno }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════
+// TIENDANUBE — sincronización de stock
+// ═══════════════════════════════════════════════════════════
+const TN_AZUL = "#2c3e91";
+// Prueba piloto: sólo estos negocios ven la integración hasta que la abramos a todos.
+const TN_PILOTO = ["eb98f665-c1ae-4c74-80e3-663c38e090ff"];
+
+async function llamarTN(body) {
+  const session = await sb.getSession();
+  let resp;
+  try {
+    resp = await fetch(`${SUPABASE_FUNC_URL}/tiendanube`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, negocio_id: sb._negocioId }),
+    });
+  } catch {
+    return { httpOk: false, codigo: "RED", error: "No hay conexión. Revisá internet y reintentá." };
+  }
+  const data = await resp.json().catch(() => ({}));
+  return { httpOk: resp.ok, ...data };
+}
+
+// Después de guardar productos o ventas, si la tienda está conectada, subimos el stock que cambió.
+let _tnTimer = null;
+function tnProgramarSync() {
+  if (!sb._tnActiva) return;
+  clearTimeout(_tnTimer);
+  _tnTimer = setTimeout(() => { llamarTN({ accion: "sincronizar" }).catch(() => {}); }, 2500);
+}
+
+function BadgeTiendanube({ venta }) {
+  const pc = venta?.pagosCombinados;
+  if (!pc || Array.isArray(pc) || pc.origen !== "tiendanube") return null;
+  return <span title="Venta hecha en tu tienda online" style={{ background:"#e8ecff", color:TN_AZUL, fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:20, whiteSpace:"nowrap" }}>Tiendanube · #{pc.numero_tn}</span>;
+}
+
+const haceCuanto = (iso) => {
+  if (!iso) return "";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "recién";
+  if (s < 3600) return `hace ${Math.round(s / 60)} min`;
+  if (s < 86400) return `hace ${Math.round(s / 3600)} h`;
+  return new Date(iso).toLocaleDateString("es-AR");
+};
+
+const TN_ESTADOS = {
+  automatico: { txt: "Vinculado automático", bg: "#dcfce7", fg: "#15803d" },
+  vinculado:  { txt: "Vinculado", bg: "#dcfce7", fg: "#15803d" },
+  sugerido:   { txt: "Revisá la sugerencia", bg: "#fef3c7", fg: "#92400e" },
+  sin_match:  { txt: "Sin coincidencia", bg: "#fee2e2", fg: "#b91c1c" },
+  ignorado:   { txt: "No se sincroniza", bg: "#f3f4f6", fg: "#6b7280" },
+};
+
+function VincularTNModal({ onClose, onGuardado }) {
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [datos, setDatos] = useState(null);   // { filas, productos }
+  const [sel, setSel] = useState({});         // tn_product_id → { accion: "vincular"|"ignorar"|"importar", producto_id, mapeo:{variant_id:talle} }
+  const [fuente, setFuente] = useState("milocal");
+  const [guardando, setGuardando] = useState(false);
+  const [filtro, setFiltro] = useState("revisar");
+
+  useEffect(() => {
+    (async () => {
+      const r = await llamarTN({ accion: "analizar" });
+      if (!r.httpOk || !r.ok) { setError(r.error || "No pudimos leer los productos de Tiendanube."); setCargando(false); return; }
+      const s = {};
+      for (const f of r.filas) {
+        const mapeo = {};
+        (f.mapeo || []).forEach(m => { mapeo[m.variant_id] = m.talle ?? null; });
+        s[f.tn_product_id] = {
+          accion: f.estado === "ignorado" ? "ignorar" : f.estado === "sin_match" ? "ignorar" : "vincular",
+          producto_id: f.producto_id || "",
+          mapeo,
+          yaGuardado: f.estado === "vinculado" || f.estado === "ignorado",
+        };
+      }
+      setDatos(r); setSel(s); setCargando(false);
+      if (!r.filas.some(f => f.estado === "sugerido" || f.estado === "sin_match")) setFiltro("todos");
+    })();
+  }, []);
+
+  const prodPorId = useMemo(() => new Map((datos?.productos || []).map(p => [p.id, p])), [datos]);
+  const cambiar = (id, patch) => setSel(s => ({ ...s, [id]: { ...s[id], ...patch, yaGuardado: false } }));
+
+  const elegirProducto = (fila, productoId) => {
+    const p = prodPorId.get(productoId);
+    const talles = p?.talles || [];
+    const mapeo = {};
+    fila.variantes.forEach(v => {
+      const n = v.valores.map(x => x.toLowerCase().trim());
+      const t = talles.find(x => n.includes(String(x).toLowerCase().trim()));
+      mapeo[v.id] = talles.length ? (t ?? (talles.length === 1 && fila.variantes.length === 1 ? talles[0] : undefined)) : null;
+    });
+    cambiar(fila.tn_product_id, { producto_id: productoId, mapeo, accion: productoId ? "vincular" : "ignorar" });
+  };
+
+  const filaValida = (f) => {
+    const s = sel[f.tn_product_id];
+    if (!s || s.accion !== "vincular") return true;
+    if (!s.producto_id) return false;
+    return f.variantes.every(v => s.mapeo[v.id] !== undefined);
+  };
+
+  const filas = datos?.filas || [];
+  const aRevisar = filas.filter(f => f.estado === "sugerido" || f.estado === "sin_match" || !filaValida(f));
+  const visibles = filtro === "revisar" ? aRevisar : filas;
+  const invalidas = filas.filter(f => !filaValida(f));
+  const nVincular = filas.filter(f => sel[f.tn_product_id]?.accion === "vincular").length;
+  const nImportar = filas.filter(f => sel[f.tn_product_id]?.accion === "importar").length;
+
+  const guardar = async () => {
+    if (invalidas.length || guardando) return;
+    setGuardando(true); setError("");
+    const vinculos = filas
+      .filter(f => { const s = sel[f.tn_product_id]; return s && !s.yaGuardado && s.accion !== "importar"; })
+      .map(f => {
+        const s = sel[f.tn_product_id];
+        return {
+          tn_product_id: f.tn_product_id,
+          producto_id: s.accion === "vincular" ? s.producto_id : null,
+          ignorar: s.accion === "ignorar",
+          mapeo: f.variantes.map(v => ({ variant_id: v.id, talle: s.accion === "vincular" ? (s.mapeo[v.id] ?? null) : null })),
+        };
+      });
+    const r = await llamarTN({ accion: "guardar_vinculos", vinculos, stock_inicial: fuente });
+    if (!r.httpOk || !r.ok) { setError(r.error || "No se pudo guardar."); setGuardando(false); return; }
+    const importar = filas.filter(f => sel[f.tn_product_id]?.accion === "importar").map(f => f.tn_product_id);
+    if (importar.length) {
+      const r2 = await llamarTN({ accion: "importar", tn_product_ids: importar });
+      if (!r2.httpOk || !r2.ok) { setError(r2.error || "Se guardaron los vínculos pero no se pudieron importar los productos."); setGuardando(false); return; }
+    }
+    setGuardando(false);
+    onGuardado({ vinculados: r.vinculados, importados: importar.length, recargar: importar.length > 0 || fuente === "tiendanube" });
+  };
+
+  return (
+    <Modal title="Vincular productos con Tiendanube" subtitle="Elegí qué producto de MiLocal corresponde a cada producto de tu tienda online. El stock queda igual en los dos lados." onClose={onClose} width={860}>
+      {cargando ? (
+        <div style={{ padding:"40px 0", textAlign:"center", color:"#888", fontSize:14 }}>Leyendo los productos de tu tienda…</div>
+      ) : error && !datos ? (
+        <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"12px 16px", fontSize:13, color:"#b91c1c" }}>{error}</div>
+      ) : (
+        <div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14, alignItems:"center" }}>
+            {[["revisar", `Para revisar (${aRevisar.length})`], ["todos", `Todos (${filas.length})`]].map(([k, t]) => (
+              <button key={k} onClick={() => setFiltro(k)} style={{ ...G.btn(filtro === k ? "dark" : "outline"), padding:"6px 12px", fontSize:12 }}>{t}</button>
+            ))}
+            <span style={{ fontSize:12, color:"#888", marginLeft:"auto" }}>{filas.length - aRevisar.length} se vincularon solos</span>
+          </div>
+
+          {visibles.length === 0 ? (
+            <div style={{ padding:"28px 0", textAlign:"center", color:"#16a34a", fontSize:14, fontWeight:600 }}>✓ No hay nada para revisar. Todo se vinculó automáticamente.</div>
+          ) : (
+            <div style={{ border:"1px solid var(--border)", borderRadius:10, overflow:"hidden", marginBottom:16 }}>
+              {visibles.map(f => {
+                const s = sel[f.tn_product_id] || {};
+                const p = prodPorId.get(s.producto_id);
+                const talles = p?.talles || [];
+                const est = TN_ESTADOS[s.accion === "ignorar" && f.estado !== "sin_match" ? "ignorado" : f.estado] || TN_ESTADOS.sugerido;
+                const conVariantes = f.variantes.length > 1 || f.variantes.some(v => v.valores.length);
+                return (
+                  <div key={f.tn_product_id} style={{ padding:"12px 14px", borderBottom:"1px solid var(--border)", background: filaValida(f) ? "transparent" : "#fffbeb" }}>
+                    <div style={{ display:"grid", gridTemplateColumns:"minmax(180px,1fr) minmax(200px,1.1fr)", gap:12, alignItems:"center" }}>
+                      <div style={{ minWidth:0 }}>
+                        <div style={{ fontWeight:600, fontSize:13, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{f.nombre}</div>
+                        <div style={{ display:"flex", gap:6, alignItems:"center", marginTop:3, flexWrap:"wrap" }}>
+                          <span style={{ background:est.bg, color:est.fg, fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:20 }}>{est.txt}</span>
+                          <span style={{ fontSize:11, color:"#999" }}>{f.variantes.length} {f.variantes.length === 1 ? "variante" : "variantes"}</span>
+                        </div>
+                      </div>
+                      <div style={{ display:"flex", gap:6 }}>
+                        <select style={G.inp({ padding:"7px 10px" })}
+                          value={s.accion === "vincular" ? s.producto_id : s.accion === "importar" ? "__importar" : "__ignorar"}
+                          onChange={e => {
+                            const v = e.target.value;
+                            if (v === "__ignorar") cambiar(f.tn_product_id, { accion: "ignorar" });
+                            else if (v === "__importar") cambiar(f.tn_product_id, { accion: "importar" });
+                            else elegirProducto(f, v);
+                          }}>
+                          <option value="__ignorar">— No sincronizar —</option>
+                          <option value="__importar">➕ Crear este producto en MiLocal</option>
+                          {(datos.productos || []).map(pp => <option key={pp.id} value={pp.id}>{pp.nombre}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    {s.accion === "vincular" && p && conVariantes && (
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginTop:10 }}>
+                        {f.variantes.map(v => (
+                          <label key={v.id} style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, background:"var(--bg-card2)", borderRadius:8, padding:"4px 8px" }}>
+                            <span style={{ color:"#666" }}>{v.valores.join(" / ") || "Única"} →</span>
+                            {talles.length ? (
+                              <select value={s.mapeo[v.id] ?? ""} onChange={e => cambiar(f.tn_product_id, { mapeo: { ...s.mapeo, [v.id]: e.target.value || undefined } })}
+                                style={{ ...G.inp({ padding:"3px 6px", width:"auto", fontSize:12 }), borderColor: s.mapeo[v.id] === undefined ? "#f59e0b" : undefined }}>
+                                <option value="">Elegí talle</option>
+                                {talles.map(t => <option key={t} value={t}>{t}</option>)}
+                              </select>
+                            ) : <span style={{ fontWeight:600 }}>stock general</span>}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{ background:"var(--bg-card2)", borderRadius:10, padding:"12px 14px", marginBottom:14 }}>
+            <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>¿Qué stock vale al empezar?</div>
+            {[["milocal", "El de MiLocal", "Tiendanube se actualiza con el stock que tenés acá (recomendado si contás tu stock en MiLocal)."],
+              ["tiendanube", "El de Tiendanube", "MiLocal toma el stock que tenés cargado en la tienda online."]].map(([k, t, d]) => (
+              <label key={k} style={{ display:"flex", gap:8, alignItems:"flex-start", fontSize:13, marginBottom:6, cursor:"pointer" }}>
+                <input type="radio" checked={fuente === k} onChange={() => setFuente(k)} style={{ marginTop:3 }} />
+                <span><b>{t}</b> <span style={{ color:"#777" }}>— {d}</span></span>
+              </label>
+            ))}
+          </div>
+
+          {error && <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"10px 14px", marginBottom:12, fontSize:13, color:"#b91c1c" }}>{error}</div>}
+          {invalidas.length > 0 && <div style={{ fontSize:12, color:"#92400e", marginBottom:10 }}>Hay {invalidas.length} {invalidas.length === 1 ? "producto" : "productos"} con talles sin elegir.</div>}
+          <div style={{ display:"flex", gap:10, justifyContent:"flex-end", flexWrap:"wrap" }}>
+            <button style={G.btn("outline")} onClick={onClose}>Cancelar</button>
+            <button disabled={!!invalidas.length || guardando} onClick={guardar}
+              style={{ ...G.btn("dark"), background: invalidas.length ? "#d4d4d8" : TN_AZUL, cursor: invalidas.length ? "not-allowed" : "pointer" }}>
+              {guardando ? "Guardando…" : `Guardar y sincronizar (${nVincular}${nImportar ? ` + ${nImportar} nuevos` : ""})`}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function TiendanubeCard({ esDueno, onRecargar }) {
+  const [estado, setEstado] = useState(null);   // respuesta de "estado"
+  const [cargando, setCargando] = useState(true);
+  const [ocupado, setOcupado] = useState("");
+  const [aviso, setAviso] = useState(null);     // { tipo:"ok"|"error", txt }
+  const [vincular, setVincular] = useState(false);
+  const [confirmarDesc, setConfirmarDesc] = useState(false);
+
+  const cargar = async () => {
+    const r = await llamarTN({ accion: "estado" });
+    if (r.httpOk && r.ok) { setEstado(r); sb._tnActiva = !!r.conexion && r.vinculados > 0; }
+    setCargando(false);
+  };
+
+  useEffect(() => {
+    const ret = sb._tnRetorno; sb._tnRetorno = null;
+    if (ret === "ok") setAviso({ tipo: "ok", txt: "¡Tiendanube conectada! Ahora vinculá tus productos." });
+    else if (ret === "sin_negocio") setAviso({ tipo: "error", txt: "Para conectar la tienda, tocá «Conectar Tiendanube» desde acá (no desde la tienda de aplicaciones)." });
+    else if (ret === "error") setAviso({ tipo: "error", txt: "No se pudo completar la conexión con Tiendanube. Probá de nuevo." });
+    cargar().then(() => { if (ret === "ok") setVincular(true); });
+  }, []);
+
+  const conectar = async () => {
+    setOcupado("conectar"); setAviso(null);
+    const r = await llamarTN({ accion: "iniciar_conexion" });
+    if (r.httpOk && r.ok && r.url) { window.location.href = r.url; return; }
+    setOcupado(""); setAviso({ tipo: "error", txt: r.error || "No se pudo iniciar la conexión." });
+  };
+
+  const sincronizar = async () => {
+    setOcupado("sync");
+    const r = await llamarTN({ accion: "sincronizar" });
+    setOcupado("");
+    setAviso(r.httpOk && r.ok ? { tipo: "ok", txt: r.procesados ? `Listo: ${r.procesados} ${r.procesados === 1 ? "producto actualizado" : "productos actualizados"} en Tiendanube.` : "Todo está al día." } : { tipo: "error", txt: r.error || "No se pudo sincronizar." });
+    cargar();
+  };
+
+  const desconectar = async () => {
+    setOcupado("desc"); setConfirmarDesc(false);
+    const r = await llamarTN({ accion: "desconectar" });
+    setOcupado("");
+    if (r.httpOk && r.ok) { sb._tnActiva = false; setAviso({ tipo: "ok", txt: "Tiendanube desconectada. El stock dejó de sincronizarse." }); cargar(); }
+    else setAviso({ tipo: "error", txt: r.error || "No se pudo desconectar." });
+  };
+
+  const con = estado?.conexion;
+  const iconoAct = { pedido: "🛒", venta: "💰", alerta: "⚠️", error: "⛔", info: "•" };
+
+  return (
+    <div style={{ ...G.card({ marginBottom:24 }) }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, gap:12, flexWrap:"wrap" }}>
+        <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>🛍️ Tiendanube</h3>
+        {con ? <span style={{ background:"#dcfce7", color:"#15803d", fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Conectada</span>
+             : <span style={{ background:"#e8ecff", color:TN_AZUL, fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Nuevo</span>}
+      </div>
+
+      {aviso && (
+        <div style={{ background: aviso.tipo === "ok" ? "#f0fdf4" : "#fffbeb", border:`1px solid ${aviso.tipo === "ok" ? "#bbf7d0" : "#fde68a"}`, color: aviso.tipo === "ok" ? "#15803d" : "#92400e", borderRadius:10, padding:"10px 14px", fontSize:13, margin:"8px 0 12px" }}>{aviso.txt}</div>
+      )}
+
+      {cargando ? (
+        <p style={{ margin:0, fontSize:13, color:"#888" }}>Cargando…</p>
+      ) : !con ? (
+        <>
+          <p style={{ margin:"0 0 14px", fontSize:13, color:"#666", lineHeight:1.55 }}>
+            Conectá tu tienda online y el stock queda igual en los dos lados: cuando vendés en el local se descuenta en la web, y cuando entra un pedido web se descuenta acá y aparece en tu Historial de Ventas.
+          </p>
+          {esDueno ? (
+            <button disabled={ocupado === "conectar"} onClick={conectar} style={{ ...G.btn("dark"), background:TN_AZUL }}>
+              {ocupado === "conectar" ? "Abriendo Tiendanube…" : "Conectar Tiendanube"}
+            </button>
+          ) : <p style={{ margin:0, fontSize:13, color:"#92400e" }}>La conexión la hace el dueño del negocio desde su cuenta.</p>}
+        </>
+      ) : (
+        <>
+          <p style={{ margin:"0 0 12px", fontSize:13, color:"#666", lineHeight:1.5 }}>
+            <b style={{ color:"var(--text)" }}>{con.tienda_nombre || "Tu tienda"}</b>{con.tienda_url ? ` · ${con.tienda_url}` : ""}
+          </p>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom:14 }}>
+            {[["Productos vinculados", estado.vinculados], ["Esperando subir", estado.pendientes], ["Última sincronización", con.ultimo_sync ? haceCuanto(con.ultimo_sync) : "—"]].map(([l, v]) => (
+              <div key={l} style={{ background:"var(--bg-card2)", borderRadius:10, padding:"10px 12px" }}>
+                <div style={{ fontSize:11, color:"#888" }}>{l}</div>
+                <div style={{ fontSize:18, fontWeight:800 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+          {estado.vinculados === 0 && (
+            <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 14px", fontSize:13, color:"#92400e", marginBottom:12 }}>
+              Falta un paso: vinculá tus productos para que el stock empiece a sincronizarse.
+            </div>
+          )}
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom: estado.actividad?.length ? 16 : 0 }}>
+            {esDueno && <button style={{ ...G.btn("dark"), background:TN_AZUL }} onClick={() => setVincular(true)}>Vincular productos</button>}
+            <button style={G.btn("outline")} disabled={ocupado === "sync"} onClick={sincronizar}><RefreshCw size={13}/>{ocupado === "sync" ? "Sincronizando…" : "Sincronizar ahora"}</button>
+            {esDueno && (confirmarDesc ? (
+              <span style={{ display:"inline-flex", gap:6, alignItems:"center", fontSize:12 }}>
+                ¿Seguro?
+                <button style={{ ...G.btn("red"), padding:"6px 10px" }} onClick={desconectar}>Sí, desconectar</button>
+                <button style={{ ...G.btn("outline"), padding:"6px 10px" }} onClick={() => setConfirmarDesc(false)}>No</button>
+              </span>
+            ) : <button style={G.btn("ghost")} onClick={() => setConfirmarDesc(true)}>Desconectar</button>)}
+          </div>
+          {estado.actividad?.length > 0 && (
+            <div>
+              <div style={{ fontSize:12, fontWeight:700, color:"#888", marginBottom:6 }}>Actividad reciente</div>
+              <div style={{ border:"1px solid var(--border)", borderRadius:10, maxHeight:220, overflowY:"auto" }}>
+                {estado.actividad.map((a, i) => (
+                  <div key={i} style={{ display:"flex", gap:8, padding:"8px 12px", borderBottom: i < estado.actividad.length - 1 ? "1px solid var(--border)" : "none", fontSize:12 }}>
+                    <span style={{ flex:"0 0 16px" }}>{iconoAct[a.tipo] || "•"}</span>
+                    <span style={{ flex:1, color: a.tipo === "error" ? "#b91c1c" : a.tipo === "alerta" ? "#92400e" : "var(--text)" }}>{a.texto}</span>
+                    <span style={{ color:"#aaa", whiteSpace:"nowrap" }}>{haceCuanto(a.created_at)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {vincular && (
+        <VincularTNModal
+          onClose={() => setVincular(false)}
+          onGuardado={(r) => {
+            setVincular(false);
+            setAviso({ tipo: "ok", txt: `Listo: ${r.vinculados} ${r.vinculados === 1 ? "producto vinculado" : "productos vinculados"}${r.importados ? ` y ${r.importados} creados en MiLocal` : ""}. El stock ya se sincroniza solo.` });
+            cargar();
+            if (r.recargar) onRecargar?.();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 function ConfigPage({ ctx }) {
   const { config, setConfig, setPage, products, deleteProduct, sucursales = [], miRol = "dueno" } = ctx;
   const [f, setF] = useState({ ...config });
@@ -5714,6 +6083,9 @@ function ConfigPage({ ctx }) {
       ) : (
         <ActivarFacturacionCard config={config} esDueno={miRol === "dueno"} />
       )}
+
+      {/* Tiendanube */}
+      {TN_PILOTO.includes(sb._negocioId) && <TiendanubeCard esDueno={miRol === "dueno"} onRecargar={ctx.recargarDatos} />}
 
       <div style={{ display:"flex", gap:12 }}>
         <button style={{ ...G.btn(saved?"green":"dark"), fontSize:14, padding:"12px 28px" }} onClick={save}>
@@ -8858,6 +9230,12 @@ export default function App() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
+    const tnRet = params.get("tiendanube");
+    if (tnRet) {
+      sb._tnRetorno = tnRet;
+      window.history.replaceState({}, "", window.location.pathname);
+      setPage("config");
+    }
     if (params.get("subscription") === "success") {
       setShowSubscriptionSuccess(true);
       const cleanUrl = window.location.pathname;
@@ -8978,6 +9356,47 @@ export default function App() {
       setAuthReady(true); setLoaded(true);
     };
     loadData();
+  }, [token, loaded]);
+
+  // ── Tiendanube: traer cambios que hace el servidor (pedidos web) ──
+  // Cuando entra un pedido web, el servidor descuenta stock y registra la venta.
+  // Cada 30 s traemos esos cambios para que la pantalla no pise el stock con datos viejos.
+  useEffect(() => {
+    if (!token || !loaded || !sb._negocioId) return;
+    let vivo = true, desde = new Date().toISOString(), intervalo = null;
+    const revisar = async () => {
+      if (!sb._tnActiva) return;
+      const ahora = new Date().toISOString();
+      try {
+        const [{ data: prods }, { data: vts }] = await Promise.all([
+          _sb.from("productos").select("*").eq("negocio_id", sb._negocioId).gt("updated_at", desde),
+          _sb.from("ventas").select("*").eq("negocio_id", sb._negocioId).gt("created_at", desde),
+        ]);
+        if (!vivo) return;
+        desde = ahora;
+        if (prods?.length) {
+          const nuevos = new Map(prods.map(r => [r.id, dbToProduct(r)]));
+          setProducts(prev => {
+            const ids = new Set(prev.map(x => x.id));
+            return [...prev.map(x => nuevos.get(x.id) || x), ...[...nuevos.values()].filter(x => !ids.has(x.id))];
+          });
+        }
+        if (vts?.length) {
+          setSales(prev => {
+            const ids = new Set(prev.map(x => x.id));
+            const agregar = vts.filter(r => !ids.has(r.id)).map(dbToVenta);
+            return agregar.length ? [...prev, ...agregar] : prev;
+          });
+        }
+      } catch { /* silencioso */ }
+    };
+    (async () => {
+      const { count } = await _sb.from("tn_vinculos").select("id", { count: "exact", head: true }).eq("negocio_id", sb._negocioId).eq("estado", "vinculado");
+      if (!vivo) return;
+      sb._tnActiva = (count || 0) > 0;
+      intervalo = setInterval(revisar, 30000);
+    })();
+    return () => { vivo = false; if (intervalo) clearInterval(intervalo); };
   }, [token, loaded]);
 
   // ── Revisión periódica del estado de suscripción ──────────
@@ -9103,11 +9522,13 @@ export default function App() {
   const saveProduct = async (p) => {
     if (!sb._negocioId) return;
     await sb.upsert("productos", productToDb(p, sb._negocioId));
+    tnProgramarSync();
   };
   const saveProducts = async (arr) => {
     if (!sb._negocioId || !arr.length) return;
     const { error } = await _sb.from("productos").upsert(arr.map(p => productToDb(p, sb._negocioId)));
     if (error) console.error("saveProducts:", error, arr);
+    tnProgramarSync();
   };
   const deleteProduct = async (id) => {
     if (sb._negocioId) await sb.del("productos", id);
@@ -9117,6 +9538,7 @@ export default function App() {
   const saveVenta = async (v) => {
     if (!sb._negocioId) return;
     await sb.upsert("ventas", ventaToDb(v, sb._negocioId));
+    tnProgramarSync();
   };
 
   // ── Guardar caja en Supabase ─────────────────────────────
@@ -9224,6 +9646,7 @@ export default function App() {
     // Supabase DB operations
     saveProduct, saveProducts, deleteProduct, saveVenta, saveCaja, saveGasto, deleteGasto, saveProveedor, deleteProveedor, saveRemito, saveSugerencia,
     sucursales, miRol, misPermisos, cambiarSucursal, crearSucursal, recargarSucursales,
+    recargarDatos: () => setLoaded(false),
     handleLogout,
   };
 
