@@ -114,6 +114,7 @@ const sb = {
         nombre,
         rubro: rubro || "",
         es_principal: false,
+        onboarding_completo: true,
         subscription_status: "past_due",
         trial_ends_at: null,
         payment_failed_at: new Date().toISOString(),
@@ -195,6 +196,7 @@ const dbToVenta = r => ({
   cambio: parseFloat(r.cambio)||0, anulada: r.anulada||false, factura: r.factura||null,
   pagosCombinados: r.pagos_combinados||null, createdAt: r.created_at||null,
   canal: r.canal || (r.pagos_combinados?.origen === "tiendanube" ? "web" : "local"),
+  importada: !!r.importada,
 });
 const ventaToDb = (v, negocioId) => ({
   id: v.id, negocio_id: negocioId, numero: v.numero, fecha: v.fecha,
@@ -220,6 +222,8 @@ const dbToConfig = n => ({
   paymentFailedAt: n.payment_failed_at || null,
   subscriptionStartedAt: n.subscription_started_at || null,
   accesoManualHasta: n.acceso_manual_hasta || null,
+  onboardingCompleto: n.onboarding_completo !== false,
+  onboardingIntegraciones: n.onboarding_integraciones || null,
 });
 const configToDb = c => ({
   nombre: c.nombre, moneda: c.moneda, dueno: c.dueno, rubro: c.rubro,
@@ -2628,6 +2632,7 @@ function DashboardPage({ ctx }) {
         {caja.abierta && <button style={G.btn("outline")} onClick={() => setShowCerrar(true)}><Lock size={14}/> Cerrar Caja</button>}
       </div>
       <CajaBanner caja={caja} onAbrir={() => setShowCaja(true)} />
+      <PendientesIntegraciones config={config} setPage={setPage} />
       {stockBajoCount > 0 && (
         <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:13 }}>
           <span style={{ display:"flex", alignItems:"center", gap:8, color:"#92400e" }}>
@@ -4015,6 +4020,7 @@ function HistorialPage({ ctx }) {
     setSales(prev => prev.map(s => s.id===id ? updated : s));
     setDetalle(null);
     await ctx.saveVenta(updated);
+    if (venta.importada) return; // las importadas nunca descontaron stock
     // Devolver stock al inventario
     const affectedIds = new Set((venta.items||[]).map(i => i.productoId || i.id));
     const updatedProducts = products.map(p => {
@@ -5079,6 +5085,7 @@ function BadgePrueba() {
 
 // Celda "Factura" del Historial de Ventas
 function CeldaFactura({ venta, config, onFacturar, onVer, onNC }) {
+  if (venta.importada) return <span title="Venta importada de Tiendanube: no se factura desde MiLocal" style={{ fontSize:12, color:"#9ca3af" }}>—</span>;
   const f = venta.factura;
   if (f?.estado === "emitida" && f.nc?.estado === "emitida") {
     return (
@@ -5627,8 +5634,6 @@ function ActivarFacturacionCard({ config, esDueno }) {
 // TIENDANUBE — sincronización de stock
 // ═══════════════════════════════════════════════════════════
 const TN_AZUL = "#2c3e91";
-// Prueba piloto: sólo estos negocios ven la integración hasta que la abramos a todos.
-const TN_PILOTO = ["eb98f665-c1ae-4c74-80e3-663c38e090ff"];
 
 async function llamarTN(body) {
   const session = await sb.getSession();
@@ -5657,6 +5662,7 @@ function tnProgramarSync() {
 function BadgeTiendanube({ venta }) {
   const pc = venta?.pagosCombinados;
   if (venta?.canal !== "web" || !pc || Array.isArray(pc) || pc.origen !== "tiendanube") return null;
+  if (venta.importada) return <span title="Venta web traída del historial de Tiendanube" style={{ background:"#f3f4f6", color:"#4b5563", fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:20, whiteSpace:"nowrap" }}>Importada · #{pc.numero_tn}</span>;
   return <span title="Venta hecha en tu tienda online" style={{ background:"#e8ecff", color:TN_AZUL, fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:20, whiteSpace:"nowrap" }}>Tiendanube · #{pc.numero_tn}</span>;
 }
 
@@ -5858,12 +5864,147 @@ function VincularTNModal({ onClose, onGuardado }) {
   );
 }
 
+// Traer la información de Tiendanube: productos completos + historial de ventas web
+const RANGOS_IMPORT = [
+  { k: "no", label: "No traer", detalle: "Solo desde hoy" },
+  { k: "3", label: "3 meses", detalle: "Lo más reciente" },
+  { k: "12", label: "12 meses", detalle: "Recomendado" },
+  { k: "todo", label: "Todo", detalle: "Desde que abriste" },
+];
+
+function ImportarTNModal({ tienda, importacionActual, onClose, onVincular, onTerminado }) {
+  const corriendo = importacionActual?.estado === "corriendo";
+  const [prod, setProd] = useState(true);
+  const [rango, setRango] = useState("12");
+  const [vista, setVista] = useState(corriendo ? "progreso" : "elegir");
+  const [resProd, setResProd] = useState(null);
+  const [imp, setImp] = useState(importacionActual || null);
+  const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
+  const vivo = useRef(true);
+  useEffect(() => () => { vivo.current = false; }, []);
+
+  const seguir = async () => {
+    while (vivo.current) {
+      const r = await llamarTN({ accion: "importar_continuar" });
+      if (!vivo.current) return;
+      if (!r.httpOk || !r.ok) { setError(r.error || "Se cortó la importación; sigue sola en unos minutos."); return; }
+      setImp(r.importacion);
+      if (!r.importacion || r.importacion.estado !== "corriendo") { onTerminado?.(); return; }
+      if (r.importacion.error) { setError("Tiendanube tardó en responder; reintentando…"); await new Promise(ok => setTimeout(ok, 4000)); }
+    }
+  };
+  useEffect(() => { if (corriendo) seguir(); }, []);
+
+  const empezar = async () => {
+    if (!prod && rango === "no") { onClose(); return; }
+    setCargando(true); setError("");
+    setVista("progreso");
+    const r = await llamarTN({ accion: "importar_info", productos: prod, ventas: rango });
+    setCargando(false);
+    if (!r.httpOk || !r.ok) { setError(r.error || "No se pudo importar."); return; }
+    setResProd(r.productos);
+    setImp(r.importacion);
+    if (r.importacion?.estado === "corriendo") seguir();
+    else onTerminado?.();
+  };
+
+  const total = Number(imp?.total) || 0, hechos = Number(imp?.hechos) || 0;
+  const pct = imp?.estado === "terminado" ? 100 : total ? Math.min(99, Math.round((hechos / total) * 100)) : null;
+  const fmt = (n) => Number(n || 0).toLocaleString("es-AR");
+  const caja = (sel) => ({ padding: "10px 8px", minHeight: 56, borderRadius: 10, cursor: "pointer", textAlign: "center", fontFamily: "inherit", border: sel ? `2px solid ${TN_AZUL}` : "1.5px solid var(--border)", background: sel ? "#e8ecff" : "var(--bg-card)", color: sel ? "#1e2a66" : "var(--text)" });
+  const partes = [prod ? "productos" : null, rango !== "no" ? "ventas" : null].filter(Boolean);
+  const barra = (p, color) => <div style={{ height: 8, borderRadius: 4, background: "#e5e7eb", overflow: "hidden" }}><div style={{ height: "100%", width: `${p}%`, background: color, transition: "width .4s" }}/></div>;
+
+  return (
+    <Modal title="¿Querés traer tu información de Tiendanube?" subtitle={`${tienda ? tienda + " · " : ""}Así arrancás con todo cargado. No cambia nada en tu tienda online.`} onClose={onClose} width={620}>
+      {vista === "elegir" ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <button onClick={() => setProd(!prod)} aria-pressed={prod} style={{ display: "flex", gap: 14, alignItems: "flex-start", width: "100%", padding: "16px 18px", borderRadius: 12, cursor: "pointer", background: "var(--bg-card)", color: "var(--text)", fontFamily: "inherit", textAlign: "left", border: prod ? `2px solid ${TN_AZUL}` : "1.5px solid var(--border)" }}>
+            <span style={{ flex: "0 0 22px", height: 22, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1, background: prod ? TN_AZUL : "#fff", border: prod ? "none" : "1.5px solid #9ca3af", color: "#fff", fontSize: 14, fontWeight: 800 }}>{prod ? "✓" : ""}</span>
+            <span>
+              <span style={{ display: "block", fontSize: 15, fontWeight: 700 }}>Productos completos</span>
+              <span style={{ display: "block", fontSize: 13, color: "#4b5563", marginTop: 3, lineHeight: 1.5 }}>Foto, descripción, categoría, talles, precio, código de barras y <b>costo</b> (si lo tenés en Tiendanube). Los que ya existen en MiLocal se vinculan y se completan, no se duplican.</span>
+            </span>
+          </button>
+          <div style={{ border: "1.5px solid var(--border)", borderRadius: 12, padding: "16px 18px" }}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>Historial de ventas web</div>
+            <div style={{ fontSize: 13, color: "#4b5563", margin: "3px 0 12px", lineHeight: 1.5 }}>Para ver en Estadísticas tus meses y productos más vendidos. Vos elegís cuánto traer.</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8 }}>
+              {RANGOS_IMPORT.map(r => (
+                <button key={r.k} onClick={() => setRango(r.k)} aria-pressed={rango === r.k} style={caja(rango === r.k)}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700 }}>{r.label}</div>
+                  <div style={{ fontSize: 11.5, marginTop: 2, opacity: .8 }}>{r.detalle}</div>
+                </button>
+              ))}
+            </div>
+            {rango !== "no" && (
+              <div style={{ marginTop: 12, background: "var(--bg-card2)", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, color: "#4b5563", lineHeight: 1.55 }}>
+                Las ventas importadas <b>no tocan el stock</b>, <b>no entran a la caja</b> y <b>no se pueden facturar</b>. Quedan con la etiqueta «Importada» y su fecha original, y las podés borrar todas juntas si querés.
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <button onClick={onClose} style={{ ...G.btn("ghost"), textDecoration: "underline", textUnderlineOffset: 3 }}>Ahora no, lo hago después</button>
+            <button onClick={empezar} style={{ ...G.btn("dark"), background: TN_AZUL, padding: "12px 22px", fontSize: 14 }}>{partes.length ? "Traer " + partes.join(" y ") : "Continuar"}</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+            {(prod || resProd) && (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+                  <span style={{ fontWeight: 600 }}>Productos</span>
+                  <span style={{ fontWeight: 700, color: resProd ? "#15803d" : TN_AZUL }}>{resProd ? "Listo ✓" : "Trayendo…"}</span>
+                </div>
+                {barra(resProd ? 100 : 40, resProd ? "#16a34a" : TN_AZUL)}
+                {resProd && (
+                  <div style={{ fontSize: 12.5, color: "#4b5563" }}>
+                    {[resProd.creados && `${resProd.creados} creados`, resProd.vinculados && `${resProd.vinculados} vinculados con los que ya tenías`, resProd.completados && `${resProd.completados} completados con foto o costo`].filter(Boolean).join(" · ") || "Ya estaban todos al día."}
+                  </div>
+                )}
+              </>
+            )}
+            {(imp || (rango !== "no" && cargando)) && (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+                  <span style={{ fontWeight: 600 }}>Ventas web</span>
+                  <span style={{ fontWeight: 700, color: imp?.estado === "terminado" ? "#15803d" : TN_AZUL }}>
+                    {imp?.estado === "terminado" ? `${fmt(hechos)} ventas ✓` : total ? `${fmt(hechos)} de ${fmt(total)}` : `${fmt(hechos)} traídas…`}
+                  </span>
+                </div>
+                {barra(pct ?? 30, imp?.estado === "terminado" ? "#16a34a" : TN_AZUL)}
+              </>
+            )}
+          </div>
+          {resProd?.pendientes > 0 && (
+            <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#92400e", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ flex: 1 }}>{resProd.pendientes} {resProd.pendientes === 1 ? "producto se parece" : "productos se parecen"} a uno que ya tenés: elegí a cuál corresponde.</span>
+              <button onClick={onVincular} style={{ ...G.btn("outline"), padding: "7px 12px" }}>Revisar</button>
+            </div>
+          )}
+          {error && <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#92400e" }}>{error}</div>}
+          <div style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.55 }}>
+            {imp?.estado === "corriendo" ? "Podés cerrar esta ventana y seguir usando MiLocal: la importación sigue sola y te avisamos en la tarjeta de Tiendanube cuando termine." : (resProd || imp?.estado === "terminado") ? "¡Listo! Ya podés ver todo en Productos y en Estadísticas." : "Un momento…"}
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button onClick={onClose} style={G.btn(imp?.estado === "corriendo" || cargando ? "outline" : "dark")}>{imp?.estado === "corriendo" || cargando ? "Seguir usando MiLocal" : "Listo"}</button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function TiendanubeCard({ esDueno, onRecargar }) {
   const [estado, setEstado] = useState(null);   // respuesta de "estado"
   const [cargando, setCargando] = useState(true);
   const [ocupado, setOcupado] = useState("");
   const [aviso, setAviso] = useState(null);     // { tipo:"ok"|"error", txt }
   const [vincular, setVincular] = useState(false);
+  const [importar, setImportar] = useState(false);
+  const [borrandoImp, setBorrandoImp] = useState(false);
   const [confirmarDesc, setConfirmarDesc] = useState(false);
 
   const cargar = async () => {
@@ -5877,7 +6018,7 @@ function TiendanubeCard({ esDueno, onRecargar }) {
     if (ret === "ok") setAviso({ tipo: "ok", txt: "¡Tiendanube conectada! Ahora vinculá tus productos." });
     else if (ret === "sin_negocio") setAviso({ tipo: "error", txt: "Para conectar la tienda, tocá «Conectar Tiendanube» desde acá (no desde la tienda de aplicaciones)." });
     else if (ret === "error") setAviso({ tipo: "error", txt: "No se pudo completar la conexión con Tiendanube. Probá de nuevo." });
-    cargar().then(() => { if (ret === "ok") setVincular(true); });
+    cargar().then(() => { if (ret === "ok") setImportar(true); });
   }, []);
 
   const conectar = async () => {
@@ -5982,7 +6123,8 @@ function TiendanubeCard({ esDueno, onRecargar }) {
             </div>
           )}
           <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom: estado.actividad?.length ? 16 : 0 }}>
-            {esDueno && <button style={{ ...G.btn("dark"), background:TN_AZUL }} onClick={() => setVincular(true)}>Vincular productos</button>}
+            {esDueno && <button style={{ ...G.btn("dark"), background:TN_AZUL }} onClick={() => setImportar(true)}>Traer información</button>}
+            {esDueno && <button style={G.btn("outline")} onClick={() => setVincular(true)}>Vincular productos</button>}
             <button style={G.btn("outline")} disabled={ocupado === "sync"} onClick={sincronizar}><RefreshCw size={13}/>{ocupado === "sync" ? "Sincronizando…" : "Sincronizar ahora"}</button>
             {esDueno && <button style={G.btn("outline")} disabled={ocupado === "rev"} onClick={revisarAhora}>{ocupado === "rev" ? "Revisando…" : "Revisar ahora"}</button>}
             {esDueno && (confirmarDesc ? (
@@ -6010,6 +6152,33 @@ function TiendanubeCard({ esDueno, onRecargar }) {
         </>
       )}
 
+      {con?.importacion && (con.importacion.estado === "corriendo" || con.importacion.hechos > 0) && (
+        <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", background:"var(--bg-card2)", borderRadius:10, padding:"10px 12px", marginTop:14, fontSize:13 }}>
+          <span style={{ flex:1 }}>
+            {con.importacion.estado === "corriendo"
+              ? `Importando ventas web… ${Number(con.importacion.hechos||0).toLocaleString("es-AR")}${con.importacion.total ? ` de ${Number(con.importacion.total).toLocaleString("es-AR")}` : ""}`
+              : `${Number(con.importacion.hechos||0).toLocaleString("es-AR")} ventas web importadas (no tocan stock ni caja).`}
+          </span>
+          {con.importacion.estado === "corriendo"
+            ? <button style={{ ...G.btn("outline"), padding:"6px 10px" }} onClick={() => setImportar(true)}>Ver avance</button>
+            : esDueno && (borrandoImp
+              ? <span style={{ display:"inline-flex", gap:6, alignItems:"center", fontSize:12 }}>¿Borrar todas las importadas?
+                  <button style={{ ...G.btn("red"), padding:"6px 10px" }} onClick={async () => { setBorrandoImp(false); const r = await llamarTN({ accion: "borrar_importadas" }); setAviso(r.httpOk && r.ok ? { tipo:"ok", txt:`Se borraron ${r.borradas} ventas importadas.` } : { tipo:"error", txt: r.error || "No se pudo borrar." }); cargar(); onRecargar?.(); }}>Sí, borrar</button>
+                  <button style={{ ...G.btn("outline"), padding:"6px 10px" }} onClick={() => setBorrandoImp(false)}>No</button></span>
+              : <button style={{ ...G.btn("ghost"), padding:"6px 10px", fontSize:12 }} onClick={() => setBorrandoImp(true)}>Borrar importadas</button>)}
+        </div>
+      )}
+
+      {importar && (
+        <ImportarTNModal
+          tienda={con?.tienda_nombre}
+          importacionActual={con?.importacion}
+          onClose={() => { setImportar(false); cargar(); onRecargar?.(); }}
+          onVincular={() => { setImportar(false); setVincular(true); }}
+          onTerminado={() => cargar()}
+        />
+      )}
+
       {vincular && (
         <VincularTNModal
           onClose={() => setVincular(false)}
@@ -6021,6 +6190,242 @@ function TiendanubeCard({ esDueno, onRecargar }) {
           }}
         />
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// ONBOARDING — integraciones (ARCA, Tiendanube) y "¿Cómo nos conociste?"
+// Se muestra después de los datos del negocio, mientras onboarding_completo = false.
+// ═══════════════════════════════════════════════════════════
+const FUENTES_CONOCIO = ["Instagram", "TikTok", "Google", "Facebook", "Un amigo o conocido", "Otro negocio que la usa", "YouTube", "Otro"];
+const ONB_KEY = "milocal_onb_paso";
+
+function OnboardingIntegraciones({ config, onTerminar }) {
+  const leerPaso = () => { try { return localStorage.getItem(ONB_KEY) || ""; } catch { return ""; } };
+  const guardarPaso = (p) => { try { localStorage.setItem(ONB_KEY, p); } catch { /* sin storage */ } };
+  const inicial = () => {
+    const p = leerPaso();
+    if (sb._tnRetorno) return "fuente"; // volvimos de autorizar en Tiendanube
+    return ["arca", "tn", "fuente"].includes(p) ? p : "arca";
+  };
+  const [paso, setPasoState] = useState(inicial);
+  const [arcaAbierta, setArcaAbierta] = useState(false);
+  const [elecciones, setElecciones] = useState(() => { try { return JSON.parse(localStorage.getItem(ONB_KEY + "_elec") || "{}"); } catch { return {}; } });
+  const [fuente, setFuente] = useState("");
+  const [otro, setOtro] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [conectando, setConectando] = useState(false);
+  const [errorTN, setErrorTN] = useState("");
+
+  const setPaso = (p) => { guardarPaso(p); setPasoState(p); };
+  const elegir = (k, v) => {
+    const nuevo = { ...elecciones, [k]: v };
+    setElecciones(nuevo);
+    try { localStorage.setItem(ONB_KEY + "_elec", JSON.stringify(nuevo)); } catch { /* sin storage */ }
+    return nuevo;
+  };
+
+  const conectarTN = async () => {
+    setConectando(true); setErrorTN("");
+    elegir("tn", "conectar");
+    guardarPaso("fuente");
+    const r = await llamarTN({ accion: "iniciar_conexion" });
+    if (r.httpOk && r.ok && r.url) { window.location.href = r.url; return; }
+    setConectando(false); setErrorTN(r.error || "No se pudo abrir Tiendanube. Probá de nuevo o hacelo después.");
+  };
+
+  const terminar = async () => {
+    if (!fuente || guardando) return;
+    if (fuente === "Otro" && !otro.trim()) return;
+    setGuardando(true);
+    const integ = {
+      arca: config.facturacionActiva ? "activa" : (elecciones.arca || "despues"),
+      tn: sb._tnRetorno === "ok" ? "conectada" : (elecciones.tn || "despues"),
+    };
+    const { error } = await _sb.from("negocios").update({
+      como_nos_conocio: fuente,
+      como_nos_conocio_otro: fuente === "Otro" ? otro.trim().slice(0, 200) : null,
+      onboarding_integraciones: integ,
+      onboarding_completo: true,
+    }).eq("id", sb._negocioId);
+    setGuardando(false);
+    if (error) { console.error("onboarding:", error); }
+    try { localStorage.removeItem(ONB_KEY); localStorage.removeItem(ONB_KEY + "_elec"); } catch { /* sin storage */ }
+    onTerminar({ como_nos_conocio: fuente, onboarding_integraciones: integ });
+  };
+
+  const C = { ink: "#0a0a0a", body: "#4b5563", mut: "#6b7280", line: "#e5e7eb", purple: "#9238FF", purpleDark: "#7a1de6", purpleSoft: "#f4ecff", tn: "#2c3e91", tnSoft: "#e8ecff" };
+  const font = "'DM Sans', system-ui, -apple-system, sans-serif";
+  const numPaso = { arca: 3, tn: 4, fuente: 5 }[paso] || 5;
+  const titulo = { arca: "Facturación electrónica", tn: "Tienda online", fuente: "¿Cómo nos conociste?" }[paso];
+  const btnPrim = (bg) => ({ padding: "14px 36px", background: bg, color: "#fff", border: "none", borderRadius: 6, fontSize: 15, fontWeight: 600, cursor: "pointer", minHeight: 48, fontFamily: font });
+  const btnLink = { padding: "10px 14px", background: "transparent", color: C.body, border: "none", fontSize: 14, fontWeight: 600, cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3, minHeight: 44, fontFamily: font };
+  const tarjeta = (t, d) => (
+    <div key={t} style={{ border: `1px solid ${C.line}`, borderRadius: 10, padding: 16 }}>
+      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{t}</div>
+      <div style={{ fontSize: 12.5, color: C.body, lineHeight: 1.5 }}>{d}</div>
+    </div>
+  );
+  const etiqueta = (txt, bg, fg) => <div style={{ display: "inline-flex", background: bg, color: fg, borderRadius: 30, padding: "5px 12px", fontSize: 12, fontWeight: 700, marginBottom: 14 }}>{txt}</div>;
+  const h2 = { fontSize: "clamp(26px, 5vw, 36px)", lineHeight: 1.1, fontWeight: 500, letterSpacing: "-1px", margin: "0 0 10px" };
+  const sub = { fontSize: 15.5, color: C.body, margin: 0, lineHeight: 1.55 };
+  const terminarListo = !!fuente && (fuente !== "Otro" || otro.trim());
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#fff", fontFamily: font, color: C.ink, display: "flex", flexDirection: "column" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');`}</style>
+      <div style={{ borderBottom: `1px solid ${C.line}`, padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ background: C.purple, width: 34, height: 34, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}><Store size={18}/></div>
+          <span style={{ fontWeight: 700, fontSize: 19, letterSpacing: "-0.5px" }}>MiLocal</span>
+        </div>
+        <div style={{ fontSize: 13, color: C.mut }}>Configuración inicial</div>
+      </div>
+      <div style={{ background: "#f9fafb", borderBottom: `1px solid ${C.line}`, padding: "16px 24px" }}>
+        <div style={{ maxWidth: 720, margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 10 }}>
+            <span style={{ fontWeight: 700, color: C.purpleDark }}>Paso {numPaso} de 5</span>
+            <span style={{ color: C.mut }}>{titulo}</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 6 }}>
+            {[1, 2, 3, 4, 5].map(n => <div key={n} style={{ height: 4, borderRadius: 2, background: n <= numPaso ? C.purple : C.line }}/>)}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "32px 20px" }}>
+        <div style={{ width: "100%", maxWidth: 720 }}>
+
+          {paso === "arca" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+              <div style={{ textAlign: "center" }}>
+                {etiqueta("Opcional · Incluido en tu plan", C.purpleSoft, C.purpleDark)}
+                <h2 style={h2}>¿Querés facturar con ARCA desde MiLocal?</h2>
+                <p style={sub}>Emitís Factura A, B o C con CAE al cobrar, sin pagar otro sistema. Se activa una sola vez y lleva unos 10 minutos.</p>
+              </div>
+              {config.facturacionActiva ? (
+                <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+                  <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d", borderRadius: 10, padding: "12px 18px", fontWeight: 700 }}>✓ La facturación quedó activa</div>
+                  <button style={btnPrim(C.purple)} onClick={() => setPaso("tn")}>Continuar</button>
+                </div>
+              ) : arcaAbierta ? (
+                <>
+                  <ActivarFacturacionCard config={config} esDueno={true} />
+                  <div style={{ display: "flex", justifyContent: "center", marginTop: -8 }}>
+                    <button style={btnLink} onClick={() => { elegir("arca", "despues"); setPaso("tn"); }}>Lo termino después, seguir</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
+                    {tarjeta("1. Autorizás a MiLocal", "Desde la web de ARCA, con tu clave fiscal.")}
+                    {tarjeta("2. Creás un punto de venta", "Te decimos exactamente cuál elegir.")}
+                    {tarjeta("3. Verificamos y listo", "Chequeamos todo con ARCA por vos.")}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+                    <button style={btnPrim(C.purple)} onClick={() => { elegir("arca", "ahora"); guardarPaso("tn"); setArcaAbierta(true); }}>Activar facturación ahora</button>
+                    <button style={btnLink} onClick={() => { elegir("arca", "despues"); setPaso("tn"); }}>Lo hago después</button>
+                    <div style={{ fontSize: 12.5, color: C.mut }}>Lo podés activar cuando quieras desde Configuración.</div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {paso === "tn" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+              <div style={{ textAlign: "center" }}>
+                {etiqueta("Opcional", C.tnSoft, C.tn)}
+                <h2 style={h2}>¿Tenés tienda en Tiendanube?</h2>
+                <p style={sub}>Conectala y el stock queda igual en el local y en la web. Además podés traer tus productos y tus ventas para arrancar con todo cargado.</p>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
+                {tarjeta("Stock sincronizado", "Vendés en el local y se descuenta en la web, y al revés.")}
+                {tarjeta("Ventas web en tu Historial", "Separadas del local, con su filtro en Estadísticas.")}
+                {tarjeta("Tus productos, ya cargados", "Con fotos, talles, precios y costos.")}
+              </div>
+              {errorTN && <div style={{ background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", borderRadius: 10, padding: "10px 14px", fontSize: 13, textAlign: "center" }}>{errorTN}</div>}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+                <button style={btnPrim(C.tn)} disabled={conectando} onClick={conectarTN}>{conectando ? "Abriendo Tiendanube…" : "Conectar Tiendanube"}</button>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
+                  <button style={btnLink} onClick={() => { elegir("tn", "despues"); setPaso("fuente"); }}>Lo hago después</button>
+                  <button style={btnLink} onClick={() => { elegir("tn", "no_tiene"); setPaso("fuente"); }}>No tengo tienda online</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {paso === "fuente" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+              {sb._tnRetorno === "ok" && <div style={{ textAlign: "center" }}><span style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d", borderRadius: 30, padding: "6px 14px", fontSize: 13, fontWeight: 700 }}>✓ Tiendanube conectada</span></div>}
+              {sb._tnRetorno && sb._tnRetorno !== "ok" && <div style={{ textAlign: "center", fontSize: 13, color: "#92400e" }}>No se pudo conectar Tiendanube. Lo podés reintentar desde Configuración.</div>}
+              <div style={{ textAlign: "center" }}>
+                <h2 style={h2}>Última pregunta: ¿cómo nos conociste?</h2>
+                <p style={sub}>Nos ayuda a saber dónde contarle a más negocios como el tuyo.</p>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+                {FUENTES_CONOCIO.map(f => {
+                  const sel = fuente === f;
+                  return (
+                    <button key={f} onClick={() => setFuente(f)} aria-pressed={sel} style={{ padding: "14px 10px", minHeight: 52, borderRadius: 10, fontSize: 14, cursor: "pointer", fontFamily: font, border: sel ? `2px solid ${C.purple}` : `1.5px solid ${C.line}`, background: sel ? C.purpleSoft : "#fff", color: sel ? "#5b12b0" : C.ink, fontWeight: sel ? 700 : 500 }}>{f}</button>
+                  );
+                })}
+              </div>
+              {fuente === "Otro" && (
+                <div>
+                  <label htmlFor="onb-otro" style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 8 }}>Contanos dónde</label>
+                  <input id="onb-otro" value={otro} onChange={e => setOtro(e.target.value)} placeholder="Ej: una feria, un proveedor, un cartel…" style={{ width: "100%", boxSizing: "border-box", padding: "13px 16px", border: `1.5px solid ${C.line}`, borderRadius: 6, fontSize: 14.5, fontFamily: font }} />
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <button onClick={terminar} disabled={!terminarListo || guardando} style={{ ...btnPrim(terminarListo ? C.purple : C.line), color: terminarListo ? "#fff" : C.mut, cursor: terminarListo ? "pointer" : "not-allowed" }}>{guardando ? "Guardando…" : "Terminar y entrar a MiLocal"}</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {paso !== "arca" && (
+        <div style={{ borderTop: `1px solid ${C.line}`, padding: "14px 24px" }}>
+          <button onClick={() => setPaso(paso === "fuente" ? "tn" : "arca")} style={{ padding: "10px 18px", background: "transparent", color: C.ink, border: `1.5px solid ${C.line}`, borderRadius: 6, fontSize: 14, fontWeight: 500, cursor: "pointer", minHeight: 44, fontFamily: font }}>← Atrás</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Recordatorio en el Inicio de lo que quedó "para después" en el registro
+function PendientesIntegraciones({ config, setPage }) {
+  const integ = config.onboardingIntegraciones || {};
+  const [tnConectada, setTnConectada] = useState(null);
+  const [cerrado, setCerrado] = useState(() => { try { return localStorage.getItem("milocal_pend_cerrado_" + sb._negocioId) === "1"; } catch { return false; } });
+  useEffect(() => {
+    if (integ.tn !== "despues") return;
+    _sb.from("tn_vinculos").select("id", { count: "exact", head: true }).eq("negocio_id", sb._negocioId)
+      .then(({ count }) => setTnConectada((count || 0) > 0)).catch(() => {});
+  }, [integ.tn]);
+  const items = [];
+  if (integ.arca && integ.arca !== "activa" && !config.facturacionActiva) items.push({ t: "Activá la factura electrónica ARCA", d: "Facturá con CAE al cobrar, sin otro sistema.", b: "Activar", color: "#9238FF" });
+  if (integ.tn === "despues" && tnConectada === false) items.push({ t: "Conectá tu Tiendanube", d: "Stock sincronizado y ventas web en tu Historial.", b: "Conectar", color: "#2c3e91" });
+  if (!items.length || cerrado) return null;
+  return (
+    <div style={{ ...G.card({ marginBottom: 20, padding: "16px 18px" }) }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>Te quedó pendiente</div>
+        <button onClick={() => { setCerrado(true); try { localStorage.setItem("milocal_pend_cerrado_" + sb._negocioId, "1"); } catch { /* sin storage */ } }} aria-label="Ocultar" style={{ background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 16, minWidth: 32, minHeight: 32 }}>✕</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+        {items.map(i => (
+          <div key={i.t} style={{ display: "flex", alignItems: "center", gap: 12, border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13.5 }}>{i.t}</div>
+              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{i.d}</div>
+            </div>
+            <button onClick={() => setPage("config")} style={{ ...G.btn("dark"), background: i.color, whiteSpace: "nowrap" }}>{i.b}</button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -6169,7 +6574,7 @@ function ConfigPage({ ctx }) {
       )}
 
       {/* Tiendanube */}
-      {TN_PILOTO.includes(sb._negocioId) && <TiendanubeCard esDueno={miRol === "dueno"} onRecargar={ctx.recargarDatos} />}
+      <TiendanubeCard esDueno={miRol === "dueno"} onRecargar={ctx.recargarDatos} />
 
       <div style={{ display:"flex", gap:12 }}>
         <button style={{ ...G.btn(saved?"green":"dark"), fontSize:14, padding:"12px 28px" }} onClick={save}>
@@ -6498,9 +6903,9 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
       {step > 1 && (
         <div style={{ background: C.bgSoft, borderBottom: `1px solid ${C.line}`, padding: "16px 32px" }}>
           <div style={{ maxWidth: 680, margin: "0 auto", display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, minWidth: 76 }}>Paso {step - 1} de 2</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, minWidth: 76 }}>Paso {step - 1} de 5</div>
             <div style={{ flex: 1, height: 4, background: C.line, borderRadius: 2, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${((step - 1) / 2) * 100}%`, background: C.purple, borderRadius: 2, transition: "width .3s ease" }}/>
+              <div style={{ height: "100%", width: `${((step - 1) / 5) * 100}%`, background: C.purple, borderRadius: 2, transition: "width .3s ease" }}/>
             </div>
           </div>
         </div>
@@ -7862,6 +8267,17 @@ function AdminPage({ onVolver }) {
   ventasAdmin.forEach(v => { if (v.created_at) ventasPorHora[new Date(v.created_at).getHours()]++; });
   const horariosPicoData = ventasPorHora.map((cant, h) => ({ label: `${h}hs`, total: cant }));
 
+  // ¿Cómo nos conocieron? (registros con respuesta)
+  const conRespuesta = negocios.filter(n => n.como_nos_conocio);
+  const porFuente = {};
+  conRespuesta.forEach(n => { porFuente[n.como_nos_conocio] = (porFuente[n.como_nos_conocio] || 0) + 1; });
+  const fuentesData = Object.entries(porFuente).sort((a, b) => b[1] - a[1]).map(([fuente, cant]) => ({
+    fuente, cant, pct: conRespuesta.length ? (cant / conRespuesta.length) * 100 : 0,
+    pagos: conRespuesta.filter(n => n.como_nos_conocio === fuente && (n.subscription_status === "active" || n.subscription_started_at)).length,
+  }));
+  const ultimosRegistros = negocios.filter(n => n.es_principal !== false).slice(0, 12);
+  const estadoInteg = (v, activo) => activo ? { t: "Activa", c: "#15803d" } : v === "despues" ? { t: "Después", c: "#92400e" } : v === "no_tiene" ? { t: "No tiene", c: "#6b7280" } : v === "ahora" ? { t: "En proceso", c: "#2563eb" } : { t: "—", c: "#9ca3af" };
+
   // Funnel de onboarding
   const funnel = [
     { label: "Se registraron", value: negocios.length },
@@ -8221,6 +8637,54 @@ function AdminPage({ onVolver }) {
               </BarChart>
             </ResponsiveContainer>
           )}
+        </div>
+      </div>
+
+      {/* Cómo nos conocieron + últimos registros */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(360px,1fr))", gap:16, marginBottom:20 }}>
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>¿Cómo nos conocieron?</h3>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>{conRespuesta.length} {conRespuesta.length === 1 ? "registro respondió" : "registros respondieron"} · se pregunta desde el registro nuevo</p>
+          {fuentesData.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Todavía no hay respuestas. Van a aparecer con los próximos registros.</div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {fuentesData.map(f => (
+                <div key={f.fuente}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4, gap:8 }}>
+                    <span style={{ color:"#333" }}>{f.fuente}</span>
+                    <span style={{ fontWeight:700, whiteSpace:"nowrap" }}>{f.cant} <span style={{ color:"#aaa", fontWeight:500 }}>({f.pct.toFixed(0)}%)</span>{f.pagos > 0 && <span style={{ color:"#15803d", fontWeight:600 }}> · {f.pagos} pagan</span>}</span>
+                  </div>
+                  <div style={{ background:"#f3f4f6", borderRadius:20, height:10, overflow:"hidden" }}>
+                    <div style={{ background:"#9238FF", height:"100%", width:`${f.pct}%`, borderRadius:20 }}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px", minWidth:0 }}>
+          <h3 style={{ margin:"0 0 12px", fontSize:15, fontWeight:700 }}>Últimos registros</h3>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12.5, minWidth:520 }}>
+              <thead><tr style={{ color:"#999", textAlign:"left" }}>{["Negocio","Cómo nos conoció","ARCA","Tiendanube","Registro"].map(h => <th key={h} style={{ padding:"6px 6px", fontWeight:600, borderBottom:"1px solid #f0f0f0" }}>{h}</th>)}</tr></thead>
+              <tbody>{ultimosRegistros.map(n => {
+                const integ = n.onboarding_integraciones || {};
+                const a = estadoInteg(integ.arca, n.facturacion_activa);
+                const t = estadoInteg(integ.tn, n.tiendanube === "activa");
+                const f = n.como_nos_conocio ? (n.como_nos_conocio === "Otro" && n.como_nos_conocio_otro ? `Otro: ${n.como_nos_conocio_otro}` : n.como_nos_conocio) : null;
+                return (
+                  <tr key={n.id} style={{ borderBottom:"1px solid #f7f7f7" }}>
+                    <td style={{ padding:"7px 6px", fontWeight:600, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{n.nombre}</td>
+                    <td style={{ padding:"7px 6px" }}>{f ? <span style={{ background:"#f4ecff", color:"#5b12b0", padding:"2px 8px", borderRadius:20, fontWeight:600 }}>{f}</span> : <span style={{ color:"#bbb" }}>—</span>}</td>
+                    <td style={{ padding:"7px 6px", color:a.c, fontWeight:600 }}>{a.t}</td>
+                    <td style={{ padding:"7px 6px", color:t.c, fontWeight:600 }}>{t.t === "Activa" ? "Conectada" : t.t}</td>
+                    <td style={{ padding:"7px 6px", color:"#888", whiteSpace:"nowrap" }}>{n.created_at ? new Date(n.created_at).toLocaleDateString("es-AR") : "—"}</td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -9480,7 +9944,7 @@ export default function App() {
       if (!vivo) return;
       const ids = new Set((data || []).map(v => v.producto_id).filter(Boolean));
       sb._tnActiva = ids.size > 0;
-      setTnVinculados(TN_PILOTO.includes(sb._negocioId) && ids.size > 0 ? ids : null);
+      setTnVinculados(ids.size > 0 ? ids : null);
     };
     sb._tnRecargarVinculos = cargarVinculos;
     (async () => {
@@ -9821,7 +10285,15 @@ export default function App() {
 
   // ── Onboarding: primer uso sin rubro configurado ──
   if (!config.rubro) {
-    return <OnboardingScreen initialNombre={config.nombre} onDone={async (cfg) => { await saveConfig(cfg); setPage("inventario"); }} />;
+    return <OnboardingScreen initialNombre={config.nombre} onDone={async (cfg) => { await saveConfig({ ...config, ...cfg }); setPage("inventario"); }} />;
+  }
+
+  // ── Onboarding: integraciones opcionales y "¿Cómo nos conociste?" (solo el dueño, una vez) ──
+  if (config.onboardingCompleto === false && miRol === "dueno") {
+    return <OnboardingIntegraciones config={config} onTerminar={(r) => {
+      setConfig(prev => ({ ...prev, onboardingCompleto: true, onboardingIntegraciones: r.onboarding_integraciones }));
+      setPage(sb._tnRetorno === "ok" ? "config" : "inventario");
+    }} />;
   }
 
   // ── Bloqueo por suscripción vencida ──
