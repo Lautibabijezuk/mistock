@@ -194,6 +194,7 @@ const dbToVenta = r => ({
   total: parseFloat(r.total)||0, efectivoDado: parseFloat(r.efectivo_dado)||0,
   cambio: parseFloat(r.cambio)||0, anulada: r.anulada||false, factura: r.factura||null,
   pagosCombinados: r.pagos_combinados||null, createdAt: r.created_at||null,
+  canal: r.canal || (r.pagos_combinados?.origen === "tiendanube" ? "web" : "local"),
 });
 const ventaToDb = (v, negocioId) => ({
   id: v.id, negocio_id: negocioId, numero: v.numero, fecha: v.fecha,
@@ -202,6 +203,7 @@ const ventaToDb = (v, negocioId) => ({
   total: v.total||0, efectivo_dado: v.efectivoDado||0, cambio: v.cambio||0,
   anulada: !!v.anulada,
   factura: v.factura||null, pagos_combinados: v.pagosCombinados||null,
+  canal: v.canal || "local",
 });
 const dbToConfig = n => ({
   nombre: n.nombre, moneda: n.moneda||'$', dueno: n.dueno||'', rubro: n.rubro||'',
@@ -1304,7 +1306,8 @@ function CerrarCajaModal({ caja, sales, config, setCaja, saveCaja, onClose }) {
   const { moneda } = config;
   const hoy = todayStr();
   const ahora = new Date().toLocaleTimeString("es-AR", { hour:"2-digit", minute:"2-digit" });
-  const ventasHoy = sales.filter(s => !s.anulada && s.fecha === hoy);
+  // Las ventas web no pasan por la caja del local
+  const ventasHoy = sales.filter(s => !s.anulada && s.fecha === hoy && s.canal !== "web");
   const totalGen  = ventasHoy.reduce((a, s) => a + s.total, 0);
   const [cerrando, setCerrando] = useState(false);
 
@@ -3066,7 +3069,7 @@ function VentaPage({ ctx }) {
     // Guardar en Supabase (await para asegurar persistencia).
     // La factura se ofrece recién cuando la venta ya existe en la base: el servidor la busca por su id.
     await ctx.saveVenta(venta);
-    await ctx.saveProducts(updatedProducts.filter(p => affectedIds.has(p.id)));
+    await ctx.ajustarStock(venta.items, -1, updatedProducts.filter(p => affectedIds.has(p.id)));
     if (config.facturacionActiva) setVentaParaFacturar(venta);
     else setVentaExito(venta);
     setCart([]); setCliente(""); setMetodoPago(""); setDescValor(""); setEfectivoDado("");
@@ -3784,7 +3787,16 @@ function exportarVentas(sales, config) {
 }
 
 function InventarioPage({ ctx }) {
-  const { config, products, setProducts } = ctx;
+  const { config, products, setProducts, tnVinculados } = ctx;
+  const [publicando, setPublicando] = useState(null);   // producto a publicar (confirmación)
+  const [pubEstado, setPubEstado] = useState(null);     // { ok, txt, url }
+  const publicarTN = async () => {
+    const p = publicando; if (!p) return;
+    setPubEstado({ cargando: true });
+    const r = await llamarTN({ accion: "publicar", producto_id: p.id });
+    if (r.httpOk && r.ok) { setPubEstado({ ok: true, txt: `«${p.nombre}» se creó en Tiendanube, oculto. Agregale fotos y publicalo desde tu tienda.`, url: r.admin_url }); sb._tnRecargarVinculos?.(); }
+    else setPubEstado({ ok: false, txt: r.error || "No se pudo crear en Tiendanube." });
+  };
   const cats = CATS_POR_RUBRO[config.rubro] || CATS_PROD_FALLBACK;
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("Todas");
@@ -3813,6 +3825,29 @@ function InventarioPage({ ctx }) {
 
   return (
     <div className="app-page-pad" style={G.page}>
+      {publicando && (
+        <Modal title="Publicar en Tiendanube" subtitle={publicando.nombre} onClose={() => setPublicando(null)} width={440}>
+          {!pubEstado || pubEstado.cargando ? (
+            <>
+              <p style={{ margin:"0 0 14px", fontSize:13, color:"#555", lineHeight:1.55 }}>
+                Lo creamos en tu tienda <b>oculto</b>, con nombre, precio{(publicando.talles||[]).length ? ", talles" : ""} y stock. Después le agregás fotos y descripción en Tiendanube y lo publicás. Desde ahí el stock se sincroniza solo.
+              </p>
+              <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+                <button style={G.btn("outline")} onClick={() => setPublicando(null)}>Cancelar</button>
+                <button style={{ ...G.btn("dark"), background:"#2c3e91" }} disabled={pubEstado?.cargando} onClick={publicarTN}>{pubEstado?.cargando ? "Creando…" : "Crear en Tiendanube"}</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ background: pubEstado.ok ? "#f0fdf4" : "#fef2f2", border:`1px solid ${pubEstado.ok ? "#bbf7d0" : "#fecaca"}`, color: pubEstado.ok ? "#15803d" : "#b91c1c", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:14 }}>{pubEstado.txt}</div>
+              <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+                {pubEstado.url && <a href={pubEstado.url} target="_blank" rel="noreferrer" style={{ ...G.btn("dark"), background:"#2c3e91", textDecoration:"none" }}>Abrir en Tiendanube</a>}
+                <button style={G.btn("outline")} onClick={() => setPublicando(null)}>Cerrar</button>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
       {(showModal||editProd) && <ProductoModal key={editProd?.id || "new"} prod={editProd} onSave={onSaveProd} onClose={() => { setShowModal(false); setEditProd(null); }} cats={cats} rubro={config.rubro} />}
       {ajusteProd && <AjusteStockModal prod={ajusteProd} rubro={config.rubro} onSave={async upd => { const updated = { ...ajusteProd, ...upd }; setProducts(prev => prev.map(p => p.id===ajusteProd.id ? updated : p)); await ctx.saveProduct(updated); }} onClose={() => setAjusteProd(null)} />}
       {showImport && <ImportarExcelModal cats={cats} onImport={async nuevos => { setProducts(prev => [...prev, ...nuevos]); setShowImport(false); await ctx.saveProducts(nuevos); }} onClose={() => setShowImport(false)} />}
@@ -3946,6 +3981,9 @@ function InventarioPage({ ctx }) {
                       <Pencil size={13}/> Editar
                     </button>
                     <button onClick={() => setAjusteProd(p)} style={{ padding:"8px 10px", background:"none", border:"none", cursor:"pointer", fontSize:13, color:"#888", borderLeft:"1px solid #f0f0f0" }} title="Ajustar stock"><BarChart2 size={13}/></button>
+                    {tnVinculados && (tnVinculados.has(p.id)
+                      ? <span title="Sincronizado con Tiendanube" style={{ padding:"8px 8px", fontSize:11, color:"#2c3e91", borderLeft:"1px solid #f0f0f0", fontWeight:700 }}>🛍️</span>
+                      : <button onClick={() => { setPubEstado(null); setPublicando(p); }} title="Publicar en Tiendanube" style={{ padding:"8px 8px", background:"none", border:"none", cursor:"pointer", fontSize:11, color:"#2c3e91", borderLeft:"1px solid #f0f0f0", fontWeight:700, whiteSpace:"nowrap" }}>+ Web</button>)}
                     <button onClick={() => setConfirmDelete(p.id)} style={{ padding:"8px 10px", background:"none", border:"none", cursor:"pointer", color:"#dc2626", borderLeft:"1px solid #f0f0f0" }}><Trash2 size={14}/></button>
                   </div>
                 </div>
@@ -3960,9 +3998,11 @@ function InventarioPage({ ctx }) {
 
 function HistorialPage({ ctx }) {
   const { config, sales, setSales, products, setProducts } = ctx;
-  const [search, setSearch] = useState(""), [filterPago, setFilterPago] = useState("Todos"), [filterPeriod, setFilterPeriod] = useState("Todos"), [detalle, setDetalle] = useState(null), [comprobanteVer, setComprobanteVer] = useState(null), [aFacturar, setAFacturar] = useState(null), [ncVenta, setNcVenta] = useState(null), [ncVer, setNcVer] = useState(null);
+  const [search, setSearch] = useState(""), [filterCanal, setFilterCanal] = useState("Todos"), [filterPago, setFilterPago] = useState("Todos"), [filterPeriod, setFilterPeriod] = useState("Todos"), [detalle, setDetalle] = useState(null), [comprobanteVer, setComprobanteVer] = useState(null), [aFacturar, setAFacturar] = useState(null), [ncVenta, setNcVenta] = useState(null), [ncVer, setNcVer] = useState(null);
   const hoy = todayStr();
-  const filtered = useMemo(() => sales.filter(s => { const ms = (s.cliente||"").toLowerCase().includes(search.toLowerCase())||String(s.numero).includes(search); const mp = filterPago==="Todos"||s.metodoPago===filterPago; const mf = filterPeriod==="Todos"||(filterPeriod==="Hoy"&&s.fecha===hoy)||(filterPeriod==="Esta semana"&&s.fecha>=subDays(hoy,7))||(filterPeriod==="Este mes"&&s.fecha.startsWith(hoy.slice(0,7))); return ms&&mp&&mf; }).sort((a,b) => b.numero-a.numero), [sales, search, filterPago, filterPeriod, hoy]);
+  const filtered = useMemo(() => sales.filter(s => { const ms = (s.cliente||"").toLowerCase().includes(search.toLowerCase())||String(s.numero).includes(search); const mp = filterPago==="Todos"||s.metodoPago===filterPago; const mcn = filterCanal==="Todos"||(filterCanal==="Web"?s.canal==="web":s.canal!=="web"); const mf = filterPeriod==="Todos"||(filterPeriod==="Hoy"&&s.fecha===hoy)||(filterPeriod==="Esta semana"&&s.fecha>=subDays(hoy,7))||(filterPeriod==="Este mes"&&s.fecha.startsWith(hoy.slice(0,7))); return ms&&mp&&mf&&mcn; }).sort((a,b) => b.numero-a.numero), [sales, search, filterPago, filterPeriod, filterCanal, hoy]);
+  const hayWeb = useMemo(() => sales.some(s => s.canal === "web"), [sales]);
+  const pagosFiltro = useMemo(() => [...new Set([...PAGOS, ...sales.map(s => s.metodoPago).filter(Boolean)])], [sales]);
   const totalFilt = filtered.filter(s => !s.anulada).reduce((a,s) => a+s.total, 0);
   const anular = async (id, ventaActualizada) => {
     const venta = ventaActualizada || sales.find(s => s.id === id);
@@ -3995,7 +4035,7 @@ function HistorialPage({ ctx }) {
       return upd;
     });
     setProducts(updatedProducts);
-    await ctx.saveProducts(updatedProducts.filter(p => affectedIds.has(p.id)));
+    await ctx.ajustarStock(venta.items || [], 1, updatedProducts.filter(p => affectedIds.has(p.id)));
   };
 
   return (
@@ -4026,7 +4066,8 @@ function HistorialPage({ ctx }) {
       <div style={{ display:"flex", gap:12, marginBottom:20 }}>
         <input style={{ ...G.inp(), flex:1 }} placeholder="Buscar por cliente o número..." value={search} onChange={e => setSearch(e.target.value)} />
         <select style={G.inp({ width:180 })} value={filterPeriod} onChange={e => setFilterPeriod(e.target.value)}>{["Todos","Hoy","Esta semana","Este mes"].map(o => <option key={o}>{o}</option>)}</select>
-        <select style={G.inp({ width:200 })} value={filterPago} onChange={e => setFilterPago(e.target.value)}><option>Todos</option>{PAGOS.map(p => <option key={p}>{p}</option>)}</select>
+        {hayWeb && <select style={G.inp({ width:150 })} value={filterCanal} onChange={e => setFilterCanal(e.target.value)}>{["Todos","Local","Web"].map(o => <option key={o} value={o}>{o === "Todos" ? "Local y web" : o === "Web" ? "Solo web" : "Solo local"}</option>)}</select>}
+        <select style={G.inp({ width:200 })} value={filterPago} onChange={e => setFilterPago(e.target.value)}><option>Todos</option>{pagosFiltro.map(p => <option key={p}>{p}</option>)}</select>
       </div>
       <div style={{ ...G.card({ padding:0, overflow:"hidden" }) }}>
         {filtered.length === 0 ? <Empty icon={<ShoppingBag size={36}/>} text="No se encontraron ventas" /> :
@@ -4298,15 +4339,18 @@ function EstadisticasPage({ ctx }) {
   const [comparar, setComparar] = useState(false);
   const [fechaIni2, setFechaIni2] = useState(subDays(subDays(hoy, 30), 30));
   const [fechaFin2, setFechaFin2] = useState(subDays(hoy, 31));
+  const [canalF, setCanalF] = useState("todos");
+  const hayWeb = sales.some(s => s.canal === "web");
+  const okCanal = (s) => canalF === "todos" || (canalF === "web" ? s.canal === "web" : s.canal !== "web");
 
   const setPresetRange = (p) => { setPreset(p); const n = todayStr(); if(p==="Hoy"){setFechaIni(n);setFechaFin(n);}else if(p==="Últimos 7 días"){setFechaIni(subDays(n,7));setFechaFin(n);}else if(p==="Este mes"){setFechaIni(n.slice(0,7)+"-01");setFechaFin(n);}else if(p==="Últimos 30 días"){setFechaIni(subDays(n,30));setFechaFin(n);}else if(p==="Este año"){setFechaIni(n.slice(0,4)+"-01-01");setFechaFin(n);} };
 
-  const vf = sales.filter(s => !s.anulada && s.fecha >= fechaIni && s.fecha <= fechaFin);
+  const vf = sales.filter(s => !s.anulada && okCanal(s) && s.fecha >= fechaIni && s.fecha <= fechaFin);
   const ingresos = vf.reduce((a,s) => a+s.total, 0);
   const ticket = vf.length > 0 ? ingresos / vf.length : 0;
 
   // Período de comparación (opcional)
-  const vf2 = comparar ? sales.filter(s => !s.anulada && s.fecha >= fechaIni2 && s.fecha <= fechaFin2) : [];
+  const vf2 = comparar ? sales.filter(s => !s.anulada && okCanal(s) && s.fecha >= fechaIni2 && s.fecha <= fechaFin2) : [];
   const ingresos2 = vf2.reduce((a,s) => a+s.total, 0);
   const ticket2 = vf2.length > 0 ? ingresos2 / vf2.length : 0;
   const delta = (actual, anterior) => anterior > 0 ? ((actual - anterior) / anterior) * 100 : (actual > 0 ? 100 : 0);
@@ -4421,6 +4465,13 @@ function EstadisticasPage({ ctx }) {
           {["Hoy","Últimos 7 días","Este mes","Últimos 30 días","Este año"].map(p => (
             <button key={p} onClick={() => setPresetRange(p)} style={{ padding:"6px 14px", borderRadius:7, border:"1px solid #e5e7eb", cursor:"pointer", fontSize:12, background:preset===p?"#111":"#fff", color:preset===p?"#fff":"#374151", fontWeight:preset===p?600:400 }}>{p}</button>
           ))}
+          {hayWeb && (
+            <div style={{ display:"flex", gap:4, marginLeft:"auto", background:"#f3f4f6", borderRadius:8, padding:3 }}>
+              {[["todos","Local + Web"],["local","Local"],["web","Web"]].map(([k, l]) => (
+                <button key={k} onClick={() => setCanalF(k)} style={{ padding:"5px 12px", borderRadius:6, border:"none", cursor:"pointer", fontSize:12, background:canalF===k?"#fff":"transparent", color:canalF===k?"#111":"#6b7280", fontWeight:canalF===k?700:500, boxShadow:canalF===k?"0 1px 2px rgba(0,0,0,.08)":"none" }}>{l}</button>
+              ))}
+            </div>
+          )}
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:16 }}>
           <div><label style={{ fontSize:11, color:"#999", display:"block", marginBottom:4 }}>Fecha inicio</label><input type="date" style={G.inp()} value={fechaIni} onChange={e => { setFechaIni(e.target.value); setPreset(""); }} /></div>
@@ -5605,7 +5656,7 @@ function tnProgramarSync() {
 
 function BadgeTiendanube({ venta }) {
   const pc = venta?.pagosCombinados;
-  if (!pc || Array.isArray(pc) || pc.origen !== "tiendanube") return null;
+  if (venta?.canal !== "web" || !pc || Array.isArray(pc) || pc.origen !== "tiendanube") return null;
   return <span title="Venta hecha en tu tienda online" style={{ background:"#e8ecff", color:TN_AZUL, fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:20, whiteSpace:"nowrap" }}>Tiendanube · #{pc.numero_tn}</span>;
 }
 
@@ -5844,6 +5895,22 @@ function TiendanubeCard({ esDueno, onRecargar }) {
     cargar();
   };
 
+  const cambiarSeguridad = async (valor) => {
+    setOcupado("seg");
+    const r = await llamarTN({ accion: "stock_seguridad", valor });
+    setOcupado("");
+    setAviso(r.httpOk && r.ok ? { tipo: "ok", txt: valor ? `Listo: la web va a mostrar ${valor} ${valor === 1 ? "unidad" : "unidades"} menos que el local.` : "Listo: la web muestra el mismo stock que el local." } : { tipo: "error", txt: r.error || "No se pudo cambiar." });
+    cargar();
+  };
+
+  const revisarAhora = async () => {
+    setOcupado("rev");
+    const r = await llamarTN({ accion: "revisar_ahora" });
+    setOcupado("");
+    setAviso(r.httpOk && r.ok ? { tipo: "ok", txt: "Revisión completa: pedidos, productos nuevos y stock al día." } : { tipo: "error", txt: r.error || "No se pudo revisar." });
+    cargar(); sb._tnRecargarVinculos?.(); onRecargar?.();
+  };
+
   const desconectar = async () => {
     setOcupado("desc"); setConfirmarDesc(false);
     const r = await llamarTN({ accion: "desconectar" });
@@ -5886,13 +5953,29 @@ function TiendanubeCard({ esDueno, onRecargar }) {
             <b style={{ color:"var(--text)" }}>{con.tienda_nombre || "Tu tienda"}</b>{con.tienda_url ? ` · ${con.tienda_url}` : ""}
           </p>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom:14 }}>
-            {[["Productos vinculados", estado.vinculados], ["Esperando subir", estado.pendientes], ["Última sincronización", con.ultimo_sync ? haceCuanto(con.ultimo_sync) : "—"]].map(([l, v]) => (
+            {[["Productos vinculados", estado.vinculados], ["Esperando subir", estado.pendientes], ["Última sincronización", con.ultimo_sync ? haceCuanto(con.ultimo_sync) : "—"], ["Última revisión", con.ultima_revision ? haceCuanto(con.ultima_revision) : "—"]].map(([l, v]) => (
               <div key={l} style={{ background:"var(--bg-card2)", borderRadius:10, padding:"10px 12px" }}>
                 <div style={{ fontSize:11, color:"#888" }}>{l}</div>
                 <div style={{ fontSize:18, fontWeight:800 }}>{v}</div>
               </div>
             ))}
           </div>
+          {estado.con_error > 0 && (
+            <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"10px 14px", fontSize:13, color:"#b91c1c", marginBottom:12 }}>
+              Hay {estado.con_error} {estado.con_error === 1 ? "producto que no se pudo" : "productos que no se pudieron"} actualizar en Tiendanube. Se reintenta solo; si sigue, tocá «Revisar ahora».
+            </div>
+          )}
+          {esDueno && (
+            <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", background:"var(--bg-card2)", borderRadius:10, padding:"10px 12px", marginBottom:14 }}>
+              <div style={{ flex:"1 1 220px", fontSize:12, color:"#666", lineHeight:1.45 }}>
+                <b style={{ color:"var(--text)", fontSize:13 }}>Stock de seguridad</b><br/>
+                Unidades que la web no muestra, para no vender dos veces la última prenda.
+              </div>
+              <select disabled={ocupado === "seg"} value={con.stock_seguridad || 0} onChange={e => cambiarSeguridad(+e.target.value)} style={G.inp({ width:"auto", padding:"7px 10px" })}>
+                {[0,1,2,3].map(n => <option key={n} value={n}>{n === 0 ? "No reservar" : `Reservar ${n}`}</option>)}
+              </select>
+            </div>
+          )}
           {estado.vinculados === 0 && (
             <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 14px", fontSize:13, color:"#92400e", marginBottom:12 }}>
               Falta un paso: vinculá tus productos para que el stock empiece a sincronizarse.
@@ -5901,6 +5984,7 @@ function TiendanubeCard({ esDueno, onRecargar }) {
           <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom: estado.actividad?.length ? 16 : 0 }}>
             {esDueno && <button style={{ ...G.btn("dark"), background:TN_AZUL }} onClick={() => setVincular(true)}>Vincular productos</button>}
             <button style={G.btn("outline")} disabled={ocupado === "sync"} onClick={sincronizar}><RefreshCw size={13}/>{ocupado === "sync" ? "Sincronizando…" : "Sincronizar ahora"}</button>
+            {esDueno && <button style={G.btn("outline")} disabled={ocupado === "rev"} onClick={revisarAhora}>{ocupado === "rev" ? "Revisando…" : "Revisar ahora"}</button>}
             {esDueno && (confirmarDesc ? (
               <span style={{ display:"inline-flex", gap:6, alignItems:"center", fontSize:12 }}>
                 ¿Seguro?
@@ -9225,6 +9309,7 @@ export default function App() {
   const [showSubscriptionSuccess, setShowSubscriptionSuccess] = useState(false);
   const [showSugerencia, setShowSugerencia] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false); // drawer del sidebar en mobile
+  const [tnVinculados, setTnVinculados] = useState(null); // Set de productos vinculados a Tiendanube (null = sin integración)
 
   // ── Detectar retorno desde Mercado Pago (?subscription=success) ──
   useEffect(() => {
@@ -9390,10 +9475,17 @@ export default function App() {
         }
       } catch { /* silencioso */ }
     };
-    (async () => {
-      const { count } = await _sb.from("tn_vinculos").select("id", { count: "exact", head: true }).eq("negocio_id", sb._negocioId).eq("estado", "vinculado");
+    const cargarVinculos = async () => {
+      const { data } = await _sb.from("tn_vinculos").select("producto_id").eq("negocio_id", sb._negocioId).eq("estado", "vinculado");
       if (!vivo) return;
-      sb._tnActiva = (count || 0) > 0;
+      const ids = new Set((data || []).map(v => v.producto_id).filter(Boolean));
+      sb._tnActiva = ids.size > 0;
+      setTnVinculados(TN_PILOTO.includes(sb._negocioId) && ids.size > 0 ? ids : null);
+    };
+    sb._tnRecargarVinculos = cargarVinculos;
+    (async () => {
+      await cargarVinculos();
+      if (!vivo) return;
       intervalo = setInterval(revisar, 30000);
     })();
     return () => { vivo = false; if (intervalo) clearInterval(intervalo); };
@@ -9534,6 +9626,25 @@ export default function App() {
     if (sb._negocioId) await sb.del("productos", id);
   };
 
+  // ── Ajuste relativo de stock (ventas y anulaciones) ─────
+  // Suma o resta en la base sin pisar cambios hechos por otros (ej: un pedido web
+  // que llegó mientras tanto). Si la función no responde, cae al guardado normal.
+  const ajustarStock = async (items, signo, respaldo) => {
+    if (!sb._negocioId) return;
+    try {
+      const { data, error } = await _sb.rpc("ajustar_stock_items", { p_items: items, p_signo: signo });
+      if (error) throw error;
+      if (data?.length) {
+        const frescos = new Map(data.map(r => [r.id, dbToProduct(r)]));
+        setProducts(prev => prev.map(x => frescos.get(x.id) || x));
+      }
+      tnProgramarSync();
+    } catch (e) {
+      console.error("ajustarStock, uso guardado completo:", e);
+      if (respaldo?.length) await saveProducts(respaldo);
+    }
+  };
+
   // ── Guardar venta en Supabase ────────────────────────────
   const saveVenta = async (v) => {
     if (!sb._negocioId) return;
@@ -9644,7 +9755,7 @@ export default function App() {
 
   const ctx = { config, setConfig: saveConfig, products, setProducts, sales, setSales, caja, setCaja, gastos, setGastos, remitos, setRemitos, proveedores, setProveedores, setPage,
     // Supabase DB operations
-    saveProduct, saveProducts, deleteProduct, saveVenta, saveCaja, saveGasto, deleteGasto, saveProveedor, deleteProveedor, saveRemito, saveSugerencia,
+    saveProduct, saveProducts, deleteProduct, saveVenta, ajustarStock, tnVinculados, saveCaja, saveGasto, deleteGasto, saveProveedor, deleteProveedor, saveRemito, saveSugerencia,
     sucursales, miRol, misPermisos, cambiarSucursal, crearSucursal, recargarSucursales,
     recargarDatos: () => setLoaded(false),
     handleLogout,
