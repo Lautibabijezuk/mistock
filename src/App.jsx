@@ -416,6 +416,16 @@ const TALLES_PRESET = {
   "Niños — 2 al 16": ["2","4","6","8","10","12","14","16"],
   "Único": ["Único"],
 };
+// Variantes talle × color: la clave de stock lleva el color al final ("M / Negro", o sólo "Negro")
+const SEP_VAR = " / ";
+function colorDeVariante(t, colores) {
+  const cs = colores || [];
+  if (cs.includes(t)) return { base: null, color: t };
+  const c = cs.filter(c => String(t).endsWith(SEP_VAR + c)).sort((a, b) => b.length - a.length)[0];
+  return c ? { base: String(t).slice(0, -(SEP_VAR.length + c.length)), color: c } : null;
+}
+const esCombinado = (p) => (p?.colores || []).length > 0 && (p?.talles || []).length > 0 && p.talles.every(t => colorDeVariante(t, p.colores));
+const claveVar = (base, color) => (!base || base === "Único") ? color : base + SEP_VAR + color;
 const COLORES_DEFAULT = ["Azul Marino","Blanco","Negro","Rojo","Verde","Amarillo","Rosa","Gris","Beige","Marrón","Celeste","Violeta"];
 const PIE_COLORS = ["#111","#16a34a","#2563eb","#d97706","#dc2626","#7c3aed","#0891b2","#ea580c"];
 
@@ -1735,8 +1745,23 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
     }
     if (!base.talleCustom) base.talleCustom = "";
     if (!base.colorCustom) base.colorCustom = "";
+    // Stock por talle y color: separamos la clave "M / Negro" en talle base + color
+    base.stockColor = {};
+    if (esModa && esCombinado(base)) {
+      const bases = [];
+      base.talles.forEach(t => { const x = colorDeVariante(t, base.colores); const b = x.base || "Único"; if (!bases.includes(b)) bases.push(b); });
+      base.stockColor = { ...base.stockPorTalle };
+      base.talles = bases;
+      base.stockPorTalle = Object.fromEntries(bases.map(b => [b, 0]));
+    } else if (esModa && base.colores.length > 0) {
+      // Producto viejo con colores sin stock por color: arrancamos con todo en el primer color
+      base.repartirColores = true;
+      (base.talles.length ? base.talles : ["Único"]).forEach(t => { base.stockColor[claveVar(t, base.colores[0])] = base.talles.length ? (base.stockPorTalle[t] || 0) : (base.stock || 0); });
+      if (!base.talles.length) { base.talles = ["Único"]; base.stockPorTalle = { "Único": 0 }; }
+    }
     return base;
   });
+  const [catNueva, setCatNueva] = useState(false);
 
   const u = (k, v) => setF(p => ({ ...p, [k]:v }));
   const [tallePreset, setTallePreset] = useState("Ropa — XS al XXL");
@@ -1750,7 +1775,13 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
     setF(p => ({ ...p, talles: newTalles, stockPorTalle: newSPT }));
   };
   const setTalleStock = (t, val) => setF(p => ({ ...p, stockPorTalle: { ...(p.stockPorTalle||{}), [t]: Math.max(0, +val||0) } }));
-  const toggleColor = (c) => u("colores", (f.colores||[]).includes(c) ? (f.colores||[]).filter(x => x !== c) : [...(f.colores||[]), c]);
+  const toggleColor = (c) => setF(p => {
+    const colores = (p.colores||[]).includes(c) ? (p.colores||[]).filter(x => x !== c) : [...(p.colores||[]), c];
+    if (colores.length || !esModa) return { ...p, colores };
+    // Se sacó el último color: el stock vuelve a quedar sólo por talle (sumando lo que había en el color)
+    const spt = Object.fromEntries((p.talles||[]).map(t => [t, +(p.stockColor||{})[claveVar(t, c)] || 0]));
+    return { ...p, colores, stockPorTalle: spt };
+  });
   const addTalleCustom = () => {
     const t = (f.talleCustom||"").trim();
     if (t && !(f.talles||[]).includes(t)) {
@@ -1767,7 +1798,13 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
     setTallePreset(preset);
     setF(p => ({ ...p, talles: newTalles, stockPorTalle: newSPT }));
   };
-  const totalStockTalles = esModa
+  const porColor = esModa && tieneColores && (f.colores || []).length > 0;
+  const filasColor = porColor ? ((f.talles || []).length ? f.talles : ["Único"]) : [];
+  const clavesColor = porColor ? filasColor.flatMap(t => f.colores.map(c => claveVar(t, c))) : [];
+  const setStockColor = (k, val) => setF(p => ({ ...p, stockColor: { ...(p.stockColor || {}), [k]: Math.max(0, +val || 0) } }));
+  const totalStockTalles = porColor
+    ? clavesColor.reduce((a, k) => a + (+(f.stockColor || {})[k] || 0), 0)
+    : esModa
     ? Object.values(f.stockPorTalle || {}).reduce((a, v) => a + (+v||0), 0)
     : +f.stock || 0;
 
@@ -1776,7 +1813,13 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
     if (!f.precio) { setError("El precio es requerido"); return; }
     setError("");
     const stockFinal = esModa ? totalStockTalles : +f.stock || 0;
-    onSave({ ...f, id:prod?.id||uid(), precio:+f.precio, costo:+f.costo||0, stockMinimo:+f.stockMinimo||3, stock: stockFinal });
+    const { stockColor, repartirColores, ...resto } = f;
+    let variantes = {};
+    if (porColor) {
+      // Cada combinación talle × color es una variante con su stock (igual que en Tiendanube)
+      variantes = { talles: clavesColor, stockPorTalle: Object.fromEntries(clavesColor.map(k => [k, +(stockColor || {})[k] || 0])) };
+    }
+    onSave({ ...resto, ...variantes, id:prod?.id||uid(), precio:+f.precio, costo:+f.costo||0, stockMinimo:+f.stockMinimo||3, stock: stockFinal });
   };
 
   const coloresExistentes = Array.isArray(f.colores) ? f.colores : [];
@@ -1793,10 +1836,18 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
       </FieldRow>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
         <FieldRow label="Categoría">
-          <select style={G.inp()} value={f.categoria} onChange={e => u("categoria", e.target.value)}>
-            <option value="">Seleccionar</option>
-            {(cats || CATS_PROD_FALLBACK).map(c => <option key={c}>{c}</option>)}
-          </select>
+          {catNueva ? (
+            <div style={{ display:"flex", gap:6 }}>
+              <input style={{ ...G.inp(), flex:1 }} autoFocus value={f.categoria} onChange={e => u("categoria", e.target.value)} placeholder="Nombre de la categoría" />
+              <button type="button" style={G.btn("outline", { padding:"9px 10px" })} onClick={() => setCatNueva(false)}>OK</button>
+            </div>
+          ) : (
+            <select style={G.inp()} value={f.categoria} onChange={e => e.target.value === "__nueva" ? (u("categoria", ""), setCatNueva(true)) : u("categoria", e.target.value)}>
+              <option value="">Seleccionar</option>
+              {[...new Set([...(cats || CATS_PROD_FALLBACK), ...(f.categoria ? [f.categoria] : [])])].map(c => <option key={c}>{c}</option>)}
+              <option value="__nueva">+ Nueva categoría…</option>
+            </select>
+          )}
         </FieldRow>
         <FieldRow label="SKU / Código">
           <input style={G.inp()} value={f.sku} onChange={e => u("sku", e.target.value)} placeholder="VES-001" />
@@ -1927,8 +1978,20 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
           <select style={{ ...G.inp(), marginBottom:12 }} value={tallePreset} onChange={e => applyPreset(e.target.value)}>
             {Object.keys(TALLES_PRESET).map(k => <option key={k}>{k}</option>)}
           </select>
+          {porColor ? (
+            <div style={{ fontSize:12, color:"#666", marginBottom:8 }}>Elegí los talles acá y los colores abajo: el stock se carga por cada combinación, como en Tiendanube.</div>
+          ) : null}
+          {porColor && (
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:10 }}>
+              {(f.talles||[]).map(t => (
+                <span key={t} style={{ display:"inline-flex", alignItems:"center", gap:6, border:"1.5px solid #111", borderRadius:20, padding:"4px 10px", fontSize:12, fontWeight:700 }}>
+                  {t}<button onClick={() => toggleTalle(t)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:10, color:"#999", padding:0 }}>✕</button>
+                </span>
+              ))}
+            </div>
+          )}
           {/* Grilla de talles con input de stock */}
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:10 }}>
+          <div style={{ display: porColor ? "none" : "grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:10 }}>
             {(f.talles||[]).map(t => {
               const cnt = f.stockPorTalle?.[t] || 0;
               return (
@@ -1966,6 +2029,41 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
             <input style={{ ...G.inp(), flex:1 }} placeholder="Color personalizado..." value={f.colorCustom} onChange={e => u("colorCustom", e.target.value)} onKeyDown={e => e.key==="Enter" && addColorCustom()} />
             <button onClick={addColorCustom} style={G.btn("outline", { padding:"9px 14px" })}>+</button>
           </div>
+          {porColor && (
+            <div style={{ marginTop:14 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                <label style={G.label}>Stock por talle y color</label>
+                <span style={{ fontSize:12, color:"#16a34a", fontWeight:600 }}>Total: {totalStockTalles} uds</span>
+              </div>
+              {f.repartirColores && <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"8px 10px", fontSize:12, color:"#92400e", marginBottom:8 }}>Antes el stock no se separaba por color: lo pusimos todo en «{f.colores[0]}». Repartilo como corresponda.</div>}
+              <div style={{ overflowX:"auto", border:"1px solid var(--border)", borderRadius:10 }}>
+                <table style={{ borderCollapse:"collapse", width:"100%", fontSize:13 }}>
+                  <thead>
+                    <tr style={{ background:"var(--bg-card2)" }}>
+                      <th style={{ textAlign:"left", padding:"8px 10px", fontSize:12, color:"#666" }}>{filasColor.length === 1 && filasColor[0] === "Único" ? "" : "Talle"}</th>
+                      {f.colores.map(c => <th key={c} style={{ padding:"8px 6px", fontSize:12, color:"#444", whiteSpace:"nowrap" }}>{c}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filasColor.map(t => (
+                      <tr key={t} style={{ borderTop:"1px solid var(--border)" }}>
+                        <td style={{ padding:"6px 10px", fontWeight:700, whiteSpace:"nowrap" }}>{t === "Único" ? "Stock" : t}</td>
+                        {f.colores.map(c => {
+                          const k = claveVar(t, c), cnt = +(f.stockColor || {})[k] || 0;
+                          return (
+                            <td key={c} style={{ padding:"4px 6px" }}>
+                              <input type="number" min={0} value={cnt === 0 ? "" : cnt} placeholder="0" onChange={e => setStockColor(k, e.target.value)}
+                                style={{ width:"100%", minWidth:54, border:"1px solid #e5e7eb", borderRadius:6, padding:"6px 4px", fontSize:14, fontWeight:700, textAlign:"center", outline:"none", color: cnt===0?"#bbb":"#111" }} />
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2762,6 +2860,16 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
   const totalDisp = Object.values(stockPorTalle).reduce((a,v) => a+(+v||0), 0);
   const tieneTalles = (prod.talles||[]).length > 0;
   const tieneColores = (prod.colores||[]).length > 0;
+  const combinado = esCombinado(prod);
+  const partesVar = combinado ? (prod.talles||[]).map(k => ({ k, ...colorDeVariante(k, prod.colores) })) : [];
+  const conBase = partesVar.some(x => x.base);
+  const stockColor = (c) => partesVar.filter(x => x.color === c).reduce((a, x) => a + (+stockPorTalle[x.k] || 0), 0);
+  const tallesVisibles = combinado ? partesVar.filter(x => x.color === colorSelec && x.base).map(x => ({ k: x.k, label: x.base })) : (prod.talles||[]).map(t => ({ k: t, label: t }));
+  const elegirColor = (c) => {
+    setColorSelec(c);
+    if (combinado && !conBase) setTalleSelec(c);           // sólo color: la variante es el color
+    else if (combinado) setTalleSelec(null);
+  };
   const faltaElegir = (tieneTalles && !talleSelec) || (tieneColores && !colorSelec);
 
   return (
@@ -2781,12 +2889,13 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             {(prod.colores||[]).map(c => {
               const selec = colorSelec === c;
+              const sinStockColor = combinado && stockColor(c) === 0;
               return (
-                <button key={c} onClick={() => setColorSelec(c)} style={{
+                <button key={c} onClick={() => !sinStockColor && elegirColor(c)} disabled={sinStockColor} title={combinado ? `${stockColor(c)} ud.` : undefined} style={{ opacity: sinStockColor ? 0.4 : 1,
                   background: selec ? "#111" : "#f3f4f6", borderRadius:20, padding:"7px 16px",
                   fontSize:13, color: selec ? "#fff" : "#555", fontWeight: selec ? 700 : 500,
                   border: selec ? "2px solid #111" : "2px solid transparent", cursor:"pointer", transition:"all .15s",
-                }}>{c}</button>
+                }}>{c}{combinado ? ` · ${stockColor(c)}` : ""}</button>
               );
             })}
           </div>
@@ -2794,11 +2903,11 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
       )}
 
       {/* Talles */}
-      {tieneTalles && (
+      {tieneTalles && (!combinado || (conBase && colorSelec)) && (
         <div style={{ marginBottom:20 }}>
           <div style={{ fontSize:13, fontWeight:600, color:"#666", marginBottom:10 }}>Seleccionar talle:</div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8 }}>
-            {(prod.talles||[]).map(t => {
+            {tallesVisibles.map(({ k: t, label }) => {
               const cnt = stockPorTalle[t] || 0;
               const agotado = cnt === 0;
               const selec = talleSelec === t;
@@ -2809,7 +2918,7 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
                   background: selec?"#111":agotado?"#fafafa":"#fff",
                   opacity: agotado ? 0.45 : 1, transition:"all .15s"
                 }}>
-                  <div style={{ fontSize:13, fontWeight:700, color:selec?"#fff":agotado?"#bbb":"#111" }}>{t}</div>
+                  <div style={{ fontSize:13, fontWeight:700, color:selec?"#fff":agotado?"#bbb":"#111" }}>{label}</div>
                   <div style={{ fontSize:11, color:selec?"#ccc":agotado?"#ccc":"#888", marginTop:2 }}>{cnt} ud.</div>
                 </button>
               );
@@ -2823,7 +2932,7 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
         onClick={() => { if (!faltaElegir) { onSelect(talleSelec, tieneTalles ? stockPorTalle[talleSelec] : null, colorSelec); onClose(); } }}
         disabled={faltaElegir}
       >
-        {faltaElegir ? (tieneTalles && !talleSelec ? "Seleccioná un talle" : "Seleccioná un color") : "Agregar al carrito"}
+        {faltaElegir ? (tieneColores && !colorSelec ? "Seleccioná un color" : "Seleccioná un talle") : "Agregar al carrito"}
       </button>
     </Modal>
   );
@@ -3001,7 +3110,10 @@ function VentaPage({ ctx }) {
   const addToCart = (prod, talle = null, stockMax = null, color = null) => {
     const cartKey = [prod.id, talle, color].filter(Boolean).join("__") || prod.id;
     const maxStock = stockMax !== null ? stockMax : prod.stock;
-    const sufijo = [talle ? `T.${talle}` : null, color].filter(Boolean).join(" - ");
+    const cv = talle && esCombinado(prod) ? colorDeVariante(talle, prod.colores) : null;
+    const sufijo = cv
+      ? [cv.base ? `T.${cv.base}` : null, cv.color].filter(Boolean).join(" - ")
+      : [talle ? `T.${talle}` : null, color].filter(Boolean).join(" - ");
     setCart(prev => {
       const idx = prev.findIndex(i => i.cartKey === cartKey);
       if (idx >= 0) {
@@ -3795,14 +3907,37 @@ function InventarioPage({ ctx }) {
   const { config, products, setProducts, tnVinculados } = ctx;
   const [publicando, setPublicando] = useState(null);   // producto a publicar (confirmación)
   const [pubEstado, setPubEstado] = useState(null);     // { ok, txt, url }
+  const [pubVisible, setPubVisible] = useState(true);
+  const publicandoRef = useRef(false);
   const publicarTN = async () => {
-    const p = publicando; if (!p) return;
+    const p = publicando; if (!p || publicandoRef.current) return;
+    publicandoRef.current = true;
     setPubEstado({ cargando: true });
-    const r = await llamarTN({ accion: "publicar", producto_id: p.id });
-    if (r.httpOk && r.ok) { setPubEstado({ ok: true, txt: `«${p.nombre}» se creó en Tiendanube, oculto. Agregale fotos y publicalo desde tu tienda.`, url: r.admin_url }); sb._tnRecargarVinculos?.(); }
-    else setPubEstado({ ok: false, txt: r.error || "No se pudo crear en Tiendanube." });
+    try {
+      const r = await llamarTN({ accion: "publicar", producto_id: p.id, visible: pubVisible });
+      if (r.httpOk && r.ok) {
+        const det = [`${r.variantes} ${r.variantes === 1 ? "variante" : "variantes"}`, r.foto ? "con foto" : "sin foto", r.categoria ? `en «${r.categoria}»` : null].filter(Boolean).join(", ");
+        setPubEstado({ ok: true, txt: `«${p.nombre}» ya está en Tiendanube ${r.visible ? "y se ve en tu tienda" : "(oculto)"}: ${det}. Desde ahora el stock se sincroniza solo.`, url: r.admin_url });
+        sb._tnRecargarVinculos?.();
+      } else setPubEstado({ ok: false, txt: r.error || "No se pudo crear en Tiendanube." });
+    } finally { publicandoRef.current = false; }
   };
-  const cats = CATS_POR_RUBRO[config.rubro] || CATS_PROD_FALLBACK;
+  const resumenPublicar = (p) => {
+    if (!p) return [];
+    const comb = esCombinado(p);
+    const vars = (p.talles || []).length || 1;
+    const colores = (p.colores || []).length;
+    return [
+      ["Precio", fmtMoney(p.precio, config.moneda)],
+      ["Variantes", (p.talles || []).length ? `${vars} (${comb ? "talle y color" : colores === 1 ? `talles, color ${p.colores[0]}` : "talles"})` : "Sin variantes"],
+      ["Stock", `${p.stock || 0} unidades${(p.talles || []).length ? ", separado por variante" : ""}`],
+      ["Foto", p.imagen ? "Sí" : "No tiene — podés agregarla después en Tiendanube"],
+      ["Categoría", p.categoria && p.categoria !== "General" ? `${p.categoria} (se crea si no existe)` : "Sin categoría"],
+      ["Descripción", p.descripcion ? "Sí" : "No"],
+      ["Costo", p.costo ? fmtMoney(p.costo, config.moneda) : "No"],
+    ];
+  };
+  const cats = [...new Set([...(CATS_POR_RUBRO[config.rubro] || CATS_PROD_FALLBACK), ...products.map(p => p.categoria).filter(c => c && c !== "General")])];
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("Todas");
   const [filterStock, setFilterStock] = useState("Todos");
@@ -3818,7 +3953,7 @@ function InventarioPage({ ctx }) {
   const valorVenta = products.reduce((a,p) => a + (p.precio||0) * (p.stock||0), 0);
   const onSaveProd = async (p) => {
     setProducts(prev => editProd ? prev.map(x => x.id===p.id ? p : x) : [...prev, p]);
-    await ctx.saveProduct(p);
+    await ctx.saveProduct(p, editProd);
     setShowModal(false); setEditProd(null);
   };
   const delProd = async (id) => {
@@ -3831,15 +3966,24 @@ function InventarioPage({ ctx }) {
   return (
     <div className="app-page-pad" style={G.page}>
       {publicando && (
-        <Modal title="Publicar en Tiendanube" subtitle={publicando.nombre} onClose={() => setPublicando(null)} width={440}>
+        <Modal title="Publicar en Tiendanube" subtitle={publicando.nombre} onClose={() => { if (!pubEstado?.cargando) setPublicando(null); }} width={460}>
           {!pubEstado || pubEstado.cargando ? (
             <>
-              <p style={{ margin:"0 0 14px", fontSize:13, color:"#555", lineHeight:1.55 }}>
-                Lo creamos en tu tienda <b>oculto</b>, con nombre, precio{(publicando.talles||[]).length ? ", talles" : ""} y stock. Después le agregás fotos y descripción en Tiendanube y lo publicás. Desde ahí el stock se sincroniza solo.
-              </p>
+              <p style={{ margin:"0 0 12px", fontSize:13, color:"#555", lineHeight:1.55 }}>Lo creamos en tu tienda con todo esto:</p>
+              <div style={{ border:"1px solid var(--border)", borderRadius:10, marginBottom:14 }}>
+                {resumenPublicar(publicando).map(([k, v], i) => (
+                  <div key={k} style={{ display:"flex", justifyContent:"space-between", gap:12, padding:"8px 12px", fontSize:13, borderTop: i ? "1px solid var(--border)" : "none" }}>
+                    <span style={{ color:"#666" }}>{k}</span><span style={{ fontWeight:600, textAlign:"right" }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+              <label style={{ display:"flex", alignItems:"center", gap:10, fontSize:13, marginBottom:16, cursor:"pointer" }}>
+                <input type="checkbox" checked={pubVisible} onChange={e => setPubVisible(e.target.checked)} style={{ width:18, height:18 }} />
+                <span><b>Mostrarlo ya en la tienda</b><br/><span style={{ color:"#666" }}>Si lo destildás, queda oculto hasta que lo publiques en Tiendanube.</span></span>
+              </label>
               <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
-                <button style={G.btn("outline")} onClick={() => setPublicando(null)}>Cancelar</button>
-                <button style={{ ...G.btn("dark"), background:"#2c3e91" }} disabled={pubEstado?.cargando} onClick={publicarTN}>{pubEstado?.cargando ? "Creando…" : "Crear en Tiendanube"}</button>
+                <button style={G.btn("outline")} disabled={pubEstado?.cargando} onClick={() => setPublicando(null)}>Cancelar</button>
+                <button style={{ ...G.btn("dark"), background:"#2c3e91", opacity: pubEstado?.cargando ? .7 : 1 }} disabled={pubEstado?.cargando} onClick={publicarTN}>{pubEstado?.cargando ? "Creando…" : "Crear en Tiendanube"}</button>
               </div>
             </>
           ) : (
@@ -3988,7 +4132,7 @@ function InventarioPage({ ctx }) {
                     <button onClick={() => setAjusteProd(p)} style={{ padding:"8px 10px", background:"none", border:"none", cursor:"pointer", fontSize:13, color:"#888", borderLeft:"1px solid #f0f0f0" }} title="Ajustar stock"><BarChart2 size={13}/></button>
                     {tnVinculados && (tnVinculados.has(p.id)
                       ? <span title="Sincronizado con Tiendanube" style={{ padding:"8px 8px", fontSize:11, color:"#2c3e91", borderLeft:"1px solid #f0f0f0", fontWeight:700 }}>🛍️</span>
-                      : <button onClick={() => { setPubEstado(null); setPublicando(p); }} title="Publicar en Tiendanube" style={{ padding:"8px 8px", background:"none", border:"none", cursor:"pointer", fontSize:11, color:"#2c3e91", borderLeft:"1px solid #f0f0f0", fontWeight:700, whiteSpace:"nowrap" }}>+ Web</button>)}
+                      : <button onClick={() => { setPubEstado(null); setPubVisible(!!p.imagen); setPublicando(p); }} title="Publicar en Tiendanube" style={{ padding:"8px 8px", background:"none", border:"none", cursor:"pointer", fontSize:11, color:"#2c3e91", borderLeft:"1px solid #f0f0f0", fontWeight:700, whiteSpace:"nowrap" }}>+ Web</button>)}
                     <button onClick={() => setConfirmDelete(p.id)} style={{ padding:"8px 10px", background:"none", border:"none", cursor:"pointer", color:"#dc2626", borderLeft:"1px solid #f0f0f0" }}><Trash2 size={14}/></button>
                   </div>
                 </div>
@@ -9912,10 +10056,10 @@ export default function App() {
   // Cada 30 s traemos esos cambios para que la pantalla no pise el stock con datos viejos.
   useEffect(() => {
     if (!token || !loaded || !sb._negocioId) return;
-    let vivo = true, desde = new Date().toISOString(), intervalo = null;
+    let vivo = true, desde = new Date(Date.now() - 15000).toISOString(), intervalo = null;
     const revisar = async () => {
-      if (!sb._tnActiva) return;
-      const ahora = new Date().toISOString();
+      if (!sb._tnActiva || document.hidden) return;
+      const ahora = new Date(Date.now() - 15000).toISOString(); // margen por diferencias de reloj
       try {
         const [{ data: prods }, { data: vts }] = await Promise.all([
           _sb.from("productos").select("*").eq("negocio_id", sb._negocioId).gt("updated_at", desde),
@@ -9950,9 +10094,11 @@ export default function App() {
     (async () => {
       await cargarVinculos();
       if (!vivo) return;
-      intervalo = setInterval(revisar, 30000);
+      intervalo = setInterval(revisar, 15000);
     })();
-    return () => { vivo = false; if (intervalo) clearInterval(intervalo); };
+    const alVolver = () => { if (!document.hidden) revisar(); };
+    document.addEventListener("visibilitychange", alVolver);
+    return () => { vivo = false; if (intervalo) clearInterval(intervalo); document.removeEventListener("visibilitychange", alVolver); };
   }, [token, loaded]);
 
   // ── Revisión periódica del estado de suscripción ──────────
@@ -10075,8 +10221,19 @@ export default function App() {
   };
 
   // ── Guardar producto(s) en Supabase ──────────────────────
-  const saveProduct = async (p) => {
+  const saveProduct = async (p, original) => {
     if (!sb._negocioId) return;
+    const mismoStock = original && original.id === p.id && (+original.stock || 0) === (+p.stock || 0)
+      && JSON.stringify(original.stockPorTalle || {}) === JSON.stringify(p.stockPorTalle || {})
+      && JSON.stringify(original.talles || []) === JSON.stringify(p.talles || []);
+    if (mismoStock) {
+      // No se tocó el stock: guardamos el resto sin pisar el stock actual (puede haber cambiado por una venta web)
+      const { stock, stock_por_talle, ...resto } = productToDb(p, sb._negocioId);
+      const { data, error } = await _sb.from("productos").update(resto).eq("id", p.id).eq("negocio_id", sb._negocioId).select("*").maybeSingle();
+      if (error) { console.error("saveProduct:", error); return; }
+      if (data) setProducts(prev => prev.map(x => x.id === data.id ? dbToProduct(data) : x));
+      return;
+    }
     await sb.upsert("productos", productToDb(p, sb._negocioId));
     tnProgramarSync();
   };
