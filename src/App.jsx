@@ -3142,19 +3142,19 @@ function VentaPage({ ctx }) {
 
   const [guardandoVenta, setGuardandoVenta] = useState(false);
 
-  const esCombinado = metodoPago === "combinar";
+  const esPagoCombinado = metodoPago === "combinar";
   const sumaSplit = (+splitMonto1 || 0) + (+splitMonto2 || 0);
-  const splitValido = !esCombinado || Math.abs(sumaSplit - total) < 1;
+  const splitValido = !esPagoCombinado || Math.abs(sumaSplit - total) < 1;
 
   const completarVenta = async () => {
     if (guardandoVenta) return; // evita doble click → venta duplicada
     if (cart.length === 0 || !metodoPago) return;
-    if (esCombinado && !splitValido) return;
+    if (esPagoCombinado && !splitValido) return;
     if (!caja.abierta) { setShowCaja(true); return; }
     setGuardandoVenta(true);
     try {
-    const metodoPagoFinal = esCombinado ? `Combinado (${splitMetodo1} + ${splitMetodo2})` : metodoPago;
-    const pagosCombinados = esCombinado ? [
+    const metodoPagoFinal = esPagoCombinado ? `Combinado (${splitMetodo1} + ${splitMetodo2})` : metodoPago;
+    const pagosCombinados = esPagoCombinado ? [
       { metodo: splitMetodo1, monto: +splitMonto1 || 0 },
       { metodo: splitMetodo2, monto: +splitMonto2 || 0 },
     ] : null;
@@ -3405,7 +3405,7 @@ function VentaPage({ ctx }) {
             <input style={{ ...G.inp(), marginBottom:10 }} type="number" placeholder="Monto recibido" value={efectivoDado} onChange={e => setEfectivoDado(e.target.value)} />
           )}
 
-          {esCombinado && (
+          {esPagoCombinado && (
             <div style={{ background:"#f9fafb", borderRadius:10, padding:10, marginBottom:10 }}>
               <div style={{ display:"flex", gap:8, marginBottom:8 }}>
                 <select style={{ ...G.inp(), flex:1 }} value={splitMetodo1} onChange={e => setSplitMetodo1(e.target.value)}>
@@ -3434,9 +3434,9 @@ function VentaPage({ ctx }) {
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={() => setShowCobro(false)} style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }}>Volver</button>
             <button
-              disabled={!metodoPago || guardandoVenta || (esCombinado && !splitValido)}
+              disabled={!metodoPago || guardandoVenta || (esPagoCombinado && !splitValido)}
               onClick={completarVenta}
-              style={{ ...G.btn((metodoPago && !guardandoVenta && (!esCombinado || splitValido))?"dark":"light"), flex:1, justifyContent:"center", cursor: guardandoVenta ? "wait" : "pointer" }}
+              style={{ ...G.btn((metodoPago && !guardandoVenta && (!esPagoCombinado || splitValido))?"dark":"light"), flex:1, justifyContent:"center", cursor: guardandoVenta ? "wait" : "pointer" }}
             >
               {guardandoVenta ? "Guardando..." : "Confirmar venta"}
             </button>
@@ -10668,3 +10668,4 @@ export default function App() {
     </>
   );
 }
+
