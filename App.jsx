@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, Component } from "react";
 import { Html5Qrcode } from "html5-qrcode";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
-import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
+import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu, MoreVertical, Calculator, Target } from "lucide-react";
 import * as XLSX from "xlsx";
+import QRCode from "qrcode";
 
 // ═══════════════════════════════════════════════════════════
 // SUPABASE CLIENT
@@ -61,9 +62,70 @@ const sb = {
   },
 
   async getNegocio(userId) {
-    const { data, error } = await _sb.from("negocios").select("*").eq("user_id", userId).maybeSingle();
-    if (error) console.error("getNegocio:", error);
-    return data;
+    // Traemos el MÁS ANTIGUO en vez de usar maybeSingle():
+    // maybeSingle() tira error si hay más de una fila, y ese error hacía que
+    // el código de arriba creyera que el usuario no tenía negocio y creara otro
+    // (bola de nieve: cada login generaba una cuenta vacía nueva).
+    const { data, error } = await _sb
+      .from("negocios")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true })
+      .limit(1);
+    if (error) {
+      console.error("getNegocio:", error);
+      // Devolvemos undefined para distinguir "falló la consulta" de "no tiene negocio".
+      // Si falló, NO hay que crear uno nuevo.
+      return undefined;
+    }
+    return (data && data.length > 0) ? data[0] : null;
+  },
+
+  // Todos los negocios a los que el usuario tiene acceso (propios + donde es miembro)
+  async getMisNegocios() {
+    const { data, error } = await _sb
+      .from("negocios")
+      .select("*")
+      .order("created_at", { ascending: true });
+    if (error) { console.error("getMisNegocios:", error); return undefined; }
+    return data || [];
+  },
+
+  // Rol y permisos del usuario actual en un negocio puntual
+  async getMembresia(negocioId, userId) {
+    const { data, error } = await _sb
+      .from("miembros")
+      .select("rol, permisos, nombre")
+      .eq("negocio_id", negocioId)
+      .eq("user_id", userId)
+      .limit(1);
+    if (error) { console.error("getMembresia:", error); return null; }
+    return (data && data.length > 0) ? data[0] : null;
+  },
+
+  // Crear una sucursal nueva (solo el dueño). Explícito: nunca automático.
+  async crearSucursal(userId, nombre, rubro) {
+    // Cada sucursal tiene su propia suscripción, y arranca SIN prueba gratis:
+    // nace en "past_due" para que el dueño la active pagando desde el día 1.
+    const { data: neg, error } = await _sb
+      .from("negocios")
+      .insert({
+        user_id: userId,
+        nombre,
+        rubro: rubro || "",
+        es_principal: false,
+        onboarding_completo: true,
+        subscription_status: "past_due",
+        trial_ends_at: null,
+        payment_failed_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+    if (error) { console.error("crearSucursal:", error); throw new Error(error.message); }
+
+    await _sb.from("caja").insert({ negocio_id: neg.id, abierta: false, monto: 0 });
+    await _sb.from("miembros").insert({ negocio_id: neg.id, user_id: userId, rol: "dueno", permisos: ["*"] });
+    return neg;
   },
   async updateNegocio(data) {
     const { error } = await _sb.from("negocios").update(data).eq("id", this._negocioId);
@@ -132,13 +194,18 @@ const dbToVenta = r => ({
   descuento: parseFloat(r.descuento)||0, descuentoTipo: r.descuento_tipo,
   total: parseFloat(r.total)||0, efectivoDado: parseFloat(r.efectivo_dado)||0,
   cambio: parseFloat(r.cambio)||0, anulada: r.anulada||false, factura: r.factura||null,
+  pagosCombinados: r.pagos_combinados||null, createdAt: r.created_at||null,
+  canal: r.canal || (r.pagos_combinados?.origen === "tiendanube" ? "web" : "local"),
+  importada: !!r.importada,
 });
 const ventaToDb = (v, negocioId) => ({
   id: v.id, negocio_id: negocioId, numero: v.numero, fecha: v.fecha,
   cliente: v.cliente||'', metodo_pago: v.metodoPago, items: v.items||[],
   subtotal: v.subtotal||0, descuento: v.descuento||0, descuento_tipo: v.descuentoTipo||'monto',
   total: v.total||0, efectivo_dado: v.efectivoDado||0, cambio: v.cambio||0,
-  factura: v.factura||null,
+  anulada: !!v.anulada,
+  factura: v.factura||null, pagos_combinados: v.pagosCombinados||null,
+  canal: v.canal || "local",
 });
 const dbToConfig = n => ({
   nombre: n.nombre, moneda: n.moneda||'$', dueno: n.dueno||'', rubro: n.rubro||'',
@@ -155,6 +222,8 @@ const dbToConfig = n => ({
   paymentFailedAt: n.payment_failed_at || null,
   subscriptionStartedAt: n.subscription_started_at || null,
   accesoManualHasta: n.acceso_manual_hasta || null,
+  onboardingCompleto: n.onboarding_completo !== false,
+  onboardingIntegraciones: n.onboarding_integraciones || null,
 });
 const configToDb = c => ({
   nombre: c.nombre, moneda: c.moneda, dueno: c.dueno, rubro: c.rubro,
@@ -189,6 +258,42 @@ class ErrorBoundary extends Component {
 // UTILS & CONSTANTS
 // ═══════════════════════════════════════════════════════════
 const uid = () => crypto.randomUUID();
+
+// ── Tracking de uso: detectar dispositivo/sistema y mantener un id de sesión ──
+const detectarDispositivo = () => {
+  if (typeof navigator === "undefined") return { dispositivo: null, sistema: null };
+  const ua = navigator.userAgent || "";
+  const ancho = typeof window !== "undefined" ? window.innerWidth : 1024;
+  let dispositivo = "escritorio";
+  if (/Mobi|Android|iPhone|iPod/i.test(ua) || ancho < 640) dispositivo = "movil";
+  else if (/iPad|Tablet/i.test(ua) || (ancho >= 640 && ancho < 1024)) dispositivo = "tablet";
+  let sistema = "Otro";
+  if (/iPhone|iPad|iPod/i.test(ua)) sistema = "iOS";
+  else if (/Android/i.test(ua)) sistema = "Android";
+  else if (/Windows/i.test(ua)) sistema = "Windows";
+  else if (/Mac OS X|Macintosh/i.test(ua)) sistema = "Mac";
+  else if (/Linux/i.test(ua)) sistema = "Linux";
+  return { dispositivo, sistema };
+};
+
+// Un id por "visita": se guarda en memoria, se renueva al recargar la página
+const SESSION_ID = uid();
+
+// Nombres legibles de cada sección, para el ranking de uso en el panel admin
+const SECCION_LABELS = {
+  venta: "Nueva Venta",
+  dashboard: "Dashboard",
+  inventario: "Productos e Inventario",
+  historial: "Historial",
+  estadisticas: "Estadísticas",
+  proyeccion: "Proyección",
+  finanzas: "Finanzas",
+  calculadora: "Calculadora de precios",
+  remitos: "Remitos",
+  suscripcion: "Suscripción",
+  config: "Configuración",
+};
+
 const todayStr = () => new Date().toISOString().split("T")[0];
 const fmtMoney = (n, m = "$") => `${m}${Math.round(Number(n) || 0).toLocaleString("es-AR")}`;
 const fmtDate = (s) => s ? new Date(s + "T12:00:00").toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" }) : "";
@@ -311,6 +416,16 @@ const TALLES_PRESET = {
   "Niños — 2 al 16": ["2","4","6","8","10","12","14","16"],
   "Único": ["Único"],
 };
+// Variantes talle × color: la clave de stock lleva el color al final ("M / Negro", o sólo "Negro")
+const SEP_VAR = " / ";
+function colorDeVariante(t, colores) {
+  const cs = colores || [];
+  if (cs.includes(t)) return { base: null, color: t };
+  const c = cs.filter(c => String(t).endsWith(SEP_VAR + c)).sort((a, b) => b.length - a.length)[0];
+  return c ? { base: String(t).slice(0, -(SEP_VAR.length + c.length)), color: c } : null;
+}
+const esCombinado = (p) => (p?.colores || []).length > 0 && (p?.talles || []).length > 0 && p.talles.every(t => colorDeVariante(t, p.colores));
+const claveVar = (base, color) => (!base || base === "Único") ? color : base + SEP_VAR + color;
 const COLORES_DEFAULT = ["Azul Marino","Blanco","Negro","Rojo","Verde","Amarillo","Rosa","Gris","Beige","Marrón","Celeste","Violeta"];
 const PIE_COLORS = ["#111","#16a34a","#2563eb","#d97706","#dc2626","#7c3aed","#0891b2","#ea580c"];
 
@@ -488,10 +603,10 @@ function FieldRow({ label, children, half }) {
   );
 }
 
-function StatCard({ icon, bg, label, value, badge, textColor }) {
+function StatCard({ icon, bg, label, value, badge, textColor, badgeBg, badgeColor }) {
   return (
     <div style={{ ...G.card(), position:"relative", minWidth:0 }}>
-      {badge && <span style={{ position:"absolute", top:14, right:14, background:"#f0fdf4", color:"#16a34a", fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20, border:"1px solid #bbf7d0" }}>{badge}</span>}
+      {badge && <span style={{ position:"absolute", top:14, right:14, background:badgeBg||"#f0fdf4", color:badgeColor||"#16a34a", fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20, border:`1px solid ${badgeColor||"#bbf7d0"}33` }}>{badge}</span>}
       <div style={{ width:38, height:38, borderRadius:10, background:bg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:19, marginBottom:14 }}>{icon}</div>
       <div style={{ fontSize:26, fontWeight:700, color:textColor||"#111" }}>{value}</div>
       <div style={{ fontSize:13, color:"#999", marginTop:4 }}>{label}</div>
@@ -502,6 +617,673 @@ function StatCard({ icon, bg, label, value, badge, textColor }) {
 // ═══════════════════════════════════════════════════════════
 // MODALS
 // ═══════════════════════════════════════════════════════════
+
+// Secciones que se le pueden habilitar a un empleado
+const SECCIONES_PERMISOS = [
+  { id:"venta", label:"Nueva Venta", desc:"Cobrar y registrar ventas" },
+  { id:"dashboard", label:"Dashboard", desc:"Resumen del día y del mes" },
+  { id:"inventario", label:"Productos e Inventario", desc:"Ver y editar productos y stock" },
+  { id:"historial", label:"Historial", desc:"Ver todas las ventas anteriores" },
+  { id:"estadisticas", label:"Estadísticas", desc:"Gráficos y análisis de ventas" },
+  { id:"proyeccion", label:"Proyección", desc:"Metas y proyección del mes" },
+  { id:"finanzas", label:"Finanzas", desc:"Ingresos, gastos y ganancias" },
+  { id:"calculadora", label:"Calculadora de precios", desc:"Calcular precios de venta" },
+  { id:"remitos", label:"Remitos", desc:"Remitos y proveedores" },
+];
+
+function ConsolidadoPage({ ctx }) {
+  const { config, sucursales } = ctx;
+  const [datos, setDatos] = useState(null);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [periodo, setPeriodo] = useState("mes");
+
+  useEffect(() => {
+    const cargar = async () => {
+      setCargando(true);
+      try {
+        const hoy = todayStr();
+        const desde = periodo === "hoy" ? hoy
+          : periodo === "semana" ? subDays(hoy, 7)
+          : periodo === "mes" ? hoy.slice(0,8) + "01"
+          : subDays(hoy, 365);
+
+        const ids = sucursales.map(s => s.id);
+        // Las políticas de seguridad ya limitan a los negocios propios,
+        // pero filtramos igual para no traer de más.
+        const { data: ventas, error: errV } = await _sb
+          .from("ventas")
+          .select("negocio_id, fecha, total, anulada, items")
+          .in("negocio_id", ids)
+          .gte("fecha", desde)
+          .lte("fecha", hoy);
+        if (errV) throw new Error(errV.message);
+
+        const { data: productos, error: errP } = await _sb
+          .from("productos")
+          .select("negocio_id, stock, costo, precio")
+          .in("negocio_id", ids);
+        if (errP) throw new Error(errP.message);
+
+        const porSucursal = {};
+        sucursales.forEach(s => {
+          porSucursal[s.id] = {
+            id: s.id, nombre: s.nombre,
+            ingresos: 0, ventas: 0, unidades: 0,
+            productos: 0, valorStock: 0,
+          };
+        });
+
+        (ventas || []).forEach(v => {
+          if (v.anulada) return;
+          const b = porSucursal[v.negocio_id];
+          if (!b) return;
+          b.ingresos += parseFloat(v.total) || 0;
+          b.ventas += 1;
+          b.unidades += Array.isArray(v.items) ? v.items.reduce((a,i) => a + (i.cantidad||0), 0) : 0;
+        });
+
+        (productos || []).forEach(p => {
+          const b = porSucursal[p.negocio_id];
+          if (!b) return;
+          b.productos += 1;
+          b.valorStock += (parseFloat(p.costo)||0) * (p.stock||0);
+        });
+
+        const lista = Object.values(porSucursal).sort((a,b) => b.ingresos - a.ingresos);
+        setDatos({
+          sucursales: lista,
+          totalIngresos: lista.reduce((a,s) => a+s.ingresos, 0),
+          totalVentas: lista.reduce((a,s) => a+s.ventas, 0),
+          totalUnidades: lista.reduce((a,s) => a+s.unidades, 0),
+          totalStock: lista.reduce((a,s) => a+s.valorStock, 0),
+        });
+        setError("");
+      } catch (e) {
+        setError(e.message);
+      }
+      setCargando(false);
+    };
+    if (sucursales.length > 0) cargar();
+  }, [periodo, sucursales]);
+
+  const PERIODOS = [["hoy","Hoy"],["semana","7 días"],["mes","Este mes"],["anio","Último año"]];
+
+  return (
+    <div className="app-page-pad" style={G.page}>
+      <div style={{ marginBottom:20 }}>
+        <h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Todos los locales</h1>
+        <p style={{ margin:0, color:"#888", fontSize:14 }}>Comparativa entre tus {sucursales.length} sucursales</p>
+      </div>
+
+      <div style={{ display:"flex", gap:8, marginBottom:22, flexWrap:"wrap" }}>
+        {PERIODOS.map(([id,l]) => (
+          <button key={id} onClick={() => setPeriodo(id)} style={{
+            background: periodo===id ? "#111" : "#fff", color: periodo===id ? "#fff" : "#666",
+            border:"1px solid #e5e7eb", borderRadius:20, padding:"7px 16px",
+            fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit",
+          }}>{l}</button>
+        ))}
+      </div>
+
+      {error && (
+        <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:10, padding:"12px 16px", marginBottom:18, fontSize:13.5, color:"#dc2626" }}>
+          {error}
+        </div>
+      )}
+
+      {cargando || !datos ? (
+        <div style={{ textAlign:"center", padding:"40px 0", color:"#aaa" }}>Sumando los números de todos los locales...</div>
+      ) : (
+        <>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:24 }}>
+            <StatCard icon={<DollarSign size={19}/>} bg="#dcfce7" label="Facturación total" value={fmtMoney(datos.totalIngresos, config.moneda)} />
+            <StatCard icon={<ShoppingBag size={19}/>} bg="#dbeafe" label="Ventas totales" value={datos.totalVentas} />
+            <StatCard icon={<Package size={19}/>} bg="#ede9fe" label="Unidades vendidas" value={datos.totalUnidades} />
+            <StatCard icon={<TrendingUp size={19}/>} bg="#fef3c7" label="Invertido en stock" value={fmtMoney(datos.totalStock, config.moneda)} />
+          </div>
+
+          <div style={{ ...G.card(), marginBottom:20 }}>
+            <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Facturación por local</h3>
+            <p style={{ margin:"0 0 18px", fontSize:12.5, color:"#999" }}>Comparativa del período elegido</p>
+            {datos.totalIngresos === 0 ? (
+              <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>No hay ventas en este período.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={Math.max(180, datos.sucursales.length * 52)}>
+                <BarChart data={datos.sucursales.map(s => ({ label:s.nombre, total:Math.round(s.ingresos) }))} layout="vertical" margin={{ top:4, right:24, left:4, bottom:4 }}>
+                  <XAxis type="number" tick={{ fontSize:11, fill:"#999" }} axisLine={false} tickLine={false} tickFormatter={v => `$${v>=1000000?(v/1000000).toFixed(1)+"M":v>=1000?(v/1000).toFixed(0)+"k":v}`}/>
+                  <YAxis type="category" dataKey="label" tick={{ fontSize:12.5, fill:"#333" }} axisLine={false} tickLine={false} width={130}/>
+                  <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [fmtMoney(v, config.moneda), "facturado"]}/>
+                  <Bar dataKey="total" fill="#9238FF" radius={[0,8,8,0]} maxBarSize={30}/>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          <div style={{ ...G.card() }}>
+            <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Detalle por local</h3>
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13.5 }}>
+                <thead>
+                  <tr style={{ background:"#f9fafb", borderBottom:"1px solid #e5e7eb" }}>
+                    {["Local","Facturado","Ventas","Unidades","Ticket prom.","Productos","Invertido"].map(h => (
+                      <th key={h} style={{ padding:"11px 14px", textAlign:"left", fontWeight:600, color:"#666", whiteSpace:"nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {datos.sucursales.map(s => {
+                    const pct = datos.totalIngresos > 0 ? (s.ingresos/datos.totalIngresos)*100 : 0;
+                    return (
+                      <tr key={s.id} style={{ borderBottom:"1px solid #f3f4f6" }}>
+                        <td style={{ padding:"11px 14px" }}>
+                          <div style={{ fontWeight:600 }}>{s.nombre}</div>
+                          <div style={{ fontSize:11.5, color:"#aaa" }}>{pct.toFixed(0)}% del total</div>
+                        </td>
+                        <td style={{ padding:"11px 14px", fontWeight:700, color:"#16a34a", whiteSpace:"nowrap" }}>{fmtMoney(s.ingresos, config.moneda)}</td>
+                        <td style={{ padding:"11px 14px" }}>{s.ventas}</td>
+                        <td style={{ padding:"11px 14px" }}>{s.unidades}</td>
+                        <td style={{ padding:"11px 14px", whiteSpace:"nowrap" }}>{fmtMoney(s.ventas > 0 ? s.ingresos/s.ventas : 0, config.moneda)}</td>
+                        <td style={{ padding:"11px 14px" }}>{s.productos}</td>
+                        <td style={{ padding:"11px 14px", whiteSpace:"nowrap", color:"#666" }}>{fmtMoney(s.valorStock, config.moneda)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p style={{ margin:"14px 0 0", fontSize:12, color:"#aaa", lineHeight:1.5 }}>
+              El stock no se suma entre locales porque cada sucursal tiene su propio catálogo de productos.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function EquipoPage({ ctx }) {
+  const { config } = ctx;
+  const [equipo, setEquipo] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [showNuevo, setShowNuevo] = useState(false);
+  const [editando, setEditando] = useState(null);
+  const [procesando, setProcesando] = useState(false);
+
+  const llamar = async (body) => {
+    const session = await sb.getSession();
+    const resp = await fetch(`${SUPABASE_FUNC_URL}/equipo`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, negocio_id: sb._negocioId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "Algo salió mal");
+    return data;
+  };
+
+  const cargar = async () => {
+    try {
+      const data = await llamar({ accion: "listar" });
+      setEquipo(data.equipo || []);
+      setError("");
+    } catch (e) { setError(e.message); }
+    setCargando(false);
+  };
+
+  useEffect(() => { cargar(); }, []);
+
+  const eliminar = async (m) => {
+    if (!confirm(`¿Sacar a ${m.nombre || m.email} del equipo?\n\nNo va a poder entrar más a este negocio.`)) return;
+    setProcesando(true);
+    try { await llamar({ accion: "eliminar", miembro_id: m.id }); await cargar(); }
+    catch (e) { alert("Error: " + e.message); }
+    setProcesando(false);
+  };
+
+  return (
+    <div className="app-page-pad" style={G.page}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:14, marginBottom:24 }}>
+        <div>
+          <h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Equipo</h1>
+          <p style={{ margin:0, color:"#888", fontSize:14 }}>Cuentas con acceso a {config.nombre}</p>
+        </div>
+        <button onClick={() => setShowNuevo(true)} style={{ ...G.btn("dark") }}>
+          <Plus size={15}/> Agregar persona
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:10, padding:"12px 16px", marginBottom:18, fontSize:13.5, color:"#dc2626" }}>
+          {error}
+        </div>
+      )}
+
+      {cargando ? (
+        <div style={{ textAlign:"center", padding:"40px 0", color:"#aaa" }}>Cargando equipo...</div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          {equipo.map(m => (
+            <div key={m.id} style={{ ...G.card(), display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:14, flexWrap:"wrap" }}>
+              <div style={{ minWidth:0, flex:1 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:5, flexWrap:"wrap" }}>
+                  <span style={{ fontWeight:700, fontSize:15 }}>{m.nombre || m.email || "Sin nombre"}</span>
+                  <span style={{
+                    background: m.esDueno ? "#f4ecff" : "#f3f4f6",
+                    color: m.esDueno ? "#7c3aed" : "#6b7280",
+                    fontSize:11, fontWeight:700, padding:"2px 9px", borderRadius:20,
+                  }}>{m.esDueno ? "Dueño" : "Empleado"}</span>
+                </div>
+                <div style={{ fontSize:13, color:"#888", marginBottom:8 }}>{m.email}</div>
+                {!m.esDueno && (
+                  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                    {(m.permisos || []).map(p => {
+                      const sec = SECCIONES_PERMISOS.find(s => s.id === p);
+                      return (
+                        <span key={p} style={{ background:"#f9fafb", border:"1px solid #e5e7eb", borderRadius:20, padding:"3px 10px", fontSize:11.5, color:"#555" }}>
+                          {sec?.label || p}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {m.esDueno && <div style={{ fontSize:12.5, color:"#aaa" }}>Acceso completo a todas las secciones</div>}
+              </div>
+              {!m.esDueno && (
+                <div style={{ display:"flex", gap:7, flexShrink:0 }}>
+                  <button onClick={() => setEditando(m)} disabled={procesando}
+                    style={{ background:"#f3f4f6", border:"none", borderRadius:7, padding:"8px 13px", fontSize:12.5, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                    Permisos
+                  </button>
+                  <button onClick={() => eliminar(m)} disabled={procesando}
+                    style={{ background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:7, padding:"8px 13px", fontSize:12.5, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                    Sacar
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showNuevo && (
+        <MiembroModal
+          onGuardar={async (datos) => { const r = await llamar({ accion:"crear", ...datos }); await cargar(); return r; }}
+          onClose={() => setShowNuevo(false)}
+        />
+      )}
+      {editando && (
+        <MiembroModal
+          miembro={editando}
+          onGuardar={async (datos) => { await llamar({ accion:"actualizar", miembro_id: editando.id, ...datos }); await cargar(); }}
+          onClose={() => setEditando(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function MiembroModal({ miembro, onGuardar, onClose }) {
+  const esEdicion = !!miembro;
+  const [nombre, setNombre] = useState(miembro?.nombre || "");
+  const [email, setEmail] = useState(miembro?.email || "");
+  const [password, setPassword] = useState("");
+  const [permisos, setPermisos] = useState(miembro?.permisos || ["venta"]);
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState("");
+  const [yaExistia, setYaExistia] = useState(false);
+
+  const toggle = (id) => {
+    setPermisos(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
+  };
+
+  const guardar = async () => {
+    if (guardando) return;
+    if (!esEdicion && (!email.trim() || password.length < 6)) {
+      setError("Completá el email y una contraseña de al menos 6 caracteres");
+      return;
+    }
+    if (permisos.length === 0) { setError("Elegí al menos una sección"); return; }
+    setGuardando(true);
+    setError("");
+    try {
+      const res = await onGuardar(esEdicion ? { permisos, nombre } : { email, password, nombre, permisos });
+      // Si el email ya tenía cuenta en MiLocal, NO le cambiamos la contraseña
+      // (sería un riesgo). Hay que avisarlo o la persona no va a poder entrar.
+      if (!esEdicion && res?.ya_existia) {
+        setYaExistia(true);
+        setGuardando(false);
+        return;
+      }
+      onClose();
+    } catch (e) {
+      setError(e.message);
+      setGuardando(false);
+    }
+  };
+
+  // Aviso cuando el email ya tenía cuenta
+  if (yaExistia) {
+    return (
+      <Modal title="Ya tenía cuenta en MiLocal" subtitle="La agregamos a tu equipo" onClose={onClose} width={460}>
+        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"16px 18px", marginBottom:18, fontSize:13.5, color:"#92400e", lineHeight:1.6 }}>
+          <b>{email}</b> ya estaba registrado en MiLocal.
+          <br/><br/>
+          Lo sumamos a tu equipo con los permisos que elegiste, pero <b>tiene que entrar con la contraseña que ya usaba</b> — no con la que acabás de escribir.
+          <br/><br/>
+          Por seguridad no podemos cambiarle la contraseña a una cuenta que ya existe.
+        </div>
+        <div style={{ fontSize:13, color:"#666", marginBottom:18, lineHeight:1.55 }}>
+          Si no recuerda su contraseña, puede recuperarla desde <b>"¿Olvidaste tu contraseña?"</b> en la pantalla de inicio de sesión.
+        </div>
+        <button onClick={onClose} style={{ ...G.btn("dark"), width:"100%", justifyContent:"center" }}>Entendido</button>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal
+      title={esEdicion ? `Permisos de ${miembro.nombre || miembro.email}` : "Agregar persona al equipo"}
+      subtitle={esEdicion ? "Elegí qué secciones puede ver" : "Creale una cuenta y definí a qué accede"}
+      onClose={onClose}
+      width={520}
+    >
+      {!esEdicion && (
+        <>
+          <FieldRow label="Nombre">
+            <input style={G.inp()} value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: Martín (empleado)" />
+          </FieldRow>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:14 }}>
+            <FieldRow label="Email *">
+              <input style={G.inp()} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="empleado@email.com" />
+            </FieldRow>
+            <FieldRow label="Contraseña *">
+              <input style={G.inp()} type="text" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" />
+            </FieldRow>
+          </div>
+          <div style={{ background:"#f4ecff", borderRadius:9, padding:"10px 14px", marginBottom:18, fontSize:12.5, color:"#6b21a8", lineHeight:1.5 }}>
+            💡 Pasale vos estos datos para que pueda entrar. Después puede cambiar la contraseña desde su cuenta.
+          </div>
+        </>
+      )}
+
+      <label style={{ ...G.label, marginBottom:10, display:"block" }}>¿Qué puede ver y hacer?</label>
+      <div style={{ display:"flex", flexDirection:"column", gap:7, marginBottom:18, maxHeight:300, overflowY:"auto" }}>
+        {SECCIONES_PERMISOS.map(s => {
+          const activo = permisos.includes(s.id);
+          return (
+            <label key={s.id} onClick={() => toggle(s.id)} style={{
+              display:"flex", alignItems:"flex-start", gap:11, cursor:"pointer",
+              border: activo ? "2px solid #9238FF" : "1px solid #e5e7eb",
+              background: activo ? "#f9f5ff" : "#fff",
+              borderRadius:10, padding:"11px 14px",
+            }}>
+              <div style={{
+                width:19, height:19, borderRadius:5, flexShrink:0, marginTop:1,
+                background: activo ? "#9238FF" : "#fff",
+                border: activo ? "none" : "2px solid #d1d5db",
+                display:"flex", alignItems:"center", justifyContent:"center",
+              }}>
+                {activo && <CheckCircle2 size={13} color="#fff"/>}
+              </div>
+              <div>
+                <div style={{ fontSize:13.5, fontWeight:600, color:"#111" }}>{s.label}</div>
+                <div style={{ fontSize:12, color:"#999", marginTop:1 }}>{s.desc}</div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+
+      <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:9, padding:"10px 14px", marginBottom:18, fontSize:12.5, color:"#92400e", lineHeight:1.5 }}>
+        🔒 Suscripción, Configuración y Equipo son siempre exclusivas del dueño.
+      </div>
+
+      {error && (
+        <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:9, padding:"10px 14px", marginBottom:14, fontSize:13, color:"#dc2626" }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={onClose} style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }}>Cancelar</button>
+        <button onClick={guardar} disabled={guardando} style={{ ...G.btn(guardando ? "light" : "dark"), flex:1, justifyContent:"center" }}>
+          {guardando ? "Guardando..." : esEdicion ? "Guardar permisos" : "Crear cuenta"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function AccionSucursalModal({ tipo, sucursal, esActual, onListo, onClose }) {
+  const esEliminar = tipo === "eliminar";
+  const [texto, setTexto] = useState("");
+  const [procesando, setProcesando] = useState(false);
+  const [error, setError] = useState("");
+
+  const ejecutar = async () => {
+    if (procesando) return;
+    if (esEliminar && texto.trim() !== sucursal.nombre) return;
+    setProcesando(true);
+    setError("");
+    try {
+      const session = await sb.getSession();
+      const resp = await fetch(`${SUPABASE_FUNC_URL}/sucursales`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: tipo, negocio_id: sucursal.id }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Algo salió mal");
+      await onListo();
+    } catch (e) {
+      setError(e.message);
+      setProcesando(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={esEliminar ? `Eliminar ${sucursal.nombre}` : `Cancelar el pago de ${sucursal.nombre}`}
+      subtitle={esEliminar ? "Esta acción no se puede deshacer" : "Dejás de pagar la mensualidad de esta sucursal"}
+      onClose={onClose}
+      width={450}
+    >
+      {esEliminar ? (
+        <>
+          <div style={{ background:"#fee2e2", border:"2px solid #fca5a5", borderRadius:11, padding:"16px 18px", marginBottom:18, fontSize:13.5, color:"#991b1b", lineHeight:1.6 }}>
+            <b>Se borra todo lo de esta sucursal:</b> sus productos, su historial de ventas, su caja, sus gastos y remitos.
+            <br/><br/>
+            También se cancela su mensualidad en Mercado Pago.
+            <br/><br/>
+            <b>No hay forma de recuperarlo.</b>
+          </div>
+          {esActual && (
+            <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"11px 15px", marginBottom:16, fontSize:12.5, color:"#92400e" }}>
+              Estás parado en esta sucursal. Al eliminarla, te vamos a mover a otra automáticamente.
+            </div>
+          )}
+          <p style={{ margin:"0 0 8px", fontSize:13, color:"#666" }}>
+            Para confirmar, escribí <b>{sucursal.nombre}</b>:
+          </p>
+          <input
+            value={texto}
+            onChange={e => setTexto(e.target.value)}
+            placeholder={sucursal.nombre}
+            autoFocus
+            style={{ ...G.inp(), marginBottom:18 }}
+          />
+        </>
+      ) : (
+        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:11, padding:"16px 18px", marginBottom:18, fontSize:13.5, color:"#92400e", lineHeight:1.6 }}>
+          Se cancela el débito automático de esta sucursal en Mercado Pago.
+          <br/><br/>
+          <b>Tus datos no se borran</b> — productos, ventas e historial quedan intactos. Pero vas a perder el acceso a esta sucursal hasta que vuelvas a suscribirte.
+          <br/><br/>
+          Las otras sucursales no se ven afectadas.
+        </div>
+      )}
+
+      {error && (
+        <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:10, padding:"10px 15px", marginBottom:14, fontSize:13, color:"#dc2626" }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={onClose} style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }}>Volver</button>
+        <button
+          onClick={ejecutar}
+          disabled={procesando || (esEliminar && texto.trim() !== sucursal.nombre)}
+          style={{
+            flex:1, justifyContent:"center", border:"none", borderRadius:8, padding:"12px",
+            fontSize:14, fontWeight:700, fontFamily:"inherit",
+            background: (esEliminar && texto.trim() !== sucursal.nombre) ? "#fca5a5" : esEliminar ? "#dc2626" : "#d97706",
+            color:"#fff",
+            cursor: procesando ? "wait" : (esEliminar && texto.trim() !== sucursal.nombre) ? "not-allowed" : "pointer",
+          }}
+        >
+          {procesando ? "Procesando..." : esEliminar ? "Eliminar sucursal" : "Cancelar el pago"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function NuevaSucursalModal({ onCrear, onClose }) {
+  const [nombre, setNombre] = useState("");
+  const [rubro, setRubro] = useState("");
+  const [creando, setCreando] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleCrear = async () => {
+    if (!nombre.trim() || creando) return;
+    setCreando(true);
+    setError("");
+    try {
+      await onCrear(nombre.trim(), rubro);
+      onClose();
+    } catch (e) {
+      setError(e.message || "No se pudo crear la sucursal");
+      setCreando(false);
+    }
+  };
+
+  return (
+    <Modal title="Agregar sucursal" subtitle="Cada sucursal tiene su propio stock, caja y ventas" onClose={onClose} width={450}>
+      <FieldRow label="Nombre de la sucursal *">
+        <input
+          style={G.inp()}
+          value={nombre}
+          onChange={e => setNombre(e.target.value)}
+          placeholder="Ej: Sucursal Centro"
+          autoFocus
+          onKeyDown={e => { if (e.key === "Enter") handleCrear(); }}
+        />
+      </FieldRow>
+      <FieldRow label="Rubro">
+        <select style={G.inp()} value={rubro} onChange={e => setRubro(e.target.value)}>
+          <option value="">Elegí un rubro</option>
+          {RUBROS.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </FieldRow>
+
+      <div style={{ background:"#f4ecff", border:"2px solid #ddd0fb", borderRadius:12, padding:"16px 18px", marginBottom:16 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:"#6b21a8", marginBottom:8 }}>Cómo se cobra</div>
+        <div style={{ fontSize:26, fontWeight:800, color:"#9238FF", marginBottom:6 }}>
+          {fmtMoney(30000, "$")}<span style={{ fontSize:14, fontWeight:500, color:"#7c3aed" }}> /mes</span>
+        </div>
+        <div style={{ fontSize:12.5, color:"#6b21a8", lineHeight:1.55 }}>
+          Esta sucursal se cobra aparte, con su propia suscripción. Después de crearla vas a poder activarla desde <b>Suscripción</b>.
+          <br/>Sin prueba gratis: se paga desde el primer día.
+        </div>
+      </div>
+
+      <div style={{ background:"#f9fafb", borderRadius:10, padding:"12px 16px", marginBottom:18, fontSize:12.5, color:"#666", lineHeight:1.5 }}>
+        Arranca vacía: sus productos, stock y caja son independientes del resto.
+      </div>
+
+      {error && (
+        <div style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:10, padding:"10px 16px", marginBottom:14, fontSize:13, color:"#dc2626" }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={onClose} style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }}>Cancelar</button>
+        <button
+          onClick={handleCrear}
+          disabled={!nombre.trim() || creando}
+          style={{ ...G.btn(nombre.trim() && !creando ? "dark" : "light"), flex:1, justifyContent:"center" }}
+        >
+          {creando ? "Creando..." : "Crear sucursal"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function SugerenciaModal({ onSave, onClose }) {
+  const [texto, setTexto] = useState("");
+  const [categoria, setCategoria] = useState("Mejora");
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+
+  const handleEnviar = async () => {
+    if (!texto.trim() || enviando) return;
+    setEnviando(true);
+    try {
+      await onSave(texto.trim(), categoria);
+      setEnviado(true);
+      setTimeout(onClose, 1500);
+    } catch (e) {
+      alert("No se pudo enviar, intentá de nuevo.");
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <Modal title="💡 Sugerir una mejora" subtitle="Contanos qué te gustaría que agreguemos o mejoremos en MiLocal" onClose={onClose} width={420}>
+      {enviado ? (
+        <div style={{ textAlign:"center", padding:"20px 0" }}>
+          <div style={{ fontSize:36, marginBottom:10 }}>🙌</div>
+          <div style={{ fontWeight:700, fontSize:15 }}>¡Gracias por tu idea!</div>
+          <div style={{ fontSize:13, color:"#888", marginTop:4 }}>La vamos a tener en cuenta.</div>
+        </div>
+      ) : (
+        <>
+          <div style={{ marginBottom:14 }}>
+            <label style={G.label}>Tipo</label>
+            <select style={G.inp()} value={categoria} onChange={e => setCategoria(e.target.value)}>
+              <option value="Mejora">Mejora a algo existente</option>
+              <option value="Nueva función">Idea de función nueva</option>
+              <option value="Bug">Encontré un error</option>
+              <option value="Otro">Otro</option>
+            </select>
+          </div>
+          <div style={{ marginBottom:18 }}>
+            <label style={G.label}>Tu sugerencia</label>
+            <textarea
+              style={{ ...G.inp(), minHeight:110, resize:"vertical", fontFamily:"inherit" }}
+              placeholder="Ej: Me gustaría poder..."
+              value={texto}
+              onChange={e => setTexto(e.target.value)}
+              autoFocus
+            />
+          </div>
+          <button
+            onClick={handleEnviar}
+            disabled={!texto.trim() || enviando}
+            style={{ ...G.btn(texto.trim() && !enviando ? "dark" : "light"), width:"100%", justifyContent:"center", padding:"12px" }}
+          >
+            {enviando ? "Enviando..." : "Enviar sugerencia"}
+          </button>
+        </>
+      )}
+    </Modal>
+  );
+}
 
 function AbrirCajaModal({ setCaja, saveCaja, onClose }) {
   const [monto, setMonto] = useState("");
@@ -538,7 +1320,8 @@ function CerrarCajaModal({ caja, sales, config, setCaja, saveCaja, onClose }) {
   const { moneda } = config;
   const hoy = todayStr();
   const ahora = new Date().toLocaleTimeString("es-AR", { hour:"2-digit", minute:"2-digit" });
-  const ventasHoy = sales.filter(s => !s.anulada && s.fecha === hoy);
+  // Las ventas web no pasan por la caja del local
+  const ventasHoy = sales.filter(s => !s.anulada && s.fecha === hoy && s.canal !== "web");
   const totalGen  = ventasHoy.reduce((a, s) => a + s.total, 0);
   const [cerrando, setCerrando] = useState(false);
 
@@ -713,7 +1496,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
       const llevaItems = lleva.filter(i => i.id === p.id);
       if (!devItems.length && !llevaItems.length) return p;
       let upd = { ...p };
-      if (esModa && upd.stockPorTalle) {
+      if (esModa && upd.stockPorTalle && Object.keys(upd.stockPorTalle).length > 0) {
         const spt = { ...upd.stockPorTalle };
         devItems.forEach(it => { if (it.talle) spt[it.talle] = (spt[it.talle]||0) + it.cantidad; });
         llevaItems.forEach(it => { if (it.talle) spt[it.talle] = Math.max(0, (spt[it.talle]||0) - it.cantidad); });
@@ -789,7 +1572,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
     const filtrados = products
       .filter(p => {
         if (soloConStock) {
-          const tieneStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0;
+          const tieneStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0;
           if (!tieneStock) return false;
         }
         return !search || p.nombre.toLowerCase().includes(search.toLowerCase()) || (p.sku||"").toLowerCase().includes(search.toLowerCase());
@@ -812,7 +1595,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
             {filtrados.length > 0 ? (
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, maxHeight:320, overflowY:"auto" }}>
                 {filtrados.map(p => {
-                  const totalStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
+                  const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
                   const inList = list.filter(i => i.id === p.id).reduce((a,i)=>a+i.cantidad,0);
                   return (
                     <div key={p.id} onClick={() => handleSelectProd(p, side)}
@@ -962,8 +1745,23 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
     }
     if (!base.talleCustom) base.talleCustom = "";
     if (!base.colorCustom) base.colorCustom = "";
+    // Stock por talle y color: separamos la clave "M / Negro" en talle base + color
+    base.stockColor = {};
+    if (esModa && esCombinado(base)) {
+      const bases = [];
+      base.talles.forEach(t => { const x = colorDeVariante(t, base.colores); const b = x.base || "Único"; if (!bases.includes(b)) bases.push(b); });
+      base.stockColor = { ...base.stockPorTalle };
+      base.talles = bases;
+      base.stockPorTalle = Object.fromEntries(bases.map(b => [b, 0]));
+    } else if (esModa && base.colores.length > 0) {
+      // Producto viejo con colores sin stock por color: arrancamos con todo en el primer color
+      base.repartirColores = true;
+      (base.talles.length ? base.talles : ["Único"]).forEach(t => { base.stockColor[claveVar(t, base.colores[0])] = base.talles.length ? (base.stockPorTalle[t] || 0) : (base.stock || 0); });
+      if (!base.talles.length) { base.talles = ["Único"]; base.stockPorTalle = { "Único": 0 }; }
+    }
     return base;
   });
+  const [catNueva, setCatNueva] = useState(false);
 
   const u = (k, v) => setF(p => ({ ...p, [k]:v }));
   const [tallePreset, setTallePreset] = useState("Ropa — XS al XXL");
@@ -977,7 +1775,13 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
     setF(p => ({ ...p, talles: newTalles, stockPorTalle: newSPT }));
   };
   const setTalleStock = (t, val) => setF(p => ({ ...p, stockPorTalle: { ...(p.stockPorTalle||{}), [t]: Math.max(0, +val||0) } }));
-  const toggleColor = (c) => u("colores", (f.colores||[]).includes(c) ? (f.colores||[]).filter(x => x !== c) : [...(f.colores||[]), c]);
+  const toggleColor = (c) => setF(p => {
+    const colores = (p.colores||[]).includes(c) ? (p.colores||[]).filter(x => x !== c) : [...(p.colores||[]), c];
+    if (colores.length || !esModa) return { ...p, colores };
+    // Se sacó el último color: el stock vuelve a quedar sólo por talle (sumando lo que había en el color)
+    const spt = Object.fromEntries((p.talles||[]).map(t => [t, +(p.stockColor||{})[claveVar(t, c)] || 0]));
+    return { ...p, colores, stockPorTalle: spt };
+  });
   const addTalleCustom = () => {
     const t = (f.talleCustom||"").trim();
     if (t && !(f.talles||[]).includes(t)) {
@@ -994,7 +1798,13 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
     setTallePreset(preset);
     setF(p => ({ ...p, talles: newTalles, stockPorTalle: newSPT }));
   };
-  const totalStockTalles = esModa
+  const porColor = esModa && tieneColores && (f.colores || []).length > 0;
+  const filasColor = porColor ? ((f.talles || []).length ? f.talles : ["Único"]) : [];
+  const clavesColor = porColor ? filasColor.flatMap(t => f.colores.map(c => claveVar(t, c))) : [];
+  const setStockColor = (k, val) => setF(p => ({ ...p, stockColor: { ...(p.stockColor || {}), [k]: Math.max(0, +val || 0) } }));
+  const totalStockTalles = porColor
+    ? clavesColor.reduce((a, k) => a + (+(f.stockColor || {})[k] || 0), 0)
+    : esModa
     ? Object.values(f.stockPorTalle || {}).reduce((a, v) => a + (+v||0), 0)
     : +f.stock || 0;
 
@@ -1003,7 +1813,13 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
     if (!f.precio) { setError("El precio es requerido"); return; }
     setError("");
     const stockFinal = esModa ? totalStockTalles : +f.stock || 0;
-    onSave({ ...f, id:prod?.id||uid(), precio:+f.precio, costo:+f.costo||0, stockMinimo:+f.stockMinimo||3, stock: stockFinal });
+    const { stockColor, repartirColores, ...resto } = f;
+    let variantes = {};
+    if (porColor) {
+      // Cada combinación talle × color es una variante con su stock (igual que en Tiendanube)
+      variantes = { talles: clavesColor, stockPorTalle: Object.fromEntries(clavesColor.map(k => [k, +(stockColor || {})[k] || 0])) };
+    }
+    onSave({ ...resto, ...variantes, id:prod?.id||uid(), precio:+f.precio, costo:+f.costo||0, stockMinimo:+f.stockMinimo||3, stock: stockFinal });
   };
 
   const coloresExistentes = Array.isArray(f.colores) ? f.colores : [];
@@ -1020,10 +1836,18 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
       </FieldRow>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
         <FieldRow label="Categoría">
-          <select style={G.inp()} value={f.categoria} onChange={e => u("categoria", e.target.value)}>
-            <option value="">Seleccionar</option>
-            {(cats || CATS_PROD_FALLBACK).map(c => <option key={c}>{c}</option>)}
-          </select>
+          {catNueva ? (
+            <div style={{ display:"flex", gap:6 }}>
+              <input style={{ ...G.inp(), flex:1 }} autoFocus value={f.categoria} onChange={e => u("categoria", e.target.value)} placeholder="Nombre de la categoría" />
+              <button type="button" style={G.btn("outline", { padding:"9px 10px" })} onClick={() => setCatNueva(false)}>OK</button>
+            </div>
+          ) : (
+            <select style={G.inp()} value={f.categoria} onChange={e => e.target.value === "__nueva" ? (u("categoria", ""), setCatNueva(true)) : u("categoria", e.target.value)}>
+              <option value="">Seleccionar</option>
+              {[...new Set([...(cats || CATS_PROD_FALLBACK), ...(f.categoria ? [f.categoria] : [])])].map(c => <option key={c}>{c}</option>)}
+              <option value="__nueva">+ Nueva categoría…</option>
+            </select>
+          )}
         </FieldRow>
         <FieldRow label="SKU / Código">
           <input style={G.inp()} value={f.sku} onChange={e => u("sku", e.target.value)} placeholder="VES-001" />
@@ -1154,8 +1978,20 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
           <select style={{ ...G.inp(), marginBottom:12 }} value={tallePreset} onChange={e => applyPreset(e.target.value)}>
             {Object.keys(TALLES_PRESET).map(k => <option key={k}>{k}</option>)}
           </select>
+          {porColor ? (
+            <div style={{ fontSize:12, color:"#666", marginBottom:8 }}>Elegí los talles acá y los colores abajo: el stock se carga por cada combinación, como en Tiendanube.</div>
+          ) : null}
+          {porColor && (
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:10 }}>
+              {(f.talles||[]).map(t => (
+                <span key={t} style={{ display:"inline-flex", alignItems:"center", gap:6, border:"1.5px solid #111", borderRadius:20, padding:"4px 10px", fontSize:12, fontWeight:700 }}>
+                  {t}<button onClick={() => toggleTalle(t)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:10, color:"#999", padding:0 }}>✕</button>
+                </span>
+              ))}
+            </div>
+          )}
           {/* Grilla de talles con input de stock */}
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:10 }}>
+          <div style={{ display: porColor ? "none" : "grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:10 }}>
             {(f.talles||[]).map(t => {
               const cnt = f.stockPorTalle?.[t] || 0;
               return (
@@ -1193,6 +2029,41 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
             <input style={{ ...G.inp(), flex:1 }} placeholder="Color personalizado..." value={f.colorCustom} onChange={e => u("colorCustom", e.target.value)} onKeyDown={e => e.key==="Enter" && addColorCustom()} />
             <button onClick={addColorCustom} style={G.btn("outline", { padding:"9px 14px" })}>+</button>
           </div>
+          {porColor && (
+            <div style={{ marginTop:14 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                <label style={G.label}>Stock por talle y color</label>
+                <span style={{ fontSize:12, color:"#16a34a", fontWeight:600 }}>Total: {totalStockTalles} uds</span>
+              </div>
+              {f.repartirColores && <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"8px 10px", fontSize:12, color:"#92400e", marginBottom:8 }}>Antes el stock no se separaba por color: lo pusimos todo en «{f.colores[0]}». Repartilo como corresponda.</div>}
+              <div style={{ overflowX:"auto", border:"1px solid var(--border)", borderRadius:10 }}>
+                <table style={{ borderCollapse:"collapse", width:"100%", fontSize:13 }}>
+                  <thead>
+                    <tr style={{ background:"var(--bg-card2)" }}>
+                      <th style={{ textAlign:"left", padding:"8px 10px", fontSize:12, color:"#666" }}>{filasColor.length === 1 && filasColor[0] === "Único" ? "" : "Talle"}</th>
+                      {f.colores.map(c => <th key={c} style={{ padding:"8px 6px", fontSize:12, color:"#444", whiteSpace:"nowrap" }}>{c}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filasColor.map(t => (
+                      <tr key={t} style={{ borderTop:"1px solid var(--border)" }}>
+                        <td style={{ padding:"6px 10px", fontWeight:700, whiteSpace:"nowrap" }}>{t === "Único" ? "Stock" : t}</td>
+                        {f.colores.map(c => {
+                          const k = claveVar(t, c), cnt = +(f.stockColor || {})[k] || 0;
+                          return (
+                            <td key={c} style={{ padding:"4px 6px" }}>
+                              <input type="number" min={0} value={cnt === 0 ? "" : cnt} placeholder="0" onChange={e => setStockColor(k, e.target.value)}
+                                style={{ width:"100%", minWidth:54, border:"1px solid #e5e7eb", borderRadius:6, padding:"6px 4px", fontSize:14, fontWeight:700, textAlign:"center", outline:"none", color: cnt===0?"#bbb":"#111" }} />
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1385,7 +2256,7 @@ function RemitoModal({ proveedores, products, setProducts, saveProducts, rubro, 
       const items = f.items.filter(i => i.id === p.id);
       if (!items.length) return p;
       let upd = { ...p };
-      if (esModa && upd.stockPorTalle) {
+      if (esModa && upd.stockPorTalle && Object.keys(upd.stockPorTalle).length > 0) {
         const spt = { ...upd.stockPorTalle };
         items.forEach(it => {
           if (it.talle) {
@@ -1485,7 +2356,7 @@ function RemitoModal({ proveedores, products, setProducts, saveProducts, rubro, 
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:12, maxHeight:340, overflowY:"auto" }}>
             {filtProd.map(p => {
               const tieneTalles = esModa && (p.talles||[]).length > 0;
-              const totalStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
+              const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
               const enRemito = f.items.filter(i => i.id === p.id).reduce((a,i)=>a+i.cantidad,0);
               return (
                 <div key={p.id} onClick={() => tieneTalles ? setProdPendiente(p) : addProdSimple(p)}
@@ -1680,7 +2551,7 @@ function TicketVentaModal({ venta, config, onClose }) {
         {/* Factura info si aplica */}
         {venta.factura?.estado === "emitida" && (
           <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:10, padding:"10px 14px", marginBottom:16, fontSize:12 }}>
-            <div style={{ fontWeight:700, color:"#16a34a", marginBottom:2 }}>✓ Factura {venta.factura.tipo} electrónica</div>
+            <div style={{ fontWeight:700, color:"#16a34a", marginBottom:2 }}>✓ Factura {venta.factura.tipo} electrónica{venta.factura.ambiente === "homo" ? " (PRUEBA — sin validez fiscal)" : ""}</div>
             <div style={{ color:"#555" }}>N° {venta.factura.numero} · CAE: {venta.factura.cae}</div>
           </div>
         )}
@@ -1730,7 +2601,9 @@ function VentaExitoModal({ venta, config, onClose }) {
   );
 }
 
-function DetalleVentaModal({ venta, moneda, config, onAnular, onClose, onVerComprobante }) {
+function DetalleVentaModal({ venta, moneda, config, onAnular, onClose, onVerComprobante, onVerNC }) {
+  const f = venta.factura;
+  const requiereNC = f?.estado === "emitida" && f.ambiente === "prod" && f.nc?.estado !== "emitida";
   const [verTicket, setVerTicket] = useState(false);
   if (verTicket) return <TicketVentaModal venta={venta} config={config} onClose={() => setVerTicket(false)} />;
   return (
@@ -1744,13 +2617,38 @@ function DetalleVentaModal({ venta, moneda, config, onAnular, onClose, onVerComp
         {venta.descuento > 0 && <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#dc2626", marginBottom:4 }}><span>Descuento</span><span>-{fmtMoney(venta.descuento, moneda)}</span></div>}
         <div style={{ display:"flex", justifyContent:"space-between", fontWeight:700, fontSize:16 }}><span>Total</span><span>{fmtMoney(venta.total, moneda)}</span></div>
       </div>
+      {venta.factura?.estado === "emitida" && (
+        <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:10, padding:"10px 14px", marginBottom:16, fontSize:12 }}>
+          <div style={{ fontWeight:700, color:"#15803d", marginBottom:2, display:"flex", gap:6, alignItems:"center" }}>✓ Factura {venta.factura.tipo} {venta.factura.numero}{venta.factura.ambiente === "homo" && <BadgePrueba/>}</div>
+          <div style={{ color:"#555" }}>CAE {venta.factura.cae}{venta.factura.receptor?.nombre ? ` · ${venta.factura.receptor.nombre}` : ""}</div>
+          {(venta.factura.observaciones||[]).length > 0 && (
+            <div style={{ color:"#6b7280", marginTop:6 }}>Observaciones de ARCA: {venta.factura.observaciones.map(o => o.mensaje).join(" · ")}</div>
+          )}
+          {venta.factura.nc?.estado === "emitida" && (
+            <div style={{ color:"#b91c1c", marginTop:6, fontWeight:600 }}>Anulada con Nota de Crédito {venta.factura.tipo} {venta.factura.nc.numero} · CAE {venta.factura.nc.cae}</div>
+          )}
+          {venta.factura.nc?.estado === "rechazada" && (
+            <div style={{ color:"#b91c1c", marginTop:6 }}>La nota de crédito fue rechazada: {venta.factura.nc.motivo}</div>
+          )}
+          {!venta.anulada && requiereNC && <div style={{ color:"#92400e", marginTop:6 }}>Para anular esta venta se emite una nota de crédito que cancela la factura en ARCA.</div>}
+        </div>
+      )}
+      {venta.factura?.estado === "rechazada" && (
+        <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"10px 14px", marginBottom:16, fontSize:12 }}>
+          <div style={{ fontWeight:700, color:"#b91c1c", marginBottom:2 }}>Factura rechazada por ARCA</div>
+          <div style={{ color:"#7f1d1d" }}>{venta.factura.motivo}</div>
+        </div>
+      )}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
         <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cerrar</button>
         <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={() => setVerTicket(true)}>🖨️ Ticket</button>
         {venta.factura?.estado === "emitida" && onVerComprobante && (
           <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onVerComprobante}>🏛️ Factura {venta.factura.tipo}</button>
         )}
-        {!venta.anulada && <button style={{ ...G.btn("red"), flex:1, justifyContent:"center" }} onClick={onAnular}>Anular</button>}
+        {venta.factura?.nc?.estado === "emitida" && onVerNC && (
+          <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onVerNC}>🧾 Nota de crédito</button>
+        )}
+        {!venta.anulada && <button style={{ ...G.btn("red"), flex:1, justifyContent:"center" }} onClick={onAnular}>{requiereNC ? "Anular con nota de crédito" : "Anular"}</button>}
       </div>
     </Modal>
   );
@@ -1832,6 +2730,7 @@ function DashboardPage({ ctx }) {
         {caja.abierta && <button style={G.btn("outline")} onClick={() => setShowCerrar(true)}><Lock size={14}/> Cerrar Caja</button>}
       </div>
       <CajaBanner caja={caja} onAbrir={() => setShowCaja(true)} />
+      <PendientesIntegraciones config={config} setPage={setPage} />
       {stockBajoCount > 0 && (
         <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:13 }}>
           <span style={{ display:"flex", alignItems:"center", gap:8, color:"#92400e" }}>
@@ -1847,11 +2746,11 @@ function DashboardPage({ ctx }) {
         <StatCard icon={<Package size={19}/>} bg="#dbeafe" label="Unidades en stock" value={totalStock} />
         <StatCard icon={<AlertTriangle size={19}/>} bg="#fef3c7" label="Stock bajo" value={stockBajoCount} textColor={stockBajoCount > 0 ? "#d97706" : "#111"} />
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20, marginBottom:20 }}>
+      <div className="dashboard-cards-2col" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20, marginBottom:20 }}>
         <div style={G.card()}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <h3 style={{ margin:0, fontSize:15, fontWeight:700 }}>Ventas recientes</h3>
-            <button onClick={() => setPage("historial")} style={{ background:"none", border:"none", color:"#666", fontSize:12, cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>Ver todas <ChevronRight size={13}/></button>
+            <button onClick={() => setPage("historial")} className="dc-link" style={{ background:"none", border:"none", color:"#666", fontSize:12, cursor:"pointer", display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>Ver todas <ChevronRight size={13}/></button>
           </div>
           {recientes.length === 0 ? (
             <div style={{ textAlign:"center", padding:"28px 0", color:"#bbb" }}>
@@ -1860,16 +2759,16 @@ function DashboardPage({ ctx }) {
               <button onClick={() => setPage("venta")} style={{ background:"none", border:"none", color:"#111", fontSize:13, fontWeight:700, cursor:"pointer", marginTop:4 }}>Registrar primera venta</button>
             </div>
           ) : recientes.map(s => (
-            <div key={s.id} style={{ display:"flex", justifyContent:"space-between", padding:"9px 0", borderBottom:"1px solid #f5f5f5" }}>
-              <div><div style={{ fontWeight:600, fontSize:13 }}>{s.cliente || "Cliente"}</div><div style={{ color:"#aaa", fontSize:11 }}>{fmtDate(s.fecha)} · {s.metodoPago}</div></div>
-              <div style={{ fontWeight:700, color:"#16a34a", fontSize:13 }}>{fmtMoney(s.total, config.moneda)}</div>
+            <div key={s.id} style={{ display:"flex", justifyContent:"space-between", padding:"9px 0", borderBottom:"1px solid #f5f5f5", gap:8 }}>
+              <div style={{ minWidth:0, overflow:"hidden" }}><div className="dc-row-title" style={{ fontWeight:600, fontSize:13, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.cliente || "Cliente"}</div><div className="dc-row-meta" style={{ color:"#aaa", fontSize:11, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtDate(s.fecha)} · {s.metodoPago}</div></div>
+              <div className="dc-row-amount" style={{ fontWeight:700, color:"#16a34a", fontSize:13, flexShrink:0, whiteSpace:"nowrap" }}>{fmtMoney(s.total, config.moneda)}</div>
             </div>
           ))}
         </div>
         <div style={G.card()}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <h3 style={{ margin:0, fontSize:15, fontWeight:700 }}>Alertas de stock</h3>
-            <button onClick={() => setPage("inventario")} style={{ background:"none", border:"none", color:"#666", fontSize:12, cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>Ver productos <ChevronRight size={13}/></button>
+            <button onClick={() => setPage("inventario")} className="dc-link" style={{ background:"none", border:"none", color:"#666", fontSize:12, cursor:"pointer", display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>Ver productos <ChevronRight size={13}/></button>
           </div>
           {alertas.length === 0 ? (
             <div style={{ textAlign:"center", padding:"28px 0", color:"#bbb" }}>
@@ -1878,38 +2777,38 @@ function DashboardPage({ ctx }) {
               <div style={{ fontSize:12, color:"#bbb", marginTop:2 }}>No hay productos con stock bajo</div>
             </div>
           ) : alertas.map(p => (
-            <div key={p.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 0", borderBottom:"1px solid #f5f5f5" }}>
-              <div style={{ fontWeight:500, fontSize:13 }}>{p.nombre}</div>
-              <StockBadge stock={p.stock} min={p.stockMinimo} />
+            <div key={p.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 0", borderBottom:"1px solid #f5f5f5", gap:8 }}>
+              <div className="dc-row-title" style={{ fontWeight:500, fontSize:13, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.nombre}</div>
+              <div style={{ flexShrink:0 }}><StockBadge stock={p.stock} min={p.stockMinimo} /></div>
             </div>
           ))}
         </div>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20 }}>
+      <div className="dashboard-cards-2col" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:20 }}>
         <div style={G.card()}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
             <h3 style={{ margin:0, fontSize:15, fontWeight:700, display:"flex", alignItems:"center", gap:6 }}><Flame size={15} color="#f97316"/>Productos Calientes</h3>
-            <span style={{ fontSize:12, color:"#aaa" }}>Últimos 15 días</span>
+            <span className="dc-label" style={{ fontSize:12, color:"#aaa", flexShrink:0 }}>Últimos 15 días</span>
           </div>
           {calientes.length === 0 ? <div style={{ textAlign:"center", padding:"24px 0", color:"#bbb", fontSize:13 }}><div style={{ marginBottom:8, opacity:0.25, color:"#aaa" }}><Package size={32}/></div>Sin ventas recientes</div> :
             calientes.map(({ prod, qty }) => (
-              <div key={prod.id} style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid #f5f5f5", fontSize:13 }}>
-                <div style={{ fontWeight:500 }}>{prod.nombre}</div>
-                <span style={{ color:"#16a34a", fontWeight:700 }}>{qty} vendidos</span>
+              <div key={prod.id} style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid #f5f5f5", fontSize:13, gap:8 }}>
+                <div className="dc-row-title" style={{ fontWeight:500, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{prod.nombre}</div>
+                <span className="dc-row-amount" style={{ color:"#16a34a", fontWeight:700, flexShrink:0, whiteSpace:"nowrap" }}>{qty} vendidos</span>
               </div>
             ))}
         </div>
         <div style={G.card()}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
             <h3 style={{ margin:0, fontSize:15, fontWeight:700, display:"flex", alignItems:"center", gap:6 }}><Snowflake size={15} color="#60a5fa"/>Productos Fríos</h3>
-            <span style={{ fontSize:12, color:"#aaa" }}>Últimos 30 días</span>
+            <span className="dc-label" style={{ fontSize:12, color:"#aaa", flexShrink:0 }}>Últimos 30 días</span>
           </div>
           {frios.length === 0
             ? <div style={{ textAlign:"center", padding:"24px 0", color:"#bbb", fontSize:13 }}><div style={{ marginBottom:8, opacity:0.25, color:"#aaa" }}><Package size={32}/></div>No hay productos con stock</div>
             : frios.map(({ prod, qty }) => (
-              <div key={prod.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid #f5f5f5", fontSize:13 }}>
-                <div style={{ fontWeight:500 }}>{prod.nombre}</div>
-                <span style={{ color: qty === 0 ? "#ef4444" : "#f59e0b", fontWeight:700 }}>
+              <div key={prod.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid #f5f5f5", fontSize:13, gap:8 }}>
+                <div className="dc-row-title" style={{ fontWeight:500, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{prod.nombre}</div>
+                <span className="dc-row-amount" style={{ color: qty === 0 ? "#ef4444" : "#f59e0b", fontWeight:700, flexShrink:0, whiteSpace:"nowrap" }}>
                   {qty === 0 ? "Sin ventas" : `${qty} vendidos`}
                 </span>
               </div>
@@ -1961,6 +2860,16 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
   const totalDisp = Object.values(stockPorTalle).reduce((a,v) => a+(+v||0), 0);
   const tieneTalles = (prod.talles||[]).length > 0;
   const tieneColores = (prod.colores||[]).length > 0;
+  const combinado = esCombinado(prod);
+  const partesVar = combinado ? (prod.talles||[]).map(k => ({ k, ...colorDeVariante(k, prod.colores) })) : [];
+  const conBase = partesVar.some(x => x.base);
+  const stockColor = (c) => partesVar.filter(x => x.color === c).reduce((a, x) => a + (+stockPorTalle[x.k] || 0), 0);
+  const tallesVisibles = combinado ? partesVar.filter(x => x.color === colorSelec && x.base).map(x => ({ k: x.k, label: x.base })) : (prod.talles||[]).map(t => ({ k: t, label: t }));
+  const elegirColor = (c) => {
+    setColorSelec(c);
+    if (combinado && !conBase) setTalleSelec(c);           // sólo color: la variante es el color
+    else if (combinado) setTalleSelec(null);
+  };
   const faltaElegir = (tieneTalles && !talleSelec) || (tieneColores && !colorSelec);
 
   return (
@@ -1980,12 +2889,13 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             {(prod.colores||[]).map(c => {
               const selec = colorSelec === c;
+              const sinStockColor = combinado && stockColor(c) === 0;
               return (
-                <button key={c} onClick={() => setColorSelec(c)} style={{
+                <button key={c} onClick={() => !sinStockColor && elegirColor(c)} disabled={sinStockColor} title={combinado ? `${stockColor(c)} ud.` : undefined} style={{ opacity: sinStockColor ? 0.4 : 1,
                   background: selec ? "#111" : "#f3f4f6", borderRadius:20, padding:"7px 16px",
                   fontSize:13, color: selec ? "#fff" : "#555", fontWeight: selec ? 700 : 500,
                   border: selec ? "2px solid #111" : "2px solid transparent", cursor:"pointer", transition:"all .15s",
-                }}>{c}</button>
+                }}>{c}{combinado ? ` · ${stockColor(c)}` : ""}</button>
               );
             })}
           </div>
@@ -1993,11 +2903,11 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
       )}
 
       {/* Talles */}
-      {tieneTalles && (
+      {tieneTalles && (!combinado || (conBase && colorSelec)) && (
         <div style={{ marginBottom:20 }}>
           <div style={{ fontSize:13, fontWeight:600, color:"#666", marginBottom:10 }}>Seleccionar talle:</div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8 }}>
-            {(prod.talles||[]).map(t => {
+            {tallesVisibles.map(({ k: t, label }) => {
               const cnt = stockPorTalle[t] || 0;
               const agotado = cnt === 0;
               const selec = talleSelec === t;
@@ -2008,7 +2918,7 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
                   background: selec?"#111":agotado?"#fafafa":"#fff",
                   opacity: agotado ? 0.45 : 1, transition:"all .15s"
                 }}>
-                  <div style={{ fontSize:13, fontWeight:700, color:selec?"#fff":agotado?"#bbb":"#111" }}>{t}</div>
+                  <div style={{ fontSize:13, fontWeight:700, color:selec?"#fff":agotado?"#bbb":"#111" }}>{label}</div>
                   <div style={{ fontSize:11, color:selec?"#ccc":agotado?"#ccc":"#888", marginTop:2 }}>{cnt} ud.</div>
                 </button>
               );
@@ -2022,7 +2932,7 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
         onClick={() => { if (!faltaElegir) { onSelect(talleSelec, tieneTalles ? stockPorTalle[talleSelec] : null, colorSelec); onClose(); } }}
         disabled={faltaElegir}
       >
-        {faltaElegir ? (tieneTalles && !talleSelec ? "Seleccioná un talle" : "Seleccioná un color") : "Agregar al carrito"}
+        {faltaElegir ? (tieneColores && !colorSelec ? "Seleccioná un color" : "Seleccioná un talle") : "Agregar al carrito"}
       </button>
     </Modal>
   );
@@ -2036,7 +2946,7 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
   useEffect(() => { setTimeout(() => inputRef.current?.focus(), 50); }, []);
 
   const filtrados = products.filter(p => {
-    const tieneStock = esModa && p.stockPorTalle
+    const tieneStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
       ? Object.values(p.stockPorTalle).some(v => +v > 0)
       : p.stock > 0;
     if (!tieneStock) return false;
@@ -2077,11 +2987,11 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
               <div>{q ? `Sin resultados para "${q}"` : "No hay productos con stock"}</div>
             </div>
           ) : (
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:12 }}>
+            <div className="buscador-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
               {filtrados.map(p => {
                 const inCart = cart.filter(i => (i.productoId||i.id) === p.id);
                 const totalEnCarrito = inCart.reduce((a, i) => a + i.cantidad, 0);
-                const totalStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
+                const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
                 return (
                   <div key={p.id} onClick={() => onSelect(p)}
                     style={{ background:"#fff", border:`1.5px solid ${totalEnCarrito>0?"#111":"#ebebeb"}`, borderRadius:14, overflow:"hidden", cursor:"pointer", boxShadow:"0 2px 6px rgba(0,0,0,0.05)", transition:"border-color .15s" }}>
@@ -2141,9 +3051,15 @@ function VentaPage({ ctx }) {
   const [cart, setCart] = useState([]);
   const [cliente, setCliente] = useState("");
   const [metodoPago, setMetodoPago] = useState("");
-  const [descTipo, setDescTipo] = useState("monto");
+  const [descTipo, setDescTipo] = useState("pct");
   const [descValor, setDescValor] = useState("");
   const [efectivoDado, setEfectivoDado] = useState("");
+  const [showCobro, setShowCobro] = useState(false);
+  const [showCartMenu, setShowCartMenu] = useState(false);
+  const [splitMetodo1, setSplitMetodo1] = useState("Efectivo");
+  const [splitMonto1, setSplitMonto1] = useState("");
+  const [splitMetodo2, setSplitMetodo2] = useState("Tarjeta débito");
+  const [splitMonto2, setSplitMonto2] = useState("");
   const [showCaja, setShowCaja] = useState(false);
   const [showCambio, setShowCambio] = useState(false);
   const [ventaExito, setVentaExito] = useState(null);
@@ -2156,7 +3072,7 @@ function VentaPage({ ctx }) {
   const buscarPorCodigo = /^\d{8,}$/.test(search.trim());
 
   const prods = products.filter(p => {
-    const tieneStock = esModa && p.stockPorTalle
+    const tieneStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
       ? Object.values(p.stockPorTalle).some(v => +v > 0)
       : p.stock > 0;
     if (!tieneStock) return false;
@@ -2176,7 +3092,7 @@ function VentaPage({ ctx }) {
       return;
     }
     // Verificar stock
-    const tieneStock = esModa && encontrado.stockPorTalle
+    const tieneStock = esModa && encontrado.stockPorTalle && Object.keys(encontrado.stockPorTalle).length > 0
       ? Object.values(encontrado.stockPorTalle).some(v => +v > 0)
       : encontrado.stock > 0;
     if (!tieneStock) {
@@ -2194,7 +3110,10 @@ function VentaPage({ ctx }) {
   const addToCart = (prod, talle = null, stockMax = null, color = null) => {
     const cartKey = [prod.id, talle, color].filter(Boolean).join("__") || prod.id;
     const maxStock = stockMax !== null ? stockMax : prod.stock;
-    const sufijo = [talle ? `T.${talle}` : null, color].filter(Boolean).join(" - ");
+    const cv = talle && esCombinado(prod) ? colorDeVariante(talle, prod.colores) : null;
+    const sufijo = cv
+      ? [cv.base ? `T.${cv.base}` : null, cv.color].filter(Boolean).join(" - ")
+      : [talle ? `T.${talle}` : null, color].filter(Boolean).join(" - ");
     setCart(prev => {
       const idx = prev.findIndex(i => i.cartKey === cartKey);
       if (idx >= 0) {
@@ -2223,16 +3142,27 @@ function VentaPage({ ctx }) {
 
   const [guardandoVenta, setGuardandoVenta] = useState(false);
 
+  const esPagoCombinado = metodoPago === "combinar";
+  const sumaSplit = (+splitMonto1 || 0) + (+splitMonto2 || 0);
+  const splitValido = !esPagoCombinado || Math.abs(sumaSplit - total) < 1;
+
   const completarVenta = async () => {
     if (guardandoVenta) return; // evita doble click → venta duplicada
     if (cart.length === 0 || !metodoPago) return;
+    if (esPagoCombinado && !splitValido) return;
     if (!caja.abierta) { setShowCaja(true); return; }
     setGuardandoVenta(true);
     try {
+    const metodoPagoFinal = esPagoCombinado ? `Combinado (${splitMetodo1} + ${splitMetodo2})` : metodoPago;
+    const pagosCombinados = esPagoCombinado ? [
+      { metodo: splitMetodo1, monto: +splitMonto1 || 0 },
+      { metodo: splitMetodo2, monto: +splitMonto2 || 0 },
+    ] : null;
     const venta = {
-      id: uid(), numero: sales.reduce((mx, s) => Math.max(mx, +s.numero || 0), 0) + 1, fecha: todayStr(), cliente, metodoPago,
+      id: uid(), numero: sales.reduce((mx, s) => Math.max(mx, +s.numero || 0), 0) + 1, fecha: todayStr(), cliente, metodoPago: metodoPagoFinal,
       items: cart.map(i => ({ productoId: i.productoId || i.id, nombre: i.nombre, cantidad: i.cantidad, precio: i.precio, talle: i.talle || null, color: i.color || null })),
-      subtotal, descuento: descMonto, descuentoTipo: descTipo, total, efectivoDado: +efectivoDado || 0, cambio: Math.round(cambio)
+      subtotal, descuento: descMonto, descuentoTipo: descTipo, total, efectivoDado: +efectivoDado || 0, cambio: Math.round(cambio),
+      pagosCombinados,
     };
     const affectedIds = new Set(cart.map(i => i.productoId || i.id));
     const updatedProducts = products.map(p => {
@@ -2253,11 +3183,14 @@ function VentaPage({ ctx }) {
     });
     setProducts(updatedProducts);
     setSales(prev => [...prev, venta]);
-    setVentaParaFacturar(venta);
-    // Guardar en Supabase (await para asegurar persistencia)
+    // Guardar en Supabase (await para asegurar persistencia).
+    // La factura se ofrece recién cuando la venta ya existe en la base: el servidor la busca por su id.
     await ctx.saveVenta(venta);
-    await ctx.saveProducts(updatedProducts.filter(p => affectedIds.has(p.id)));
+    await ctx.ajustarStock(venta.items, -1, updatedProducts.filter(p => affectedIds.has(p.id)));
+    if (config.facturacionActiva) setVentaParaFacturar(venta);
+    else setVentaExito(venta);
     setCart([]); setCliente(""); setMetodoPago(""); setDescValor(""); setEfectivoDado("");
+    setSplitMonto1(""); setSplitMonto2(""); setShowCobro(false);
     } finally {
       setGuardandoVenta(false);
     }
@@ -2265,20 +3198,18 @@ function VentaPage({ ctx }) {
 
   return (
     <div className="app-page-pad" style={G.page}>
-      {showCaja && <AbrirCajaModal setCaja={setCaja} onClose={() => setShowCaja(false)} />}
+      {showCaja && <AbrirCajaModal setCaja={setCaja} saveCaja={ctx.saveCaja} onClose={() => setShowCaja(false)} />}
       {ventaExito && !ventaParaFacturar && <VentaExitoModal venta={ventaExito} config={config} onClose={() => setVentaExito(null)} />}
       {ventaParaFacturar && (
         <FacturarModal
-          venta={ventaParaFacturar} config={config} sales={sales}
-          onFacturar={async (facturaData) => {
-            const updatedVenta = { ...ventaParaFacturar, factura: facturaData };
-            setSales(prev => prev.map(s => s.id === ventaParaFacturar.id ? updatedVenta : s));
-            setVentaParaFacturar(null);
-            setVentaExito(ventaParaFacturar);
-            await ctx.saveVenta(updatedVenta);
+          venta={ventaParaFacturar} config={config} conEleccion
+          onResultado={(factura) => {
+            // El servidor ya guardó la factura; acá sólo actualizamos la pantalla.
+            setSales(prev => prev.map(s => s.id === ventaParaFacturar.id ? { ...s, factura } : s));
+            setVentaParaFacturar(v => v ? { ...v, factura } : v);
           }}
-          onSinFactura={() => { setVentaParaFacturar(null); setVentaExito(ventaParaFacturar); }}
-          onClose={() => { setVentaParaFacturar(null); setVentaExito(ventaParaFacturar); }}
+          onSinFactura={() => { const v = ventaParaFacturar; setVentaParaFacturar(null); setVentaExito(v); }}
+          onClose={() => { const v = ventaParaFacturar; setVentaParaFacturar(null); setVentaExito(v); }}
         />
       )}
       {comprobanteVer && <ComprobanteModal venta={comprobanteVer} config={config} onClose={() => setComprobanteVer(null)} />}
@@ -2308,8 +3239,8 @@ function VentaPage({ ctx }) {
         <button style={G.btn("outline")} onClick={() => setShowCambio(true)}><RefreshCw size={14}/> Cambio</button>
       </div>
       <CajaBanner caja={caja} onAbrir={() => setShowCaja(true)} />
-      <div className="venta-grid" style={{ display:"grid", gridTemplateColumns:"1fr 370px", gap:24, alignItems:"start" }}>
-        <div>
+      <div className="venta-grid" style={{ display:"flex", gap:24, alignItems:"stretch" }}>
+        <div style={{ flex:"1.3 1 0%", minWidth:0 }}>
           {/* Barra de búsqueda + botón de escanear */}
           <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
             <div
@@ -2328,18 +3259,18 @@ function VentaPage({ ctx }) {
             </button>
           </div>
 
-          {/* Accesos rápidos — últimos 4 productos más vendidos o más recientes */}
+          {/* Accesos rápidos — hasta 16 productos (4 filas de 4), el resto vía "Ver todos" */}
           {products.length > 0 && (
             <>
               <div style={{ fontSize:12, fontWeight:600, color:"#999", marginBottom:10, textTransform:"uppercase", letterSpacing:"0.5px" }}>Accesos rápidos</div>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10 }}>
+              <div className="accesos-rapidos-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
                 {products
-                  .filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v => +v > 0) : p.stock > 0)
-                  .slice(0, 4)
+                  .filter(p => esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).some(v => +v > 0) : p.stock > 0)
+                  .slice(0, 16)
                   .map(p => {
                     const inCart = cart.filter(i => (i.productoId||i.id) === p.id);
                     const totalEnCarrito = inCart.reduce((a, i) => a + i.cantidad, 0);
-                    const totalStock = esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).reduce((a,v) => a+(+v||0),0) : p.stock;
+                    const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v) => a+(+v||0),0) : p.stock;
                     return (
                       <div key={p.id} onClick={() => handleProdClick(p)}
                         style={{ background:"#fff", border:`1.5px solid ${totalEnCarrito>0?"#111":"#ebebeb"}`, borderRadius:14, overflow:"hidden", cursor:"pointer", boxShadow:"0 2px 6px rgba(0,0,0,0.05)", transition:"border-color .15s" }}>
@@ -2378,7 +3309,7 @@ function VentaPage({ ctx }) {
                 })}
               </div>
               <button onClick={() => setShowBuscador(true)} style={{ ...G.btn("ghost"), width:"100%", justifyContent:"center", marginTop:12, fontSize:13, color:"#888", border:"1px dashed #e5e7eb", borderRadius:9, padding:"10px" }}>
-                <Search size={13}/> Ver todos los productos ({products.filter(p => esModa && p.stockPorTalle ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0).length} disponibles)
+                <Search size={13}/> Ver todos los productos ({products.filter(p => esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0).length} disponibles)
               </button>
             </>
           )}
@@ -2387,20 +3318,37 @@ function VentaPage({ ctx }) {
             <Empty icon={<Package size={36}/>} text="No hay productos cargados" btnText="Ir a Inventario" onBtn={() => ctx.setPage("inventario")} />
           )}
         </div>
-        <div style={{ ...G.card({ padding:20 }), position:"sticky", top:20 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16 }}>
+        <div className="venta-carrito-panel" style={{ ...G.card({ padding:20 }), position:"sticky", top:20, display:"flex", flexDirection:"column", flex:"1 1 0%", minWidth:0 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16, position:"relative" }}>
             <ShoppingCart size={18}/>
             <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>Carrito</h3>
             {cart.length > 0 && <span style={{ marginLeft:"auto", background:"#f3f4f6", color:"#666", fontSize:11, padding:"2px 9px", borderRadius:20 }}>{cart.reduce((a,i) => a+i.cantidad, 0)} items</span>}
+            {cart.length > 0 && (
+              <div style={{ position:"relative" }}>
+                <button onClick={() => setShowCartMenu(v => !v)} style={{ background:"#f3f4f6", border:"none", borderRadius:8, width:28, height:28, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:"#666" }}>
+                  <MoreVertical size={15}/>
+                </button>
+                {showCartMenu && (
+                  <>
+                    <div onClick={() => setShowCartMenu(false)} style={{ position:"fixed", inset:0, zIndex:10 }}/>
+                    <div style={{ position:"absolute", top:32, right:0, background:"#fff", border:"1px solid #e5e7eb", borderRadius:9, boxShadow:"0 8px 24px rgba(0,0,0,0.1)", zIndex:11, minWidth:150 }}>
+                      <button onClick={() => { setCart([]); setShowCartMenu(false); }} style={{ width:"100%", textAlign:"left", padding:"10px 14px", background:"none", border:"none", cursor:"pointer", fontSize:13, color:"#dc2626", display:"flex", alignItems:"center", gap:8 }}>
+                        <Trash2 size={13}/> Vaciar carrito
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
           {cart.length === 0 ? (
-            <div style={{ textAlign:"center", padding:"22px 0 18px", color:"#ccc", borderBottom:"1px solid #f5f5f5", marginBottom:16 }}>
+            <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center", color:"#ccc", borderBottom:"1px solid #f5f5f5", marginBottom:16 }}>
               <div style={{ marginBottom:6, opacity:0.25, color:"#aaa" }}><ShoppingBag size={30}/></div>
               <div style={{ fontSize:13, fontWeight:500, color:"#bbb" }}>Carrito vacío</div>
               <div style={{ fontSize:11, marginTop:2, color:"#ccc" }}>Selecciona productos</div>
             </div>
           ) : (
-            <div style={{ borderBottom:"1px solid #f5f5f5", marginBottom:14, maxHeight:230, overflowY:"auto" }}>
+            <div style={{ flex:1, borderBottom:"1px solid #f5f5f5", marginBottom:14, maxHeight:230, overflowY:"auto" }}>
               {cart.map(item => (
                 <div key={item.cartKey} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:"1px solid #f9f9f9" }}>
                   <div style={{ flex:1, minWidth:0 }}>
@@ -2418,33 +3366,83 @@ function VentaPage({ ctx }) {
               ))}
             </div>
           )}
-          <input style={{ ...G.inp(), marginBottom:10 }} placeholder="Nombre cliente (opcional)" value={cliente} onChange={e => setCliente(e.target.value)} />
-          <select style={{ ...G.inp(), marginBottom:10 }} value={metodoPago} onChange={e => setMetodoPago(e.target.value)}>
-            <option value="">Método de pago *</option>
-            {PAGOS.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-          {metodoPago === "Efectivo" && <input style={{ ...G.inp(), marginBottom:10 }} type="number" placeholder="Efectivo recibido" value={efectivoDado} onChange={e => setEfectivoDado(e.target.value)} />}
+          <div style={{ borderTop:"1px solid #f0f0f0", paddingTop:12, marginBottom:14 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", fontWeight:800, fontSize:17 }}><span>Total</span><span>{fmtMoney(subtotal, config.moneda)}</span></div>
+          </div>
+          <button
+            disabled={cart.length===0}
+            onClick={() => { if (!caja.abierta) { setShowCaja(true); return; } setShowCobro(true); }}
+            style={{ ...G.btn(cart.length>0?"dark":"light"), width:"100%", justifyContent:"center", padding:"13px", fontSize:14 }}
+          >
+            Cobrar
+          </button>
+        </div>
+      </div>
+
+      {showCobro && (
+        <Modal title="Completar venta" subtitle={`Subtotal: ${fmtMoney(subtotal, config.moneda)}`} onClose={() => setShowCobro(false)} width={400}>
+          <input style={{ ...G.inp(), marginBottom:14 }} placeholder="Nombre cliente (opcional)" value={cliente} onChange={e => setCliente(e.target.value)} />
           <div style={{ marginBottom:14 }}>
             <div style={{ fontSize:12, color:"#999", marginBottom:6, fontWeight:600 }}>Descuento</div>
             <div style={{ display:"flex", marginBottom:8 }}>
-              {[["monto","$ Monto"],["pct","% Porcentaje"]].map(([v,l]) => (
-                <button key={v} onClick={() => { setDescTipo(v); setDescValor(""); }} style={{ flex:1, padding:"7px", border:"1px solid #e5e7eb", cursor:"pointer", fontSize:12, fontWeight:descTipo===v?700:400, background:descTipo===v?"#111":"#fff", color:descTipo===v?"#fff":"#666", borderRadius:v==="monto"?"7px 0 0 7px":"0 7px 7px 0", borderLeft:v==="pct"?"none":undefined }}>{l}</button>
+              {[["pct","% Porcentaje"],["monto","$ Monto"]].map(([v,l]) => (
+                <button key={v} onClick={() => { setDescTipo(v); setDescValor(""); }} style={{ flex:1, padding:"7px", border:"1px solid #e5e7eb", cursor:"pointer", fontSize:12, fontWeight:descTipo===v?700:400, background:descTipo===v?"#111":"#fff", color:descTipo===v?"#fff":"#666", borderRadius:v==="pct"?"7px 0 0 7px":"0 7px 7px 0", borderLeft:v==="monto"?"none":undefined }}>{l}</button>
               ))}
             </div>
             <input style={G.inp()} type="number" min={0} max={descTipo==="pct"?100:undefined} placeholder="0" value={descValor} onChange={e => setDescValor(e.target.value)} />
           </div>
-          <div style={{ borderTop:"1px solid #f0f0f0", paddingTop:12, marginBottom:14 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:5 }}><span style={{ color:"#999" }}>Subtotal</span><span>{fmtMoney(subtotal, config.moneda)}</span></div>
-            {descMonto > 0 && <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#dc2626", marginBottom:5 }}><span>Descuento</span><span>-{fmtMoney(descMonto, config.moneda)}</span></div>}
-            {metodoPago === "Efectivo" && +efectivoDado > 0 && <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#2563eb", marginBottom:5 }}><span>Cambio</span><span style={{ fontWeight:600 }}>{fmtMoney(cambio, config.moneda)}</span></div>}
-            <div style={{ display:"flex", justifyContent:"space-between", fontWeight:800, fontSize:17 }}><span>Total</span><span>{fmtMoney(total, config.moneda)}</span></div>
+
+          <div style={{ marginBottom:10 }}>
+            <div style={{ fontSize:12, color:"#999", marginBottom:6, fontWeight:600 }}>Método de pago</div>
+            <select style={G.inp()} value={metodoPago} onChange={e => setMetodoPago(e.target.value)}>
+              <option value="">Método de pago *</option>
+              {PAGOS.map(p => <option key={p} value={p}>{p}</option>)}
+              <option value="combinar">🔀 Combinar 2 pagos</option>
+            </select>
           </div>
-          <button disabled={guardandoVenta} onClick={() => { if (!caja.abierta) setShowCaja(true); else completarVenta(); }} style={{ ...G.btn(cart.length>0&&metodoPago&&!guardandoVenta?"dark":"light"), width:"100%", justifyContent:"center", padding:"13px", fontSize:14, cursor: guardandoVenta ? "wait" : "pointer" }}>
-            {guardandoVenta ? "Guardando..." : "Completar venta"}
-          </button>
-          {cart.length > 0 && <button onClick={() => setCart([])} style={{ ...G.btn("ghost"), width:"100%", justifyContent:"center", marginTop:8, fontSize:12, color:"#999" }}>Vaciar carrito</button>}
-        </div>
-      </div>
+
+          {metodoPago === "Efectivo" && (
+            <input style={{ ...G.inp(), marginBottom:10 }} type="number" placeholder="Monto recibido" value={efectivoDado} onChange={e => setEfectivoDado(e.target.value)} />
+          )}
+
+          {esPagoCombinado && (
+            <div style={{ background:"#f9fafb", borderRadius:10, padding:10, marginBottom:10 }}>
+              <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+                <select style={{ ...G.inp(), flex:1 }} value={splitMetodo1} onChange={e => setSplitMetodo1(e.target.value)}>
+                  {PAGOS.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <input style={{ ...G.inp(), width:100 }} type="number" placeholder="Monto" value={splitMonto1} onChange={e => setSplitMonto1(e.target.value)} />
+              </div>
+              <div style={{ display:"flex", gap:8 }}>
+                <select style={{ ...G.inp(), flex:1 }} value={splitMetodo2} onChange={e => setSplitMetodo2(e.target.value)}>
+                  {PAGOS.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <input style={{ ...G.inp(), width:100 }} type="number" placeholder="Monto" value={splitMonto2} onChange={e => setSplitMonto2(e.target.value)} />
+              </div>
+              <p style={{ fontSize:11.5, color: splitValido ? "#888" : "#dc2626", margin:"8px 0 0" }}>
+                {splitValido ? "La suma de los dos montos tiene que dar el total." : `Falta ${fmtMoney(total - sumaSplit, config.moneda)} para llegar al total.`}
+              </p>
+            </div>
+          )}
+
+          <div style={{ borderTop:"1px solid #f0f0f0", paddingTop:12, marginBottom:14 }}>
+            {descMonto > 0 && <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#dc2626", marginBottom:5 }}><span>Descuento</span><span>-{fmtMoney(descMonto, config.moneda)}</span></div>}
+            <div style={{ display:"flex", justifyContent:"space-between", fontWeight:800, fontSize:17, marginBottom: (metodoPago === "Efectivo" && +efectivoDado > 0) ? 5 : 0 }}><span>Total</span><span>{fmtMoney(total, config.moneda)}</span></div>
+            {metodoPago === "Efectivo" && +efectivoDado > 0 && <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#16a34a", fontWeight:600 }}><span>Vuelto</span><span>{fmtMoney(cambio, config.moneda)}</span></div>}
+          </div>
+
+          <div style={{ display:"flex", gap:10 }}>
+            <button onClick={() => setShowCobro(false)} style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }}>Volver</button>
+            <button
+              disabled={!metodoPago || guardandoVenta || (esPagoCombinado && !splitValido)}
+              onClick={completarVenta}
+              style={{ ...G.btn((metodoPago && !guardandoVenta && (!esPagoCombinado || splitValido))?"dark":"light"), flex:1, justifyContent:"center", cursor: guardandoVenta ? "wait" : "pointer" }}
+            >
+              {guardandoVenta ? "Guardando..." : "Confirmar venta"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -2523,13 +3521,19 @@ function procesarTiendanube(hdrs, dataRows, cats) {
     // Construir stockPorTalle y colores desde cada fila
     const stockPorTalle = {};
     const coloresSet = new Set();
+    let totalStock = 0; // acumulamos SIEMPRE, tenga o no talle detectado
+    let tieneStockIlimitado = false; // Tiendanube: celda de Stock vacía = "sin límite" (no es 0)
 
     rows.forEach(row => {
       const p1nom = get(row, "Nombre de propiedad 1").toLowerCase();
       const p1val = get(row, "Valor de propiedad 1");
       const p2nom = get(row, "Nombre de propiedad 2").toLowerCase();
       const p2val = get(row, "Valor de propiedad 2");
-      const stockVal = Math.round(parseNumero(get(row, "Stock")));
+      const stockCruda = get(row, "Stock");
+      // Celda vacía en Tiendanube = stock ilimitado (no es lo mismo que "0" explícito)
+      const esIlimitado = stockCruda === "";
+      const stockVal = esIlimitado ? 999 : Math.round(parseNumero(stockCruda));
+      if (esIlimitado) tieneStockIlimitado = true;
 
       // Detectar talle y color independientemente del orden de las propiedades
       let talle = "", color = "";
@@ -2545,19 +3549,21 @@ function procesarTiendanube(hdrs, dataRows, cats) {
       else if (p3nom === "color" || p3nom === "colour") color = p3val;
 
       if (color) coloresSet.add(color);
+      // Siempre sumamos el stock leído, tenga o no talle esta fila
+      totalStock += stockVal;
       if (talle) {
         stockPorTalle[talle] = (stockPorTalle[talle] || 0) + stockVal;
       }
     });
 
     const talles = Object.keys(stockPorTalle);
-    const totalStock = Object.values(stockPorTalle).reduce((a, v) => a + v, 0);
 
     if (!nombre || precio <= 0) return null;
     return {
       id: uid(), nombre, precio, costo, categoria, sku, descripcion, marca,
       stock: totalStock, stockMinimo: 3,
-      talles, stockPorTalle, colores: [...coloresSet], imagen: ""
+      talles, stockPorTalle, colores: [...coloresSet], imagen: "",
+      _stockIlimitado: tieneStockIlimitado, // solo para avisar en la vista previa, no se guarda en la base
     };
   }).filter(Boolean);
 }
@@ -2777,13 +3783,23 @@ function ImportarExcelModal({ cats, onImport, onClose }) {
                         <td style={{ padding:"9px 14px", color:"#888" }}>{p.categoria}</td>
                         <td style={{ padding:"9px 14px", color:"#555", fontSize:11 }}>{p.talles.join(", ") || "—"}</td>
                         <td style={{ padding:"9px 14px", color:"#555", fontSize:11 }}>{p.colores.join(", ") || "—"}</td>
-                        <td style={{ padding:"9px 14px", fontWeight:600, color: p.stock > 0 ? "#16a34a" : "#aaa" }}>{p.stock}</td>
+                        <td style={{ padding:"9px 14px", fontWeight:600, color: p.stock > 0 ? "#16a34a" : "#aaa" }}>
+                          {p.stock}
+                          {p._stockIlimitado && (
+                            <span style={{ display:"block", fontSize:10, fontWeight:500, color:"#9238FF" }}>sin límite en TN</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               {tiendanubePreview.length > 8 && <div style={{ fontSize:12, color:"#888", marginBottom:12, textAlign:"center" }}>+ {tiendanubePreview.length - 8} productos más</div>}
+              {tiendanubePreview.some(p => p._stockIlimitado) && (
+                <div style={{ background:"#f4ecff", border:"1px solid #ddd0fb", borderRadius:10, padding:"10px 16px", marginBottom:12, fontSize:13, color:"#6b21a8" }}>
+                  🎁 Algunos productos tenían "stock sin límite" en Tiendanube (celda vacía) — les pusimos 999 como valor provisorio. Revisá esos productos después de importar y cargá el stock real que tenés físicamente.
+                </div>
+              )}
               {tiendanubePreview.every(p => p.stock === 0) && (
                 <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", marginBottom:12, fontSize:13, color:"#92400e" }}>
                   ⚠ Todos los productos tienen stock 0 — normal si no gestionás stock en Tiendanube. Podés actualizar el stock desde Inventario después de importar.
@@ -2888,8 +3904,40 @@ function exportarVentas(sales, config) {
 }
 
 function InventarioPage({ ctx }) {
-  const { config, products, setProducts } = ctx;
-  const cats = CATS_POR_RUBRO[config.rubro] || CATS_PROD_FALLBACK;
+  const { config, products, setProducts, tnVinculados } = ctx;
+  const [publicando, setPublicando] = useState(null);   // producto a publicar (confirmación)
+  const [pubEstado, setPubEstado] = useState(null);     // { ok, txt, url }
+  const [pubVisible, setPubVisible] = useState(true);
+  const publicandoRef = useRef(false);
+  const publicarTN = async () => {
+    const p = publicando; if (!p || publicandoRef.current) return;
+    publicandoRef.current = true;
+    setPubEstado({ cargando: true });
+    try {
+      const r = await llamarTN({ accion: "publicar", producto_id: p.id, visible: pubVisible });
+      if (r.httpOk && r.ok) {
+        const det = [`${r.variantes} ${r.variantes === 1 ? "variante" : "variantes"}`, r.foto ? "con foto" : "sin foto", r.categoria ? `en «${r.categoria}»` : null].filter(Boolean).join(", ");
+        setPubEstado({ ok: true, txt: `«${p.nombre}» ya está en Tiendanube ${r.visible ? "y se ve en tu tienda" : "(oculto)"}: ${det}. Desde ahora el stock se sincroniza solo.`, url: r.admin_url });
+        sb._tnRecargarVinculos?.();
+      } else setPubEstado({ ok: false, txt: r.error || "No se pudo crear en Tiendanube." });
+    } finally { publicandoRef.current = false; }
+  };
+  const resumenPublicar = (p) => {
+    if (!p) return [];
+    const comb = esCombinado(p);
+    const vars = (p.talles || []).length || 1;
+    const colores = (p.colores || []).length;
+    return [
+      ["Precio", fmtMoney(p.precio, config.moneda)],
+      ["Variantes", (p.talles || []).length ? `${vars} (${comb ? "talle y color" : colores === 1 ? `talles, color ${p.colores[0]}` : "talles"})` : "Sin variantes"],
+      ["Stock", `${p.stock || 0} unidades${(p.talles || []).length ? ", separado por variante" : ""}`],
+      ["Foto", p.imagen ? "Sí" : "No tiene — podés agregarla después en Tiendanube"],
+      ["Categoría", p.categoria && p.categoria !== "General" ? `${p.categoria} (se crea si no existe)` : "Sin categoría"],
+      ["Descripción", p.descripcion ? "Sí" : "No"],
+      ["Costo", p.costo ? fmtMoney(p.costo, config.moneda) : "No"],
+    ];
+  };
+  const cats = [...new Set([...(CATS_POR_RUBRO[config.rubro] || CATS_PROD_FALLBACK), ...products.map(p => p.categoria).filter(c => c && c !== "General")])];
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("Todas");
   const [filterStock, setFilterStock] = useState("Todos");
@@ -2900,9 +3948,12 @@ function InventarioPage({ ctx }) {
   const [confirmClearAll, setConfirmClearAll] = useState(false);
   const filtered = products.filter(p => { const ms = p.nombre.toLowerCase().includes(search.toLowerCase())||(p.sku||"").toLowerCase().includes(search.toLowerCase())||(p.codigoBarras||"").includes(search.trim()); const mc = filterCat==="Todas"||p.categoria===filterCat; const mst = filterStock==="Todos"||(filterStock==="En stock"&&p.stock>0&&p.stock>(p.stockMinimo||3))||(filterStock==="Stock bajo"&&p.stock>0&&p.stock<=(p.stockMinimo||3))||(filterStock==="Sin stock"&&p.stock===0); return ms&&mc&&mst; });
   const totalStock = products.reduce((a,p) => a+p.stock, 0), stockBajo = products.filter(p => p.stock>0&&p.stock<=(p.stockMinimo||3)).length, sinStock = products.filter(p => p.stock===0).length;
+  // Cuánta plata tenés inmovilizada en mercadería, a costo y a precio de venta
+  const valorCosto = products.reduce((a,p) => a + (p.costo||0) * (p.stock||0), 0);
+  const valorVenta = products.reduce((a,p) => a + (p.precio||0) * (p.stock||0), 0);
   const onSaveProd = async (p) => {
     setProducts(prev => editProd ? prev.map(x => x.id===p.id ? p : x) : [...prev, p]);
-    await ctx.saveProduct(p);
+    await ctx.saveProduct(p, editProd);
     setShowModal(false); setEditProd(null);
   };
   const delProd = async (id) => {
@@ -2914,6 +3965,38 @@ function InventarioPage({ ctx }) {
 
   return (
     <div className="app-page-pad" style={G.page}>
+      {publicando && (
+        <Modal title="Publicar en Tiendanube" subtitle={publicando.nombre} onClose={() => { if (!pubEstado?.cargando) setPublicando(null); }} width={460}>
+          {!pubEstado || pubEstado.cargando ? (
+            <>
+              <p style={{ margin:"0 0 12px", fontSize:13, color:"#555", lineHeight:1.55 }}>Lo creamos en tu tienda con todo esto:</p>
+              <div style={{ border:"1px solid var(--border)", borderRadius:10, marginBottom:14 }}>
+                {resumenPublicar(publicando).map(([k, v], i) => (
+                  <div key={k} style={{ display:"flex", justifyContent:"space-between", gap:12, padding:"8px 12px", fontSize:13, borderTop: i ? "1px solid var(--border)" : "none" }}>
+                    <span style={{ color:"#666" }}>{k}</span><span style={{ fontWeight:600, textAlign:"right" }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+              <label style={{ display:"flex", alignItems:"center", gap:10, fontSize:13, marginBottom:16, cursor:"pointer" }}>
+                <input type="checkbox" checked={pubVisible} onChange={e => setPubVisible(e.target.checked)} style={{ width:18, height:18 }} />
+                <span><b>Mostrarlo ya en la tienda</b><br/><span style={{ color:"#666" }}>Si lo destildás, queda oculto hasta que lo publiques en Tiendanube.</span></span>
+              </label>
+              <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+                <button style={G.btn("outline")} disabled={pubEstado?.cargando} onClick={() => setPublicando(null)}>Cancelar</button>
+                <button style={{ ...G.btn("dark"), background:"#2c3e91", opacity: pubEstado?.cargando ? .7 : 1 }} disabled={pubEstado?.cargando} onClick={publicarTN}>{pubEstado?.cargando ? "Creando…" : "Crear en Tiendanube"}</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ background: pubEstado.ok ? "#f0fdf4" : "#fef2f2", border:`1px solid ${pubEstado.ok ? "#bbf7d0" : "#fecaca"}`, color: pubEstado.ok ? "#15803d" : "#b91c1c", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:14 }}>{pubEstado.txt}</div>
+              <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+                {pubEstado.url && <a href={pubEstado.url} target="_blank" rel="noreferrer" style={{ ...G.btn("dark"), background:"#2c3e91", textDecoration:"none" }}>Abrir en Tiendanube</a>}
+                <button style={G.btn("outline")} onClick={() => setPublicando(null)}>Cerrar</button>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
       {(showModal||editProd) && <ProductoModal key={editProd?.id || "new"} prod={editProd} onSave={onSaveProd} onClose={() => { setShowModal(false); setEditProd(null); }} cats={cats} rubro={config.rubro} />}
       {ajusteProd && <AjusteStockModal prod={ajusteProd} rubro={config.rubro} onSave={async upd => { const updated = { ...ajusteProd, ...upd }; setProducts(prev => prev.map(p => p.id===ajusteProd.id ? updated : p)); await ctx.saveProduct(updated); }} onClose={() => setAjusteProd(null)} />}
       {showImport && <ImportarExcelModal cats={cats} onImport={async nuevos => { setProducts(prev => [...prev, ...nuevos]); setShowImport(false); await ctx.saveProducts(nuevos); }} onClose={() => setShowImport(false)} />}
@@ -2944,11 +4027,35 @@ function InventarioPage({ ctx }) {
           <button style={G.btn("dark")} onClick={() => setShowModal(true)}><Plus size={14}/> Nuevo producto</button>
         </div>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:14 }}>
         {[["Total en Stock", totalStock, "#111"], ["Stock Bajo", stockBajo, "#d97706"], ["Sin Stock", sinStock, "#dc2626"]].map(([label,val,color]) => (
           <div key={label} style={G.card()}><div style={{ fontSize:13, color:"#999", marginBottom:4 }}>{label}</div><div style={{ fontSize:24, fontWeight:800, color }}>{val}</div></div>
         ))}
       </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:14, marginBottom:20 }}>
+        <div style={{ ...G.card(), background:"#f9fafb" }}>
+          <div style={{ fontSize:13, color:"#999", marginBottom:4 }}>Invertido en mercadería</div>
+          <div style={{ fontSize:24, fontWeight:800, color:"#111" }}>{fmtMoney(valorCosto, config.moneda)}</div>
+          <div style={{ fontSize:11.5, color:"#bbb", marginTop:4 }}>Lo que te costó el stock actual</div>
+        </div>
+        <div style={{ ...G.card(), background:"#f0fdf4" }}>
+          <div style={{ fontSize:13, color:"#15803d", marginBottom:4 }}>Valor a precio de venta</div>
+          <div style={{ fontSize:24, fontWeight:800, color:"#16a34a" }}>{fmtMoney(valorVenta, config.moneda)}</div>
+          <div style={{ fontSize:11.5, color:"#86c99e", marginTop:4 }}>Si vendés todo lo que tenés</div>
+        </div>
+        <div style={{ ...G.card(), background:"#f4ecff" }}>
+          <div style={{ fontSize:13, color:"#7c3aed", marginBottom:4 }}>Ganancia potencial</div>
+          <div style={{ fontSize:24, fontWeight:800, color:"#9238FF" }}>{fmtMoney(valorVenta - valorCosto, config.moneda)}</div>
+          <div style={{ fontSize:11.5, color:"#b89ae0", marginTop:4 }}>
+            {valorCosto > 0 ? `Margen del ${(((valorVenta - valorCosto)/valorCosto)*100).toFixed(0)}%` : "Cargá los costos para verlo"}
+          </div>
+        </div>
+      </div>
+      {valorCosto === 0 && products.length > 0 && (
+        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", marginBottom:14, fontSize:13, color:"#92400e" }}>
+          💡 Cargá el <b>costo</b> de tus productos para ver cuánto tenés invertido y tu ganancia real.
+        </div>
+      )}
       {!config.rubro && (
         <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", marginBottom:14, fontSize:13, color:"#92400e", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
           <span><AlertTriangle size={14}/> Sin rubro configurado — las categorías son genéricas.</span>
@@ -2963,10 +4070,10 @@ function InventarioPage({ ctx }) {
       <div>
         {filtered.length === 0
           ? <Empty text={products.length===0?"No hay productos aún":"No se encontraron productos"} btnText="Agregar primer producto" onBtn={() => setShowModal(true)} />
-          : <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:16 }}>
+          : <div className="inventario-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:16 }}>
             {filtered.map(p => {
               const esModa = RUBROS_CON_TALLES.includes(config.rubro);
-              const totalStock = esModa && p.stockPorTalle
+              const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
                 ? Object.values(p.stockPorTalle).reduce((a,v) => a+(+v||0), 0)
                 : p.stock;
               const color1 = p.colores?.[0];
@@ -3023,6 +4130,9 @@ function InventarioPage({ ctx }) {
                       <Pencil size={13}/> Editar
                     </button>
                     <button onClick={() => setAjusteProd(p)} style={{ padding:"8px 10px", background:"none", border:"none", cursor:"pointer", fontSize:13, color:"#888", borderLeft:"1px solid #f0f0f0" }} title="Ajustar stock"><BarChart2 size={13}/></button>
+                    {tnVinculados && (tnVinculados.has(p.id)
+                      ? <span title="Sincronizado con Tiendanube" style={{ padding:"8px 8px", fontSize:11, color:"#2c3e91", borderLeft:"1px solid #f0f0f0", fontWeight:700 }}>🛍️</span>
+                      : <button onClick={() => { setPubEstado(null); setPubVisible(!!p.imagen); setPublicando(p); }} title="Publicar en Tiendanube" style={{ padding:"8px 8px", background:"none", border:"none", cursor:"pointer", fontSize:11, color:"#2c3e91", borderLeft:"1px solid #f0f0f0", fontWeight:700, whiteSpace:"nowrap" }}>+ Web</button>)}
                     <button onClick={() => setConfirmDelete(p.id)} style={{ padding:"8px 10px", background:"none", border:"none", cursor:"pointer", color:"#dc2626", borderLeft:"1px solid #f0f0f0" }}><Trash2 size={14}/></button>
                   </div>
                 </div>
@@ -3036,19 +4146,25 @@ function InventarioPage({ ctx }) {
 }
 
 function HistorialPage({ ctx }) {
-  const { config, sales, setSales } = ctx;
-  const [search, setSearch] = useState(""), [filterPago, setFilterPago] = useState("Todos"), [filterPeriod, setFilterPeriod] = useState("Todos"), [detalle, setDetalle] = useState(null), [comprobanteVer, setComprobanteVer] = useState(null);
+  const { config, sales, setSales, products, setProducts } = ctx;
+  const [search, setSearch] = useState(""), [filterCanal, setFilterCanal] = useState("Todos"), [filterPago, setFilterPago] = useState("Todos"), [filterPeriod, setFilterPeriod] = useState("Todos"), [detalle, setDetalle] = useState(null), [comprobanteVer, setComprobanteVer] = useState(null), [aFacturar, setAFacturar] = useState(null), [ncVenta, setNcVenta] = useState(null), [ncVer, setNcVer] = useState(null);
   const hoy = todayStr();
-  const filtered = useMemo(() => sales.filter(s => { const ms = (s.cliente||"").toLowerCase().includes(search.toLowerCase())||String(s.numero).includes(search); const mp = filterPago==="Todos"||s.metodoPago===filterPago; const mf = filterPeriod==="Todos"||(filterPeriod==="Hoy"&&s.fecha===hoy)||(filterPeriod==="Esta semana"&&s.fecha>=subDays(hoy,7))||(filterPeriod==="Este mes"&&s.fecha.startsWith(hoy.slice(0,7))); return ms&&mp&&mf; }).sort((a,b) => b.numero-a.numero), [sales, search, filterPago, filterPeriod, hoy]);
+  const filtered = useMemo(() => sales.filter(s => { const ms = (s.cliente||"").toLowerCase().includes(search.toLowerCase())||String(s.numero).includes(search); const mp = filterPago==="Todos"||s.metodoPago===filterPago; const mcn = filterCanal==="Todos"||(filterCanal==="Web"?s.canal==="web":s.canal!=="web"); const mf = filterPeriod==="Todos"||(filterPeriod==="Hoy"&&s.fecha===hoy)||(filterPeriod==="Esta semana"&&s.fecha>=subDays(hoy,7))||(filterPeriod==="Este mes"&&s.fecha.startsWith(hoy.slice(0,7))); return ms&&mp&&mf&&mcn; }).sort((a,b) => b.numero-a.numero), [sales, search, filterPago, filterPeriod, filterCanal, hoy]);
+  const hayWeb = useMemo(() => sales.some(s => s.canal === "web"), [sales]);
+  const pagosFiltro = useMemo(() => [...new Set([...PAGOS, ...sales.map(s => s.metodoPago).filter(Boolean)])], [sales]);
   const totalFilt = filtered.filter(s => !s.anulada).reduce((a,s) => a+s.total, 0);
-  const anular = async (id) => {
-    const venta = sales.find(s => s.id === id);
+  const anular = async (id, ventaActualizada) => {
+    const venta = ventaActualizada || sales.find(s => s.id === id);
     if (!venta) return;
     if (venta.anulada) return; // ya anulada: no devolver stock dos veces
+    // Una venta con factura real se anula sólo con nota de crédito
+    const f = venta.factura;
+    if (f?.estado === "emitida" && f.ambiente === "prod" && f.nc?.estado !== "emitida") { setDetalle(null); setNcVenta(venta); return; }
     const updated = { ...venta, anulada: true };
     setSales(prev => prev.map(s => s.id===id ? updated : s));
     setDetalle(null);
     await ctx.saveVenta(updated);
+    if (venta.importada) return; // las importadas nunca descontaron stock
     // Devolver stock al inventario
     const affectedIds = new Set((venta.items||[]).map(i => i.productoId || i.id));
     const updatedProducts = products.map(p => {
@@ -3069,13 +4185,30 @@ function HistorialPage({ ctx }) {
       return upd;
     });
     setProducts(updatedProducts);
-    await ctx.saveProducts(updatedProducts.filter(p => affectedIds.has(p.id)));
+    await ctx.ajustarStock(venta.items || [], 1, updatedProducts.filter(p => affectedIds.has(p.id)));
   };
 
   return (
     <div className="app-page-pad" style={G.page}>
-      {detalle && <DetalleVentaModal venta={detalle} moneda={config.moneda} config={config} onAnular={() => anular(detalle.id)} onClose={() => setDetalle(null)} onVerComprobante={detalle.factura?.estado==="emitida" ? () => { setComprobanteVer(detalle); setDetalle(null); } : null} />}
+      {detalle && <DetalleVentaModal venta={detalle} moneda={config.moneda} config={config} onAnular={() => anular(detalle.id)} onClose={() => setDetalle(null)} onVerComprobante={detalle.factura?.estado==="emitida" ? () => { setComprobanteVer(detalle); setDetalle(null); } : null} onVerNC={detalle.factura?.nc?.estado==="emitida" ? () => { setNcVer(detalle); setDetalle(null); } : null} />}
+      {ncVer && <ComprobanteModal venta={ncVer} config={config} doc="nc" onClose={() => setNcVer(null)} />}
+      {ncVenta && (
+        <NotaCreditoModal venta={ncVenta} config={config} onClose={() => setNcVenta(null)}
+          onEmitida={async (factura, rechazada) => {
+            const actualizada = { ...ncVenta, factura };
+            setSales(prev => prev.map(s => s.id === ncVenta.id ? actualizada : s));
+            if (rechazada) return;
+            setNcVenta(null);
+            await anular(ncVenta.id, actualizada);
+            setNcVer({ ...actualizada, anulada: true });
+          }} />
+      )}
       {comprobanteVer && <ComprobanteModal venta={comprobanteVer} config={config} onClose={() => setComprobanteVer(null)} />}
+      {aFacturar && (
+        <FacturarModal venta={aFacturar} config={config}
+          onResultado={(factura) => setSales(prev => prev.map(s => s.id === aFacturar.id ? { ...s, factura } : s))}
+          onClose={() => setAFacturar(null)} />
+      )}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
         <div><h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Historial de Ventas</h1><p style={{ margin:0, color:"#888", fontSize:14 }}>{filtered.length} ventas registradas · Total: {fmtMoney(totalFilt, config.moneda)}</p></div>
         {sales.length > 0 && <button style={G.btn("outline")} onClick={() => exportarVentas(sales, config)}><Download size={14}/> Exportar Excel</button>}
@@ -3083,7 +4216,8 @@ function HistorialPage({ ctx }) {
       <div style={{ display:"flex", gap:12, marginBottom:20 }}>
         <input style={{ ...G.inp(), flex:1 }} placeholder="Buscar por cliente o número..." value={search} onChange={e => setSearch(e.target.value)} />
         <select style={G.inp({ width:180 })} value={filterPeriod} onChange={e => setFilterPeriod(e.target.value)}>{["Todos","Hoy","Esta semana","Este mes"].map(o => <option key={o}>{o}</option>)}</select>
-        <select style={G.inp({ width:200 })} value={filterPago} onChange={e => setFilterPago(e.target.value)}><option>Todos</option>{PAGOS.map(p => <option key={p}>{p}</option>)}</select>
+        {hayWeb && <select style={G.inp({ width:150 })} value={filterCanal} onChange={e => setFilterCanal(e.target.value)}>{["Todos","Local","Web"].map(o => <option key={o} value={o}>{o === "Todos" ? "Local y web" : o === "Web" ? "Solo web" : "Solo local"}</option>)}</select>}
+        <select style={G.inp({ width:200 })} value={filterPago} onChange={e => setFilterPago(e.target.value)}><option>Todos</option>{pagosFiltro.map(p => <option key={p}>{p}</option>)}</select>
       </div>
       <div style={{ ...G.card({ padding:0, overflow:"hidden" }) }}>
         {filtered.length === 0 ? <Empty icon={<ShoppingBag size={36}/>} text="No se encontraron ventas" /> :
@@ -3094,23 +4228,252 @@ function HistorialPage({ ctx }) {
                 <td style={{ padding:"12px 16px", color:"#bbb" }}>#{s.numero}</td>
                 <td style={{ padding:"12px 16px" }}>{fmtDate(s.fecha)}</td>
                 <td style={{ padding:"12px 16px", fontWeight:600 }}>{s.cliente||"—"}</td>
-                <td style={{ padding:"12px 16px", color:"#888" }}>{s.metodoPago}</td>
+                <td style={{ padding:"12px 16px", color:"#888" }}>{s.metodoPago}{" "}<BadgeTiendanube venta={s} /></td>
                 <td style={{ padding:"12px 16px", fontWeight:700, color:s.anulada?"#dc2626":"#16a34a" }}>{fmtMoney(s.total, config.moneda)}</td>
                 <td style={{ padding:"12px 16px" }}><span style={{ background:s.anulada?"#fee2e2":"#dcfce7", color:s.anulada?"#dc2626":"#16a34a", padding:"2px 9px", borderRadius:20, fontSize:11, fontWeight:600 }}>{s.anulada?"Anulada":"Completada"}</span></td>
-                <td style={{ padding:"12px 16px" }}>
-                  {s.factura?.estado === "emitida" ? (
-                    <button onClick={() => setDetalle(s)} style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:20, padding:"2px 10px", fontSize:11, fontWeight:600, color:"#16a34a", cursor:"pointer" }}>
-                      Fact. {s.factura.tipo} ✓
-                    </button>
-                  ) : (
-                    <span style={{ fontSize:11, color:"#bbb" }}>Sin factura</span>
-                  )}
+                <td style={{ padding:"10px 16px" }}>
+                  <CeldaFactura venta={s} config={config} onFacturar={() => setAFacturar(s)} onVer={() => s.factura?.nc?.estado === "emitida" ? setNcVer(s) : setComprobanteVer(s)} onNC={() => setNcVenta(s)} />
                 </td>
                 <td style={{ padding:"12px 16px" }}><button onClick={() => setDetalle(s)} style={{ background:"none", border:"none", cursor:"pointer", color:"#666", fontSize:12 }}>Ver <ChevronRight size={12}/></button></td>
               </tr>
             ))}</tbody>
           </table>
         }
+      </div>
+    </div>
+  );
+}
+
+function ProyeccionPage({ ctx }) {
+  const { config, sales } = ctx;
+  const moneda = config.moneda;
+
+  const hoy = new Date();
+  const anioActual = hoy.getFullYear(), mesActual = hoy.getMonth(); // 0-indexed
+  const mesActualStr = todayStr().slice(0, 7); // "YYYY-MM"
+  const diaHoy = hoy.getDate();
+  const diasDelMes = new Date(anioActual, mesActual + 1, 0).getDate();
+  const diasRestantes = Math.max(1, diasDelMes - diaHoy);
+
+  const ventasValidas = sales.filter(s => !s.anulada);
+
+  // Ventas del mes en curso
+  const ventasMesActual = ventasValidas.filter(s => s.fecha.startsWith(mesActualStr));
+  const totalMesActual = ventasMesActual.reduce((a, s) => a + s.total, 0);
+
+  // Ticket promedio: sobre los últimos 90 días (más representativo que "todo el historial")
+  const hace90 = new Date(hoy); hace90.setDate(hace90.getDate() - 90);
+  const hace90Str = hace90.toISOString().slice(0, 10);
+  const ventasRecientes = ventasValidas.filter(s => s.fecha >= hace90Str);
+  const ticketPromedio = ventasRecientes.length > 0
+    ? ventasRecientes.reduce((a, s) => a + s.total, 0) / ventasRecientes.length
+    : (ventasValidas.length > 0 ? ventasValidas.reduce((a,s)=>a+s.total,0) / ventasValidas.length : 0);
+
+  // ── Curva histórica: % acumulado del mes alcanzado en cada día, promediado entre meses anteriores completos ──
+  const mesesAnteriores = {}; // "YYYY-MM" -> { totalMes, porDia: {1: acumulado, 2: acumulado...} }
+  ventasValidas.forEach(s => {
+    const mesVenta = s.fecha.slice(0, 7);
+    if (mesVenta >= mesActualStr) return; // excluir mes actual y futuros
+    const dia = parseInt(s.fecha.slice(8, 10), 10);
+    if (!mesesAnteriores[mesVenta]) mesesAnteriores[mesVenta] = { total: 0, porDia: {} };
+    mesesAnteriores[mesVenta].total += s.total;
+    mesesAnteriores[mesVenta].porDia[dia] = (mesesAnteriores[mesVenta].porDia[dia] || 0) + s.total;
+  });
+  const mesesKeys = Object.keys(mesesAnteriores).sort().slice(-3); // hasta 3 meses anteriores más recientes
+  const tieneHistorial = mesesKeys.length >= 2;
+
+  // Para cada mes anterior, curva acumulada de % por día del mes
+  let curvaPromedio = null; // { [dia]: % acumulado promedio }
+  if (tieneHistorial) {
+    const curvasPorMes = mesesKeys.map(mk => {
+      const { total, porDia } = mesesAnteriores[mk];
+      const [y, m] = mk.split("-").map(Number);
+      const diasEseMes = new Date(y, m, 0).getDate();
+      let acumulado = 0;
+      const curva = {};
+      for (let d = 1; d <= diasEseMes; d++) {
+        acumulado += porDia[d] || 0;
+        curva[d] = total > 0 ? (acumulado / total) * 100 : 0;
+      }
+      return curva;
+    });
+    curvaPromedio = {};
+    for (let d = 1; d <= 31; d++) {
+      const valores = curvasPorMes.map(c => c[d]).filter(v => v !== undefined);
+      if (valores.length > 0) curvaPromedio[d] = valores.reduce((a,v)=>a+v,0) / valores.length;
+    }
+  }
+
+  // ── Proyección de fin de mes ──
+  let proyeccion, metodoProyeccion;
+  if (tieneHistorial && curvaPromedio && curvaPromedio[diaHoy] > 1) {
+    const pctHoy = curvaPromedio[diaHoy] / 100;
+    proyeccion = totalMesActual / pctHoy;
+    metodoProyeccion = "curva";
+  } else {
+    proyeccion = diaHoy > 0 ? (totalMesActual / diaHoy) * diasDelMes : 0;
+    metodoProyeccion = "lineal";
+  }
+
+  // ── Slider de meta ──
+  const metaSugeridaDefault = Math.max(Math.round(proyeccion / 100000) * 100000, 100000);
+  const [meta, setMeta] = useState(metaSugeridaDefault);
+  const [metaTexto, setMetaTexto] = useState(metaSugeridaDefault.toLocaleString("es-AR"));
+  // El techo del slider se extiende solo si el usuario tipea/arrastra más allá — "sin límite" en la práctica
+  const metaMax = 100000000; // tope fijo: $100.000.000
+
+  const actualizarMeta = (valor) => {
+    const v = Math.min(metaMax, Math.max(0, Math.round(valor)));
+    setMeta(v);
+    setMetaTexto(v.toLocaleString("es-AR"));
+  };
+
+  const faltante = Math.max(0, meta - totalMesActual);
+  const ventasNecesariasTotal = ticketPromedio > 0 ? Math.ceil(meta / ticketPromedio) : 0;
+  const ventasHechas = ventasMesActual.length;
+  const ventasNecesariasRestantes = ticketPromedio > 0 ? Math.ceil(faltante / ticketPromedio) : 0;
+  const promedioDiarioNecesario = faltante / diasRestantes;
+  const ventasDiariasNecesarias = ticketPromedio > 0 ? (promedioDiarioNecesario / ticketPromedio) : 0;
+  const progresoPct = meta > 0 ? Math.min(100, (totalMesActual / meta) * 100) : 0;
+  const vasABien = proyeccion >= meta;
+
+  // ── Camino alternativo: mantener el ritmo de ventas (cantidad) y subir el ticket promedio en vez de vender más veces ──
+  const ritmoVentasPorDia = diaHoy > 0 ? ventasHechas / diaHoy : 0;
+  const ventasEsperadasRestantes = Math.round(ritmoVentasPorDia * diasRestantes);
+  const ventasTotalesEsperadas = ventasHechas + ventasEsperadasRestantes;
+  const hayDatosParaAlternativa = ventasTotalesEsperadas > 0;
+  const ticketNecesarioMismoRitmo = hayDatosParaAlternativa ? meta / ventasTotalesEsperadas : 0;
+  const subaTicketPct = (hayDatosParaAlternativa && ticketPromedio > 0) ? ((ticketNecesarioMismoRitmo / ticketPromedio) - 1) * 100 : 0;
+
+  return (
+    <div className="app-page-pad" style={G.page}>
+      <div style={{ marginBottom:24 }}>
+        <h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Proyección</h1>
+        <p style={{ margin:0, color:"#888", fontSize:14 }}>Definí una meta para el mes y mirá cómo viene tu ritmo de ventas</p>
+      </div>
+
+      <div className="proyeccion-grid" style={{ display:"grid", gridTemplateColumns:"200px 1fr", gap:28, alignItems:"stretch" }}>
+        {/* ── Barra vertical de meta ── */}
+        <div style={{ ...G.card(), display:"flex", flexDirection:"column", alignItems:"center", padding:"28px 16px" }}>
+          <div style={{ fontSize:12, fontWeight:600, color:"#999", marginBottom:6, textAlign:"center" }}>META DEL MES</div>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={metaTexto}
+            onFocus={e => { setMetaTexto(String(meta)); e.target.select(); }}
+            onChange={e => {
+              const raw = e.target.value.replace(/[^\d]/g, "");
+              setMetaTexto(raw);
+            }}
+            onBlur={() => {
+              const v = Math.min(metaMax, Math.max(0, Math.round(+metaTexto || 0)));
+              setMeta(v);
+              setMetaTexto(v.toLocaleString("es-AR"));
+            }}
+            onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+            style={{
+              fontSize:20, fontWeight:800, marginBottom:18, textAlign:"center", color:"#9238FF",
+              border:"none", borderBottom:"1px dashed #ddd0fb", background:"transparent", width:"100%",
+              padding:"2px 4px", fontFamily:"inherit", outline:"none",
+            }}
+          />
+          <div style={{ flex:1, display:"flex", alignItems:"center", minHeight:260 }}>
+            <input
+              type="range"
+              min={0}
+              max={metaMax}
+              step={10000}
+              value={meta}
+              onChange={e => actualizarMeta(+e.target.value)}
+              style={{
+                WebkitAppearance: "slider-vertical",
+                width: 8,
+                height: 260,
+                accentColor: "#9238FF",
+                cursor: "pointer",
+              }}
+            />
+          </div>
+          <div style={{ fontSize:11, color:"#bbb", marginTop:14, textAlign:"center" }}>Arrastrá o escribí el número</div>
+        </div>
+
+        {/* ── Info principal ── */}
+        <div>
+          {/* Progreso actual vs meta */}
+          <div style={{ ...G.card(), marginBottom:16 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:10 }}>
+              <span style={{ fontSize:14, fontWeight:600, color:"#666" }}>Progreso del mes</span>
+              <span style={{ fontSize:13, color:"#999" }}>Día {diaHoy} de {diasDelMes}</span>
+            </div>
+            <div style={{ height:14, background:"#f3f4f6", borderRadius:20, overflow:"hidden", marginBottom:10 }}>
+              <div style={{ height:"100%", width:`${progresoPct}%`, background: progresoPct >= 100 ? "#16a34a" : "#9238FF", borderRadius:20, transition:"width .3s ease" }}/>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13 }}>
+              <span style={{ color:"#666" }}>Llevás <b style={{ color:"#111" }}>{fmtMoney(totalMesActual, moneda)}</b> ({progresoPct.toFixed(0)}%)</span>
+              <span style={{ color:"#666" }}>Faltan <b style={{ color:"#111" }}>{fmtMoney(faltante, moneda)}</b></span>
+            </div>
+          </div>
+
+          {/* Qué necesitás para llegar */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:16 }}>
+            <StatCard icon={<ShoppingCart size={19}/>} bg="#f4ecff" label="Ventas necesarias (total mes)" value={ticketPromedio > 0 ? `${ventasNecesariasTotal} ventas` : "—"} />
+            <StatCard icon={<Target size={19}/>} bg="#dbeafe" label="Te faltan" value={ticketPromedio > 0 ? `${ventasNecesariasRestantes} ventas` : "—"} />
+            <StatCard icon={<TrendingUp size={19}/>} bg="#dcfce7" label="Ritmo diario necesario" value={ticketPromedio > 0 ? `${Math.ceil(ventasDiariasNecesarias)} ventas/día` : "—"} />
+            <StatCard icon={<DollarSign size={19}/>} bg="#fef3c7" label="Ticket promedio" value={fmtMoney(ticketPromedio, moneda)} />
+          </div>
+
+          {/* Proyección de fin de mes */}
+          <div style={{ ...G.card(), background: vasABien ? "#f0fdf4" : "#fef2f2" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+              <TrendingUp size={18} color={vasABien ? "#16a34a" : "#dc2626"}/>
+              <h3 style={{ margin:0, fontSize:15, fontWeight:700 }}>Proyección de fin de mes</h3>
+            </div>
+            <div style={{ fontSize:28, fontWeight:800, color: vasABien ? "#16a34a" : "#dc2626", margin:"8px 0 6px" }}>{fmtMoney(proyeccion, moneda)}</div>
+            <p style={{ margin:0, fontSize:13.5, color:"#555", lineHeight:1.5 }}>
+              {vasABien
+                ? `Con tu ritmo actual, vas a superar tu meta de ${fmtMoney(meta, moneda)}. 🎉`
+                : `Con tu ritmo actual, vas a quedar ${fmtMoney(meta - proyeccion, moneda)} por debajo de tu meta.`}
+            </p>
+            <p style={{ margin:"10px 0 0", fontSize:11.5, color:"#999" }}>
+              {metodoProyeccion === "curva"
+                ? `Calculado según tu patrón histórico de ventas (comparando el día ${diaHoy} con meses anteriores).`
+                : `Proyección lineal simple (necesitamos al menos 2 meses de historial para ajustar por patrones estacionales de tu negocio).`}
+            </p>
+          </div>
+
+          {/* Distintos caminos para llegar a la meta */}
+          <div style={{ ...G.card(), marginTop:16 }}>
+            <h3 style={{ margin:"0 0 4px", fontSize:15, fontWeight:700, display:"flex", alignItems:"center", gap:6 }}><Target size={16} color="#9238FF"/>Caminos para llegar a tu meta</h3>
+            <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Vender más veces no es la única forma — subir el ticket promedio también te lleva al mismo lugar.</p>
+
+            <div style={{ background:"#f9fafb", borderRadius:10, padding:"14px 16px", marginBottom:10 }}>
+              <div style={{ fontSize:12.5, fontWeight:700, color:"#666", marginBottom:4 }}>🛒 Camino 1 — Más ventas, mismo ticket</div>
+              <p style={{ margin:0, fontSize:13, color:"#333", lineHeight:1.5 }}>
+                Hacé <b>{ventasNecesariasRestantes} ventas más</b> este mes, manteniendo tu ticket promedio actual de <b>{fmtMoney(ticketPromedio, moneda)}</b>.
+              </p>
+            </div>
+
+            <div style={{ background:"#f4ecff", borderRadius:10, padding:"14px 16px" }}>
+              <div style={{ fontSize:12.5, fontWeight:700, color:"#7c3aed", marginBottom:4 }}>💰 Camino 2 — Mismo ritmo de ventas, más ticket</div>
+              {!hayDatosParaAlternativa ? (
+                <p style={{ margin:0, fontSize:13, color:"#666" }}>Todavía no hay suficientes ventas este mes para calcular este camino.</p>
+              ) : subaTicketPct > 1 ? (
+                <>
+                  <p style={{ margin:"0 0 6px", fontSize:13, color:"#333", lineHeight:1.5 }}>
+                    Si seguís vendiendo al ritmo actual (unas <b>{ventasTotalesEsperadas} ventas</b> en todo el mes), tu ticket promedio necesitaría subir a <b>{fmtMoney(ticketNecesarioMismoRitmo, moneda)}</b> (+{subaTicketPct.toFixed(0)}% respecto a hoy).
+                  </p>
+                  <p style={{ margin:0, fontSize:12, color:"#7c3aed" }}>
+                    💡 Subilo vendiendo más unidades por compra (combos, productos complementarios) o productos de mayor valor.
+                  </p>
+                </>
+              ) : (
+                <p style={{ margin:0, fontSize:13, color:"#333", lineHeight:1.5 }}>
+                  Con tu ritmo de ventas actual (unas <b>{ventasTotalesEsperadas} ventas</b> este mes), ya vas camino a alcanzar tu meta sin necesidad de subir el ticket promedio. 🎉
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -3123,14 +4486,29 @@ function EstadisticasPage({ ctx }) {
   const [fechaFin, setFechaFin] = useState(hoy);
   const [preset, setPreset] = useState("Últimos 30 días");
   const [vista, setVista] = useState("dia");
+  const [comparar, setComparar] = useState(false);
+  const [fechaIni2, setFechaIni2] = useState(subDays(subDays(hoy, 30), 30));
+  const [fechaFin2, setFechaFin2] = useState(subDays(hoy, 31));
+  const [canalF, setCanalF] = useState("todos");
+  const hayWeb = sales.some(s => s.canal === "web");
+  const okCanal = (s) => canalF === "todos" || (canalF === "web" ? s.canal === "web" : s.canal !== "web");
 
   const setPresetRange = (p) => { setPreset(p); const n = todayStr(); if(p==="Hoy"){setFechaIni(n);setFechaFin(n);}else if(p==="Últimos 7 días"){setFechaIni(subDays(n,7));setFechaFin(n);}else if(p==="Este mes"){setFechaIni(n.slice(0,7)+"-01");setFechaFin(n);}else if(p==="Últimos 30 días"){setFechaIni(subDays(n,30));setFechaFin(n);}else if(p==="Este año"){setFechaIni(n.slice(0,4)+"-01-01");setFechaFin(n);} };
 
-  const vf = sales.filter(s => !s.anulada && s.fecha >= fechaIni && s.fecha <= fechaFin);
+  const vf = sales.filter(s => !s.anulada && okCanal(s) && s.fecha >= fechaIni && s.fecha <= fechaFin);
   const ingresos = vf.reduce((a,s) => a+s.total, 0);
   const ticket = vf.length > 0 ? ingresos / vf.length : 0;
 
-  const VISTAS = [{ v:"hora", l:"Ventas por hora" },{ v:"dia", l:"Ventas por día" },{ v:"mes", l:"Ventas por mes" },{ v:"anio", l:"Ventas por año" },{ v:"categoria", l:"Ventas por categoría" },{ v:"talla", l:"Ventas por talles" },{ v:"color", l:"Ventas por color" },{ v:"top", l:"Productos más vendidos" },{ v:"top_menos", l:"Productos menos vendidos" },{ v:"metodo", l:"Métodos de pago" }];
+  // Período de comparación (opcional)
+  const vf2 = comparar ? sales.filter(s => !s.anulada && okCanal(s) && s.fecha >= fechaIni2 && s.fecha <= fechaFin2) : [];
+  const ingresos2 = vf2.reduce((a,s) => a+s.total, 0);
+  const ticket2 = vf2.length > 0 ? ingresos2 / vf2.length : 0;
+  const delta = (actual, anterior) => anterior > 0 ? ((actual - anterior) / anterior) * 100 : (actual > 0 ? 100 : 0);
+  const deltaIngresos = delta(ingresos, ingresos2);
+  const deltaVentas = delta(vf.length, vf2.length);
+  const deltaTicket = delta(ticket, ticket2);
+
+  const VISTAS = [{ v:"hora", l:"Ventas por hora" },{ v:"dia", l:"Ventas por día" },{ v:"mes", l:"Ventas por mes" },{ v:"anio", l:"Ventas por año" },{ v:"categoria", l:"Ventas por categoría" },{ v:"talla", l:"Ventas por talles" },{ v:"color", l:"Ventas por color" },{ v:"top", l:"Productos más vendidos" },{ v:"top_menos", l:"Productos menos vendidos" },{ v:"metodo", l:"Métodos de pago" },{ v:"productos_venta", l:"Productos por venta" },{ v:"ticket_dia", l:"Ticket promedio (por día)" },{ v:"unidades_totales", l:"Unidades totales vendidas" },{ v:"dia_semana", l:"Ventas por día de la semana" },{ v:"stock_valorizado", l:"Stock valorizado" }];
 
   // Ranking completo de productos: unidades vendidas + plata generada, en el rango de fechas elegido
   const rankingProductos = useMemo(() => {
@@ -3178,13 +4556,56 @@ function EstadisticasPage({ ctx }) {
     if (vista === "dia") { const m={}; vf.forEach(s=>{m[s.fecha]=(m[s.fecha]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f.slice(5),total:Math.round(t)})); }
     if (vista === "mes") { const m={}; vf.forEach(s=>{const k=s.fecha.slice(0,7);m[k]=(m[k]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f,total:Math.round(t)})); }
     if (vista === "anio") { const m={}; vf.forEach(s=>{const k=s.fecha.slice(0,4);m[k]=(m[k]||0)+s.total;}); return Object.entries(m).sort().map(([f,t])=>({label:f,total:Math.round(t)})); }
-    if (vista === "hora") { const m={}; for(let h=0;h<24;h++)m[h]=0; vf.forEach(s=>{const d=new Date(s.fecha+"T12:00:00");m[d.getHours()]=(m[d.getHours()]||0)+s.total;}); return Object.entries(m).map(([h,t])=>({label:h+"hs",total:Math.round(t)})); }
+    if (vista === "hora") { const m={}; for(let h=0;h<24;h++)m[h]=0; vf.forEach(s=>{if(!s.createdAt) return; const d=new Date(s.createdAt); m[d.getHours()]=(m[d.getHours()]||0)+s.total;}); return Object.entries(m).map(([h,t])=>({label:h+"hs",total:Math.round(t)})); }
     if (vista === "metodo") { const m={}; vf.forEach(s=>{m[s.metodoPago]=(m[s.metodoPago]||0)+s.total;}); return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,t])=>({label:l,total:Math.round(t)})); }
+    if (vista === "productos_venta") {
+      const porDia = {}; // fecha -> { unidades, ventas }
+      vf.forEach(s => {
+        if (!porDia[s.fecha]) porDia[s.fecha] = { unidades:0, ventas:0 };
+        porDia[s.fecha].unidades += (s.items||[]).reduce((a,i)=>a+i.cantidad,0);
+        porDia[s.fecha].ventas += 1;
+      });
+      return Object.entries(porDia).sort().map(([f,d]) => ({ label:f.slice(5), total: d.ventas > 0 ? +(d.unidades/d.ventas).toFixed(1) : 0 }));
+    }
+    if (vista === "ticket_dia") {
+      const porDia = {};
+      vf.forEach(s => {
+        if (!porDia[s.fecha]) porDia[s.fecha] = { ingresos:0, ventas:0 };
+        porDia[s.fecha].ingresos += s.total;
+        porDia[s.fecha].ventas += 1;
+      });
+      return Object.entries(porDia).sort().map(([f,d]) => ({ label:f.slice(5), total: d.ventas > 0 ? Math.round(d.ingresos/d.ventas) : 0 }));
+    }
+    if (vista === "unidades_totales") {
+      const m = {};
+      vf.forEach(s => { m[s.fecha] = (m[s.fecha]||0) + (s.items||[]).reduce((a,i)=>a+i.cantidad,0); });
+      return Object.entries(m).sort().map(([f,t]) => ({ label:f.slice(5), total:t }));
+    }
+    if (vista === "dia_semana") {
+      const DIAS = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+      const m = {}; DIAS.forEach(d => m[d] = 0);
+      vf.forEach(s => { const d = DIAS[new Date(s.fecha+"T12:00:00").getDay()]; m[d] += s.total; });
+      // Orden Lunes a Domingo
+      const orden = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"];
+      return orden.map(d => ({ label:d, total:Math.round(m[d]) }));
+    }
     return [];
   }, [vf, vista, products]);
 
+  // Stock valorizado: no depende del rango de fechas, es una foto del inventario actual
+  const stockValorizado = useMemo(() => {
+    let valorCosto = 0, valorVenta = 0, unidades = 0;
+    products.forEach(p => {
+      const stockReal = p.stock || 0;
+      valorCosto += (p.costo || 0) * stockReal;
+      valorVenta += (p.precio || 0) * stockReal;
+      unidades += stockReal;
+    });
+    return { valorCosto, valorVenta, unidades, gananciaPotencial: valorVenta - valorCosto };
+  }, [products]);
+
   const esPie = vista === "metodo";
-  const labelY = vista === "top" || vista === "top_menos" || vista === "talla" || vista === "color" || vista === "hora" ? "unidades" : "ventas";
+  const labelY = vista === "top" || vista === "top_menos" || vista === "talla" || vista === "color" || vista === "unidades_totales" ? "unidades" : vista === "productos_venta" ? "productos" : "ventas";
 
   return (
     <div className="app-page-pad" style={G.page}>
@@ -3194,6 +4615,13 @@ function EstadisticasPage({ ctx }) {
           {["Hoy","Últimos 7 días","Este mes","Últimos 30 días","Este año"].map(p => (
             <button key={p} onClick={() => setPresetRange(p)} style={{ padding:"6px 14px", borderRadius:7, border:"1px solid #e5e7eb", cursor:"pointer", fontSize:12, background:preset===p?"#111":"#fff", color:preset===p?"#fff":"#374151", fontWeight:preset===p?600:400 }}>{p}</button>
           ))}
+          {hayWeb && (
+            <div style={{ display:"flex", gap:4, marginLeft:"auto", background:"#f3f4f6", borderRadius:8, padding:3 }}>
+              {[["todos","Local + Web"],["local","Local"],["web","Web"]].map(([k, l]) => (
+                <button key={k} onClick={() => setCanalF(k)} style={{ padding:"5px 12px", borderRadius:6, border:"none", cursor:"pointer", fontSize:12, background:canalF===k?"#fff":"transparent", color:canalF===k?"#111":"#6b7280", fontWeight:canalF===k?700:500, boxShadow:canalF===k?"0 1px 2px rgba(0,0,0,.08)":"none" }}>{l}</button>
+              ))}
+            </div>
+          )}
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:16 }}>
           <div><label style={{ fontSize:11, color:"#999", display:"block", marginBottom:4 }}>Fecha inicio</label><input type="date" style={G.inp()} value={fechaIni} onChange={e => { setFechaIni(e.target.value); setPreset(""); }} /></div>
@@ -3204,14 +4632,48 @@ function EstadisticasPage({ ctx }) {
             </select>
           </div>
         </div>
+
+        <div style={{ borderTop:"1px solid #f0f0f0", marginTop:16, paddingTop:14 }}>
+          <label style={{ display:"flex", alignItems:"center", gap:9, cursor:"pointer", width:"fit-content" }}>
+            <div onClick={() => setComparar(v => !v)} style={{ width:36, height:20, borderRadius:20, background: comparar ? "#9238FF" : "#e5e7eb", position:"relative", transition:"background .15s", flexShrink:0 }}>
+              <div style={{ position:"absolute", top:2, left: comparar ? 18 : 2, width:16, height:16, borderRadius:"50%", background:"#fff", transition:"left .15s", boxShadow:"0 1px 3px rgba(0,0,0,0.2)" }}/>
+            </div>
+            <span style={{ fontSize:13, fontWeight:500, color:"#333" }}>Comparar con otro período</span>
+          </label>
+          {comparar && (
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:16, marginTop:14 }}>
+              <div><label style={{ fontSize:11, color:"#999", display:"block", marginBottom:4 }}>Desde</label><input type="date" style={G.inp()} value={fechaIni2} onChange={e => setFechaIni2(e.target.value)} /></div>
+              <div><label style={{ fontSize:11, color:"#999", display:"block", marginBottom:4 }}>Hasta</label><input type="date" style={G.inp()} value={fechaFin2} onChange={e => setFechaFin2(e.target.value)} /></div>
+            </div>
+          )}
+        </div>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
-        <StatCard icon={<DollarSign size={19}/>} bg="#dcfce7" label="Ingresos totales" value={fmtMoney(ingresos, config.moneda)} />
-        <StatCard icon={<ShoppingBag size={19}/>} bg="#dbeafe" label="Ventas realizadas" value={vf.length} />
-        <StatCard icon={<TrendingUp size={19}/>} bg="#ede9fe" label="Ticket promedio" value={fmtMoney(ticket, config.moneda)} />
+        <StatCard icon={<DollarSign size={19}/>} bg="#dcfce7" label="Ingresos totales" value={fmtMoney(ingresos, config.moneda)}
+          badge={comparar ? `${deltaIngresos>=0?"↑":"↓"} ${Math.abs(deltaIngresos).toFixed(0)}%` : undefined}
+          badgeBg={deltaIngresos>=0?"#f0fdf4":"#fef2f2"} badgeColor={deltaIngresos>=0?"#16a34a":"#dc2626"} />
+        <StatCard icon={<ShoppingBag size={19}/>} bg="#dbeafe" label="Ventas realizadas" value={vf.length}
+          badge={comparar ? `${deltaVentas>=0?"↑":"↓"} ${Math.abs(deltaVentas).toFixed(0)}%` : undefined}
+          badgeBg={deltaVentas>=0?"#f0fdf4":"#fef2f2"} badgeColor={deltaVentas>=0?"#16a34a":"#dc2626"} />
+        <StatCard icon={<TrendingUp size={19}/>} bg="#ede9fe" label="Ticket promedio" value={fmtMoney(ticket, config.moneda)}
+          badge={comparar ? `${deltaTicket>=0?"↑":"↓"} ${Math.abs(deltaTicket).toFixed(0)}%` : undefined}
+          badgeBg={deltaTicket>=0?"#f0fdf4":"#fef2f2"} badgeColor={deltaTicket>=0?"#16a34a":"#dc2626"} />
       </div>
+      {comparar && (
+        <p style={{ margin:"-14px 0 20px", fontSize:12, color:"#999" }}>Comparado con el {fmtDate(fechaIni2)} — {fmtDate(fechaFin2)} ({fmtMoney(ingresos2, config.moneda)}, {vf2.length} ventas)</p>
+      )}
       <div style={G.card()}>
-        {["categoria","talla","color"].includes(vista) ? (
+        {vista === "stock_valorizado" ? (
+          <div>
+            <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Esta vista es una foto de tu inventario actual — no depende del rango de fechas elegido arriba.</p>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:14, marginBottom:6 }}>
+              <StatCard icon={<Package size={19}/>} bg="#dbeafe" label="Unidades en stock" value={stockValorizado.unidades} />
+              <StatCard icon={<DollarSign size={19}/>} bg="#fee2e2" label="Valor a costo" value={fmtMoney(stockValorizado.valorCosto, config.moneda)} />
+              <StatCard icon={<TrendingUp size={19}/>} bg="#dcfce7" label="Valor a precio de venta" value={fmtMoney(stockValorizado.valorVenta, config.moneda)} />
+              <StatCard icon={<Target size={19}/>} bg="#f4ecff" label="Ganancia potencial si vendés todo" value={fmtMoney(stockValorizado.gananciaPotencial, config.moneda)} />
+            </div>
+          </div>
+        ) : ["categoria","talla","color"].includes(vista) ? (
           rankingDimension.length === 0 ? (
             <div style={{ textAlign:"center", padding:"52px 0", color:"#bbb" }}>
               <div style={{ marginBottom:10, opacity:0.25, color:"#aaa" }}><TrendingUp size={36}/></div>
@@ -3302,7 +4764,7 @@ function EstadisticasPage({ ctx }) {
               <Tooltip
                 cursor={{ fill:"rgba(0,0,0,0.03)" }}
                 contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }}
-                formatter={v => [labelY==="ventas" ? fmtMoney(v, config.moneda) : v+" uds", ""]}
+                formatter={v => [labelY==="ventas" ? fmtMoney(v, config.moneda) : labelY==="productos" ? v+" por venta" : v+" uds", ""]}
                 labelStyle={{ fontSize:12, fontWeight:600 }}
               />
               <Bar dataKey="total" fill="#111" radius={[10,10,0,0]} maxBarSize={64} />
@@ -3314,16 +4776,254 @@ function EstadisticasPage({ ctx }) {
   );
 }
 
+function CalculadoraPreciosPage({ ctx }) {
+  const { config } = ctx;
+  const moneda = config.moneda;
+
+  const [costo, setCosto] = useState("");
+  const [margenTipo, setMargenTipo] = useState("pct"); // pct | monto
+  const [margenValor, setMargenValor] = useState("40");
+
+  const [usaIIBB, setUsaIIBB] = useState(false);
+  const PROVINCIAS_IIBB = {
+    caba:       { label: "CABA", pct: 3 },
+    baires:     { label: "Buenos Aires", pct: 3.5 },
+    cordoba:    { label: "Córdoba", pct: 3 },
+    santafe:    { label: "Santa Fe", pct: 3.5 },
+    mendoza:    { label: "Mendoza", pct: 3 },
+    tucuman:    { label: "Tucumán", pct: 3.5 },
+    entrerios:  { label: "Entre Ríos", pct: 3.5 },
+    salta:      { label: "Salta", pct: 3.5 },
+    chaco:      { label: "Chaco", pct: 3 },
+    lapampa:    { label: "La Pampa", pct: 3 },
+    otra:       { label: "Otra provincia / no estoy seguro", pct: 3.5 },
+  };
+  const [provinciaIIBB, setProvinciaIIBB] = useState("baires");
+  const [iibbPct, setIibbPct] = useState(String(PROVINCIAS_IIBB.baires.pct));
+
+  const handleProvinciaChange = (v) => {
+    setProvinciaIIBB(v);
+    setIibbPct(String(PROVINCIAS_IIBB[v].pct));
+  };
+
+  const [usaIVA, setUsaIVA] = useState(false);
+  const [ivaPct, setIvaPct] = useState("21");
+
+  const [usaComision, setUsaComision] = useState(false);
+  const [medioPago, setMedioPago] = useState("credito1");
+  const COMISIONES_PRESET = {
+    efectivo:   { label: "Efectivo / Transferencia", pct: 0 },
+    debito:     { label: "Débito (QR)", pct: 1 },
+    credito1:   { label: "Crédito 1 pago", pct: 4.5 },
+    otro:       { label: "Otro / personalizado", pct: 0 },
+  };
+  const [comisionPct, setComisionPct] = useState(String(COMISIONES_PRESET.credito1.pct));
+
+  const [usaCuotas, setUsaCuotas] = useState(false);
+  const [cantCuotas, setCantCuotas] = useState("3");
+  const CUOTAS_PRESET = {
+    "3":  { label: "3 cuotas sin interés", pct: 8 },
+    "6":  { label: "6 cuotas sin interés", pct: 13 },
+    "9":  { label: "9 cuotas sin interés", pct: 16 },
+    "12": { label: "12 cuotas sin interés", pct: 19 },
+  };
+  const [cuotasPct, setCuotasPct] = useState(String(CUOTAS_PRESET["3"].pct));
+
+  const handleCantCuotasChange = (v) => {
+    setCantCuotas(v);
+    setCuotasPct(String(CUOTAS_PRESET[v].pct));
+  };
+
+  const handleMedioPagoChange = (v) => {
+    setMedioPago(v);
+    if (v !== "otro") setComisionPct(String(COMISIONES_PRESET[v].pct));
+  };
+
+  const costoNum = +costo || 0;
+  const gananciaDeseada = margenTipo === "pct" ? costoNum * ((+margenValor || 0) / 100) : (+margenValor || 0);
+  const baseDeseada = costoNum + gananciaDeseada; // lo que el emprendedor quiere quedarse limpio
+
+  const pctIIBB = usaIIBB ? (+iibbPct || 0) : 0;
+  const pctIVA = usaIVA ? (+ivaPct || 0) : 0;
+  const pctComision = usaComision ? (+comisionPct || 0) : 0;
+  const pctCuotas = usaCuotas ? (+cuotasPct || 0) : 0;
+  const pctTotalDescuentos = pctIIBB + pctIVA + pctComision + pctCuotas;
+
+  // Fórmula: para que después de descontar % del PRECIO FINAL siga quedando "baseDeseada" neto,
+  // hay que "inflar" el precio: precio = baseDeseada / (1 - %totalDescuentos)
+  const divisor = 1 - (pctTotalDescuentos / 100);
+  const precioFinal = costoNum > 0 && divisor > 0 ? baseDeseada / divisor : 0;
+
+  const montoIIBB = precioFinal * (pctIIBB / 100);
+  const montoIVA = precioFinal * (pctIVA / 100);
+  const montoComision = precioFinal * (pctComision / 100);
+  const montoCuotas = precioFinal * (pctCuotas / 100);
+  const totalDescuentos = montoIIBB + montoIVA + montoComision + montoCuotas;
+  const margenRealPct = costoNum > 0 ? (gananciaDeseada / costoNum) * 100 : 0;
+
+  const inputStyle = { ...G.inp() };
+  const toggleRow = (checked, onChange, label) => (
+    <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer", padding:"12px 0", borderBottom:"1px solid #f5f5f5" }}>
+      <div onClick={() => onChange(!checked)} style={{ width:38, height:22, borderRadius:20, background: checked ? "#9238FF" : "#e5e7eb", position:"relative", transition:"background .15s", flexShrink:0 }}>
+        <div style={{ position:"absolute", top:2, left: checked ? 18 : 2, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left .15s", boxShadow:"0 1px 3px rgba(0,0,0,0.2)" }}/>
+      </div>
+      <span style={{ fontSize:14, fontWeight:500, color:"#333" }}>{label}</span>
+    </label>
+  );
+
+  return (
+    <div className="app-page-pad" style={G.page}>
+      <div style={{ marginBottom:24 }}>
+        <h1 style={{ margin:"0 0 4px", fontSize:28, fontWeight:800 }}>Calculadora de precios</h1>
+        <p style={{ margin:0, color:"#888", fontSize:14 }}>Encontrá el precio ideal considerando tu margen, impuestos y comisiones de cobro</p>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:24, alignItems:"start" }}>
+        {/* ── Columna izquierda: inputs ── */}
+        <div>
+          <div style={{ ...G.card(), marginBottom:16 }}>
+            <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Costo y margen</h3>
+            <FieldRow label="Costo del producto">
+              <input style={inputStyle} type="number" min={0} placeholder="0" value={costo} onChange={e => setCosto(e.target.value)} />
+            </FieldRow>
+            <div style={{ marginTop:14 }}>
+              <label style={G.label}>Ganancia deseada</label>
+              <div style={{ display:"flex", gap:8 }}>
+                <div style={{ display:"flex", border:"1px solid #e5e7eb", borderRadius:8, overflow:"hidden", flexShrink:0 }}>
+                  {[["pct","%"],["monto",moneda]].map(([v,l]) => (
+                    <button key={v} onClick={() => setMargenTipo(v)} style={{ padding:"9px 14px", border:"none", cursor:"pointer", fontSize:13, fontWeight:margenTipo===v?700:400, background:margenTipo===v?"#111":"#fff", color:margenTipo===v?"#fff":"#666" }}>{l}</button>
+                  ))}
+                </div>
+                <input style={{ ...inputStyle, flex:1 }} type="number" min={0} value={margenValor} onChange={e => setMargenValor(e.target.value)} />
+              </div>
+            </div>
+          </div>
+
+          <div style={{ ...G.card(), marginBottom:16 }}>
+            <h3 style={{ margin:"0 0 4px", fontSize:15, fontWeight:700 }}>¿Qué querés incluir en el precio?</h3>
+            <p style={{ margin:"0 0 4px", fontSize:12.5, color:"#aaa" }}>Activá solo lo que te aplica a vos. Los porcentajes son editables.</p>
+
+            {toggleRow(usaIIBB, setUsaIIBB, "Ingresos Brutos (IIBB)")}
+            {usaIIBB && (
+              <div style={{ padding:"10px 0 14px 48px" }}>
+                <select style={{ ...inputStyle, marginBottom:8 }} value={provinciaIIBB} onChange={e => handleProvinciaChange(e.target.value)}>
+                  {Object.entries(PROVINCIAS_IIBB).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+                <div>
+                  <input style={{ ...inputStyle, maxWidth:120 }} type="number" min={0} step="0.1" value={iibbPct} onChange={e => setIibbPct(e.target.value)} />
+                  <span style={{ fontSize:12, color:"#aaa", marginLeft:8 }}>% — valor de referencia general para comercio minorista. Puede variar según tu actividad específica y el nivel de facturación — confirmalo con tu contador o el organismo de rentas de tu provincia</span>
+                </div>
+              </div>
+            )}
+
+            {toggleRow(usaIVA, setUsaIVA, "IVA (Responsable Inscripto)")}
+            {usaIVA && (
+              <div style={{ padding:"10px 0 14px 48px" }}>
+                <input style={{ ...inputStyle, maxWidth:120 }} type="number" min={0} step="0.1" value={ivaPct} onChange={e => setIvaPct(e.target.value)} />
+                <span style={{ fontSize:12, color:"#aaa", marginLeft:8 }}>% — no marques esto si sos monotributista</span>
+              </div>
+            )}
+
+            {toggleRow(usaComision, setUsaComision, "Comisión de pasarela de pago")}
+            {usaComision && (
+              <div style={{ padding:"10px 0 14px 48px" }}>
+                <select style={{ ...inputStyle, marginBottom:8 }} value={medioPago} onChange={e => handleMedioPagoChange(e.target.value)}>
+                  {Object.entries(COMISIONES_PRESET).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+                <div>
+                  <input style={{ ...inputStyle, maxWidth:120 }} type="number" min={0} step="0.1" value={comisionPct} onChange={e => setComisionPct(e.target.value)} />
+                  <span style={{ fontSize:12, color:"#aaa", marginLeft:8 }}>% — las tasas reales varían según tu cuenta y volumen, revisalas en tu panel de Mercado Pago</span>
+                </div>
+              </div>
+            )}
+
+            {toggleRow(usaCuotas, setUsaCuotas, "Ofrecer cuotas sin interés")}
+            {usaCuotas && (
+              <div style={{ padding:"10px 0 14px 48px" }}>
+                <select style={{ ...inputStyle, marginBottom:8 }} value={cantCuotas} onChange={e => handleCantCuotasChange(e.target.value)}>
+                  {Object.entries(CUOTAS_PRESET).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+                <div>
+                  <input style={{ ...inputStyle, maxWidth:120 }} type="number" min={0} step="0.1" value={cuotasPct} onChange={e => setCuotasPct(e.target.value)} />
+                  <span style={{ fontSize:12, color:"#aaa", marginLeft:8 }}>% adicional a la comisión — se suma aparte, revisalo en tu panel de Mercado Pago</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Columna derecha: resultado ── */}
+        <div style={{ position:"sticky", top:20 }}>
+          <div style={{ ...G.card(), background:"#f9fafb", marginBottom:16, textAlign:"center", padding:"32px 24px" }}>
+            <div style={{ fontSize:13, color:"#888", fontWeight:600, marginBottom:8, textTransform:"uppercase", letterSpacing:"0.5px" }}>Precio de venta sugerido</div>
+            <div style={{ fontSize:44, fontWeight:800, color:"#111", letterSpacing:"-1.5px" }}>{costoNum > 0 ? fmtMoney(precioFinal, moneda) : "—"}</div>
+            {costoNum > 0 && <div style={{ fontSize:13, color:"#9238FF", fontWeight:600, marginTop:6 }}>Ganancia real: {fmtMoney(gananciaDeseada, moneda)} ({margenRealPct.toFixed(0)}% sobre costo)</div>}
+          </div>
+
+          {costoNum > 0 && (
+            <div style={{ ...G.card() }}>
+              <h3 style={{ margin:"0 0 14px", fontSize:14, fontWeight:700, color:"#666" }}>Desglose</h3>
+              <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
+                <span style={{ color:"#666" }}>Costo del producto</span><span style={{ fontWeight:600 }}>{fmtMoney(costoNum, moneda)}</span>
+              </div>
+              <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
+                <span style={{ color:"#666" }}>Ganancia deseada</span><span style={{ fontWeight:600, color:"#16a34a" }}>+{fmtMoney(gananciaDeseada, moneda)}</span>
+              </div>
+              {usaIIBB && (
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
+                  <span style={{ color:"#666" }}>Ingresos Brutos — {PROVINCIAS_IIBB[provinciaIIBB].label} ({iibbPct}%)</span><span style={{ fontWeight:600, color:"#dc2626" }}>+{fmtMoney(montoIIBB, moneda)}</span>
+                </div>
+              )}
+              {usaIVA && (
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
+                  <span style={{ color:"#666" }}>IVA ({ivaPct}%)</span><span style={{ fontWeight:600, color:"#dc2626" }}>+{fmtMoney(montoIVA, moneda)}</span>
+                </div>
+              )}
+              {usaComision && (
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
+                  <span style={{ color:"#666" }}>Comisión pasarela ({comisionPct}%)</span><span style={{ fontWeight:600, color:"#dc2626" }}>+{fmtMoney(montoComision, moneda)}</span>
+                </div>
+              )}
+              {usaCuotas && (
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13.5, padding:"8px 0", borderBottom:"1px solid #f5f5f5" }}>
+                  <span style={{ color:"#666" }}>Cuotas sin interés ({cuotasPct}%)</span><span style={{ fontWeight:600, color:"#dc2626" }}>+{fmtMoney(montoCuotas, moneda)}</span>
+                </div>
+              )}
+              <div style={{ display:"flex", justifyContent:"space-between", fontSize:16, fontWeight:800, padding:"12px 0 0" }}>
+                <span>Precio final</span><span>{fmtMoney(precioFinal, moneda)}</span>
+              </div>
+            </div>
+          )}
+
+          <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"12px 16px", marginTop:16, fontSize:12.5, color:"#92400e", lineHeight:1.5 }}>
+            💡 Esta calculadora es una guía orientativa. Los porcentajes de impuestos y comisiones varían según tu situación fiscal y tu cuenta de cobro — consultá con tu contador y con tu panel de Mercado Pago para confirmar los valores exactos.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FinanzasPage({ ctx }) {
-  const { config, sales, gastos, setGastos } = ctx;
+  const { config, sales, gastos, setGastos, products } = ctx;
   const [mes, setMes] = useState(todayStr().slice(0, 7));
   const [showModal, setShowModal] = useState(false);
   const [tipoInicial, setTipoInicial] = useState("variable");
-  const ingresos = sales.filter(s => !s.anulada && s.fecha.startsWith(mes)).reduce((a,s) => a+s.total, 0);
+  const ventasDelMes = sales.filter(s => !s.anulada && s.fecha.startsWith(mes));
+  const ingresos = ventasDelMes.reduce((a,s) => a+s.total, 0);
+  // Costo de mercadería vendida: por cada ítem vendido, su costo actual del producto × cantidad
+  const costoMercaderia = ventasDelMes.reduce((acc, s) => {
+    const costoVenta = (s.items||[]).reduce((a, i) => {
+      const prod = products.find(p => p.id === (i.productoId || i.id));
+      return a + (prod?.costo || 0) * i.cantidad;
+    }, 0);
+    return acc + costoVenta;
+  }, 0);
   const gastosFijos = gastos.filter(g => g.tipo === "fijo");
   const gastosVar = gastos.filter(g => g.tipo === "variable" && (g.fecha||"").startsWith(mes));
   const totalFijos = gastosFijos.reduce((a,g) => a+g.monto, 0), totalVar = gastosVar.reduce((a,g) => a+g.monto, 0);
-  const ganancia = ingresos - totalFijos - totalVar;
+  const gananciaBruta = ingresos - costoMercaderia;
+  const ganancia = gananciaBruta - totalFijos - totalVar;
   const delGasto = async (id) => { setGastos(prev => prev.filter(g => g.id !== id)); await ctx.deleteGasto(id); };
 
   return (
@@ -3339,8 +5039,14 @@ function FinanzasPage({ ctx }) {
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:14, marginBottom:24 }}>
         <StatCard icon={<TrendingUp size={19}/>} bg="#dcfce7" label="Ingresos del mes" value={fmtMoney(ingresos, config.moneda)} />
+        <StatCard icon={<Package size={19}/>} bg="#fee2e2" label="Costo de mercadería vendida" value={fmtMoney(costoMercaderia, config.moneda)} />
         <StatCard icon={<ClipboardList size={19}/>} bg="#fef3c7" label="Gastos fijos" value={fmtMoney(totalFijos, config.moneda)} />
         <StatCard icon={<Receipt size={19}/>} bg="#dbeafe" label="Gastos variables" value={fmtMoney(totalVar, config.moneda)} />
+        <div style={{ ...G.card(), background:"#f9fafb" }}>
+          <div style={{ marginBottom:10 }}><TrendingUp size={19} color="#555"/></div>
+          <div style={{ fontSize:22, fontWeight:800, color:"#333" }}>{fmtMoney(gananciaBruta, config.moneda)}</div>
+          <div style={{ fontSize:13, color:"#666", marginTop:4 }}>Ganancia bruta</div>
+        </div>
         <div style={{ ...G.card(), background:ganancia>=0?"#f0fdf4":"#fef2f2" }}>
           <div style={{ marginBottom:10 }}>{ganancia>=0?<TrendingUp size={19} color="#16a34a"/>:<TrendingUp size={19} color="#dc2626" style={{transform:"rotate(180deg)"}}/>}</div>
           <div style={{ fontSize:24, fontWeight:800, color:ganancia>=0?"#16a34a":"#dc2626" }}>{fmtMoney(ganancia, config.moneda)}</div>
@@ -3456,251 +5162,404 @@ function RemitosPage({ ctx }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// FACTURACIÓN — constantes y helpers
+// FACTURACIÓN ELECTRÓNICA (ARCA) — helpers
+// La emisión real la hace la función "afip" en el servidor:
+// el navegador nunca ve certificados ni tokens de ARCA.
 // ─────────────────────────────────────────────────────────────
-const CONDICIONES_IVA = ["Responsable Inscripto","Monotributista","Exento","Consumidor Final","No Responsable"];
-const TIPOS_DOC = ["DNI","CUIT","CUIL","Pasaporte","Sin identificar"];
+const RECEPTORES_FACTURA = [
+  { id: "cf",     label: "Consumidor Final" },
+  { id: "ri",     label: "Resp. Inscripto" },
+  { id: "mono",   label: "Monotributista" },
+  { id: "exento", label: "Exento" },
+];
 
-function tipoFactura(tipoContrib, condicionReceptor) {
+// Mismo criterio que el servidor (que es quien decide en última instancia):
+// emisor RI → A a RI/Monotributo, B a CF/Exento. Emisor monotributista → siempre C.
+function tipoFactura(tipoContrib, condReceptor) {
   if (tipoContrib === "responsable_inscripto") {
-    if (condicionReceptor === "Responsable Inscripto") return "A";
-    return "B";
+    return (condReceptor === "ri" || condReceptor === "mono") ? "A" : "B";
   }
-  return "C"; // Monotributista siempre emite C
+  return "C";
 }
 
-function nroComprobante(puntoVenta, nro) {
-  const pv = String(puntoVenta||"1").padStart(4,"0");
-  const n  = String(nro||1).padStart(8,"0");
-  return `${pv}-${n}`;
+function cuitValido(c) {
+  const d = String(c || "").replace(/\D/g, "");
+  if (d.length !== 11) return false;
+  const w = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+  const s = w.reduce((a, x, i) => a + x * Number(d[i]), 0);
+  let r = 11 - (s % 11);
+  if (r === 11) r = 0;
+  if (r === 10) r = 9;
+  return r === Number(d[10]);
 }
 
-function generarCAE() {
-  // Simula un CAE de 14 dígitos (en producción viene de AFIP)
-  return Array.from({length:14}, () => Math.floor(Math.random()*10)).join("");
+function fmtCuit(c) {
+  const d = String(c || "").replace(/\D/g, "").slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 10) return `${d.slice(0, 2)}-${d.slice(2)}`;
+  return `${d.slice(0, 2)}-${d.slice(2, 10)}-${d.slice(10)}`;
 }
 
-// ─── Modal de facturación (abre al completar venta) ───────────
-function FacturarModal({ venta, config, sales, onFacturar, onSinFactura, onClose }) {
-  const [step, setStep] = useState(1); // 1=elegir, 2=datos receptor, 3=procesando, 4=exito
-  const [tipoDoc, setTipoDoc] = useState("DNI");
-  const [nroDoc, setNroDoc] = useState("");
-  const [nombreReceptor, setNombreReceptor] = useState("Consumidor Final");
-  const [condReceptor, setCondReceptor] = useState("Consumidor Final");
-  const [cae, setCae] = useState("");
-  const [caeVto, setCaeVto] = useState("");
+// Neto e IVA 21% en centavos enteros (igual que el servidor)
+function montosFactura(total) {
+  const t = Math.round(Number(total || 0) * 100);
+  const neto = Math.round(t / 1.21);
+  return { total: t / 100, neto: neto / 100, iva: (t - neto) / 100 };
+}
 
-  const tipo = tipoFactura(config.tipoContrib, condReceptor);
-  // Número secuencial: tomar el más alto ya emitido + 1 (AFIP exige correlatividad sin duplicados)
-  const nroFacturasEmitidas = sales.reduce((mx, s) => {
-    if (s.factura?.estado === "emitida" && s.factura?.numero) {
-      const n = parseInt(String(s.factura.numero).split("-").pop(), 10) || 0;
-      return Math.max(mx, n);
+async function llamarAfip(body) {
+  const session = await sb.getSession();
+  let resp;
+  try {
+    resp = await fetch(`${SUPABASE_FUNC_URL}/afip`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, negocio_id: sb._negocioId }),
+    });
+  } catch {
+    return { httpOk: false, codigo: "RED", error: "No hay conexión. Revisá internet y reintentá." };
+  }
+  const data = await resp.json().catch(() => ({}));
+  return { httpOk: resp.ok, ...data };
+}
+
+function BadgePrueba() {
+  return <span title="Emitida en el entorno de prueba de ARCA: no tiene validez fiscal" style={{ background:"#fef3c7", color:"#92400e", fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:20, whiteSpace:"nowrap" }}>Prueba</span>;
+}
+
+// Celda "Factura" del Historial de Ventas
+function CeldaFactura({ venta, config, onFacturar, onVer, onNC }) {
+  if (venta.importada) return <span title="Venta importada de Tiendanube: no se factura desde MiLocal" style={{ fontSize:12, color:"#9ca3af" }}>—</span>;
+  const f = venta.factura;
+  if (f?.estado === "emitida" && f.nc?.estado === "emitida") {
+    return (
+      <button onClick={onVer} style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left" }}>
+        <div style={{ fontSize:12, fontWeight:600, color:"#6b7280", textDecoration:"line-through", whiteSpace:"nowrap" }}>Factura {f.tipo} {f.numero}</div>
+        <div style={{ fontSize:11, fontWeight:700, color:"#b91c1c", whiteSpace:"nowrap", marginTop:2 }}>Anulada con NC {f.nc.numero}</div>
+      </button>
+    );
+  }
+  if (f?.estado === "emitida" && f.nc?.estado === "rechazada" && !venta.anulada) {
+    return (
+      <div style={{ maxWidth:220 }}>
+        <div style={{ fontSize:12, fontWeight:700, color:"#15803d", whiteSpace:"nowrap" }}>Factura {f.tipo} {f.numero}</div>
+        <div title={f.nc.motivo} style={{ fontSize:11, color:"#b91c1c", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", margin:"2px 0 4px" }}>NC rechazada: {f.nc.motivo}</div>
+        {onNC && <button onClick={onNC} style={{ background:"#fff", border:"1px solid #fecaca", color:"#b91c1c", borderRadius:20, padding:"2px 10px", fontSize:11, fontWeight:700, cursor:"pointer" }}>Reintentar NC</button>}
+      </div>
+    );
+  }
+  if (f?.estado === "emitida") {
+    return (
+      <button onClick={onVer} style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, fontWeight:700, color:"#15803d", whiteSpace:"nowrap" }}>
+          <CheckCircle2 size={13}/> Factura {f.tipo} {f.numero}
+          {f.ambiente === "homo" && <BadgePrueba/>}
+        </div>
+        {f.cae && <div style={{ fontSize:11, color:"#6b7280", fontFamily:"monospace", marginTop:2 }}>CAE {f.cae}</div>}
+      </button>
+    );
+  }
+  if (venta.anulada) return <span style={{ fontSize:11, color:"#9ca3af" }}>No se factura</span>;
+  if (!config.facturacionActiva) return <span style={{ fontSize:11, color:"#bbb" }}>Sin factura</span>;
+  if (f?.estado === "rechazada") {
+    return (
+      <div style={{ maxWidth:220 }}>
+        <div style={{ fontSize:12, fontWeight:700, color:"#b91c1c" }}>Rechazada por ARCA</div>
+        <div title={f.motivo} style={{ fontSize:11, color:"#6b7280", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", marginBottom:4 }}>{f.motivo}</div>
+        <button onClick={onFacturar} style={{ background:"#fff", border:"1px solid #fecaca", color:"#b91c1c", borderRadius:20, padding:"2px 10px", fontSize:11, fontWeight:700, cursor:"pointer" }}>Reintentar</button>
+      </div>
+    );
+  }
+  if (f?.estado === "procesando") {
+    return (
+      <div>
+        <div style={{ fontSize:12, fontWeight:700, color:"#92400e", marginBottom:4 }}>Sin confirmar</div>
+        <button onClick={onFacturar} style={{ background:"#fff", border:"1px solid #fde68a", color:"#92400e", borderRadius:20, padding:"2px 10px", fontSize:11, fontWeight:700, cursor:"pointer" }}>Verificar</button>
+      </div>
+    );
+  }
+  return (
+    <button onClick={onFacturar} style={{ background:"#9238ff", color:"#fff", border:"none", borderRadius:20, padding:"5px 14px", fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
+      Facturar
+    </button>
+  );
+}
+
+// ─── Modal de facturación ─────────────────────────────────────
+// conEleccion=true: al terminar una venta (ofrece "Sin comprobante").
+// conEleccion=false: desde el Historial (va directo a los datos del cliente).
+// onResultado(factura) se llama con lo que guardó el servidor (emitida, rechazada o procesando).
+function FacturarModal({ venta, config, conEleccion = false, onResultado, onSinFactura, onClose }) {
+  const previa = venta.factura;
+  const [step, setStep] = useState(conEleccion ? "elegir" : "datos"); // elegir | datos | enviando | ok | rechazada | error
+  const [cond, setCond] = useState(previa?.receptor?.condIVA ? ({ "Responsable Inscripto":"ri", "Monotributista":"mono", "Exento":"exento" }[previa.receptor.condIVA] || "cf") : "cf");
+  const [cuit, setCuit] = useState(previa?.receptor?.nroDoc ? fmtCuit(previa.receptor.nroDoc) : "");
+  const [nombre, setNombre] = useState(previa?.receptor?.nombre && previa.receptor.nombre !== "Consumidor Final" ? previa.receptor.nombre : "");
+  const [resultado, setResultado] = useState(null);
+  const [error, setError] = useState("");
+
+  const tipo = tipoFactura(config.tipoContrib, cond);
+  const m = montosFactura(venta.total);
+  const pideCuit = cond !== "cf";
+  const [dni, setDni] = useState(previa?.receptor?.tipoDoc === "DNI" ? previa.receptor.nroDoc : "");
+  // RG 5700/2025: a consumidor final se lo identifica desde $10.000.000
+  const pideDni = !pideCuit && Number(venta.total) >= 10000000;
+  const dniDigitos = dni.replace(/\D/g, "");
+  const dniOk = !pideDni || /^\d{7,8}$/.test(dniDigitos);
+  const cuitOk = (!pideCuit || cuitValido(cuit)) && dniOk;
+  const cuitDigitos = cuit.replace(/\D/g, "");
+
+  const emitir = async () => {
+    if (step === "enviando" || !cuitOk) return;
+    setStep("enviando"); setError("");
+    const r = await llamarAfip({
+      accion: "facturar_venta",
+      venta_id: venta.id,
+      receptor: { condicion: cond, cuit: pideCuit ? cuitDigitos : "", nombre: nombre.trim(), dni: pideDni ? dniDigitos : "" },
+    });
+    if (r.factura) {
+      setResultado(r.factura);
+      onResultado && onResultado(r.factura);
+      setStep(r.factura.estado === "emitida" ? "ok" : "rechazada");
+      return;
     }
-    return mx;
-  }, 0);
-  const nroComprobante = nroComprobante_fn(config.puntoVenta, nroFacturasEmitidas + 1);
-
-  function nroComprobante_fn(pv, n) {
-    return `${String(pv||"1").padStart(4,"0")}-${String(n).padStart(8,"0")}`;
-  }
-
-  const emitir = () => {
-    if (step === 3) return; // ya procesando: evita doble emisión
-    setStep(3);
-    // Simula llamada a AFIP (en producción: llamada real a la API)
-    setTimeout(() => {
-      const caeNum = generarCAE();
-      const vto = addDays(todayStr(), 10);
-      setCae(caeNum);
-      setCaeVto(vto);
-      setStep(4);
-      const facturaData = {
-        tipo, numero: nroComprobante,
-        fecha: todayStr(), cae: caeNum, caeVto: vto,
-        estado: "emitida",
-        receptor: { nombre: nombreReceptor || "Consumidor Final", tipoDoc, nroDoc, condIVA: condReceptor }
-      };
-      onFacturar(facturaData);
-    }, 2000);
+    // Sin factura en la respuesta: algo falló antes o durante el envío.
+    if (r.codigo === "SIN_RESPUESTA") onResultado && onResultado({ estado: "procesando" });
+    setError(r.error || "No pudimos emitir la factura. Reintentá en un momento.");
+    setStep("error");
   };
 
-  // ── Step 1: Elegir ────────────────────────────────────────
-  if (step === 1) return (
+
+  // ── Elegir (sólo al terminar una venta) ──
+  if (step === "elegir") return (
     <Modal title="¿Cómo querés registrar esta venta?" onClose={onClose} width={440}>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:12, marginBottom:20 }}>
-        <button onClick={onSinFactura} style={{ background:"#fff", border:"2px solid #e5e7eb", borderRadius:12, padding:"24px 16px", cursor:"pointer", textAlign:"center", transition:"border-color .15s" }}
+        <button onClick={onSinFactura} style={{ background:"#fff", border:"2px solid #e5e7eb", borderRadius:12, padding:"24px 16px", cursor:"pointer", textAlign:"center" }}
           onMouseEnter={e=>e.currentTarget.style.borderColor="#111"} onMouseLeave={e=>e.currentTarget.style.borderColor="#e5e7eb"}>
           <div style={{ fontSize:32, marginBottom:10 }}>🧾</div>
           <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>Sin comprobante</div>
-          <div style={{ fontSize:12, color:"#888", lineHeight:1.4 }}>Ticket interno. No se envía a AFIP.</div>
+          <div style={{ fontSize:12, color:"#888", lineHeight:1.4 }}>Ticket interno. Podés facturarla después desde el Historial.</div>
         </button>
-        <button onClick={() => { if (!config.facturacionActiva || !config.cuit) { setStep(0); } else setStep(2); }}
-          style={{ background:config.facturacionActiva?"#fff":"#fafafa", border:`2px solid ${config.facturacionActiva?"#e5e7eb":"#e5e7eb"}`, borderRadius:12, padding:"24px 16px", cursor:"pointer", textAlign:"center", transition:"border-color .15s", position:"relative" }}
-          onMouseEnter={e=>{if(config.facturacionActiva)e.currentTarget.style.borderColor="#111"}} onMouseLeave={e=>e.currentTarget.style.borderColor="#e5e7eb"}>
-          {!config.facturacionActiva && <div style={{ position:"absolute", top:10, right:10, background:"#fef3c7", color:"#92400e", fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20 }}>Config. requerida</div>}
+        <button onClick={() => setStep("datos")} style={{ background:"#fff", border:"2px solid #e5e7eb", borderRadius:12, padding:"24px 16px", cursor:"pointer", textAlign:"center" }}
+          onMouseEnter={e=>e.currentTarget.style.borderColor="#9238ff"} onMouseLeave={e=>e.currentTarget.style.borderColor="#e5e7eb"}>
           <div style={{ fontSize:32, marginBottom:10 }}>🏛️</div>
-          <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>Factura Electrónica</div>
-          <div style={{ fontSize:12, color:"#888", lineHeight:1.4 }}>Se envía a AFIP. Genera CAE.</div>
-        </button>
-      </div>
-      {!config.facturacionActiva && (
-        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", fontSize:13, color:"#92400e" }}>
-          <b>Facturación no configurada.</b> Completá los datos fiscales en Configuración → Facturación para habilitarla.
-        </div>
-      )}
-    </Modal>
-  );
-
-  // ── Step 0: Config incompleta ─────────────────────────────
-  if (step === 0) return (
-    <Modal title="Configuración requerida" onClose={onClose} width={400}>
-      <p style={{ fontSize:14, color:"#666", margin:"0 0 20px" }}>Para emitir facturas electrónicas necesitás completar los datos fiscales en Configuración.</p>
-      <div style={{ display:"flex", gap:10 }}>
-        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onSinFactura}>Continuar sin factura</button>
-        <button style={{ ...G.btn("dark"), flex:1, justifyContent:"center" }} onClick={onClose}>Ir a Configuración</button>
-      </div>
-    </Modal>
-  );
-
-  // ── Step 2: Datos del receptor ────────────────────────────
-  if (step === 2) return (
-    <Modal title={`Emitir Factura ${tipo}`} subtitle={`Comprobante ${nroComprobante} · ${fmtDate(todayStr())}`} onClose={onClose} width={500}>
-      {/* Tipo de factura badge */}
-      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
-        <div style={{ background:"#111", color:"#fff", borderRadius:10, padding:"8px 20px", fontWeight:900, fontSize:22, letterSpacing:2 }}>
-          {tipo}
-        </div>
-        <div>
-          <div style={{ fontWeight:700, fontSize:14 }}>Factura {tipo} Electrónica</div>
-          <div style={{ fontSize:12, color:"#888" }}>
-            {tipo==="A" ? "Operación entre Responsables Inscriptos" : tipo==="B" ? "Receptor Exento o Consumidor Final (RI)" : "Emisor Monotributista"}
-          </div>
-        </div>
-      </div>
-
-      <div style={{ background:"#f9fafb", borderRadius:10, padding:"12px 16px", marginBottom:20, fontSize:13 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-          <span style={{ color:"#666" }}>Emisor</span>
-          <span style={{ fontWeight:600 }}>{config.razonSocial || config.nombre}</span>
-        </div>
-        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-          <span style={{ color:"#666" }}>CUIT</span>
-          <span style={{ fontWeight:600 }}>{config.cuit}</span>
-        </div>
-        <div style={{ display:"flex", justifyContent:"space-between" }}>
-          <span style={{ color:"#666" }}>Condición IVA</span>
-          <span style={{ fontWeight:600 }}>{config.condicionIVA}</span>
-        </div>
-      </div>
-
-      <FieldRow label="Condición IVA del receptor">
-        <select style={G.inp()} value={condReceptor} onChange={e => {
-          setCondReceptor(e.target.value);
-          if (e.target.value === "Consumidor Final") { setNombreReceptor("Consumidor Final"); setTipoDoc("DNI"); setNroDoc(""); }
-        }}>
-          {CONDICIONES_IVA.map(c => <option key={c}>{c}</option>)}
-        </select>
-      </FieldRow>
-
-      <div style={{ display:"grid", gridTemplateColumns:"140px 1fr", gap:12 }}>
-        <FieldRow label="Tipo de documento">
-          <select style={G.inp()} value={tipoDoc} onChange={e => setTipoDoc(e.target.value)}>
-            {TIPOS_DOC.map(d => <option key={d}>{d}</option>)}
-          </select>
-        </FieldRow>
-        <FieldRow label="Número">
-          <input style={G.inp()} value={nroDoc} onChange={e => setNroDoc(e.target.value)} placeholder={tipoDoc==="CUIT"?"20-12345678-0":"12345678"} />
-        </FieldRow>
-      </div>
-
-      <FieldRow label="Nombre / Razón social del receptor">
-        <input style={G.inp()} value={nombreReceptor} onChange={e => setNombreReceptor(e.target.value)} placeholder="Consumidor Final" />
-      </FieldRow>
-
-      {/* Resumen de la factura */}
-      <div style={{ background:"#f9fafb", borderRadius:10, padding:"14px 16px", marginBottom:20 }}>
-        <div style={{ fontWeight:700, fontSize:13, marginBottom:10, color:"#111" }}>Resumen</div>
-        {(venta.items||[]).map((it,i) => (
-          <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
-            <span style={{ color:"#666" }}>{it.nombre} x{it.cantidad}</span>
-            <span>{fmtMoney(it.precio*it.cantidad, config.moneda)}</span>
-          </div>
-        ))}
-        {venta.descuento > 0 && <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#dc2626", marginBottom:4 }}><span>Descuento</span><span>-{fmtMoney(venta.descuento, config.moneda)}</span></div>}
-        <div style={{ display:"flex", justifyContent:"space-between", fontWeight:700, fontSize:16, borderTop:"1px solid #e5e7eb", paddingTop:10, marginTop:6 }}>
-          <span>Total</span><span>{fmtMoney(venta.total, config.moneda)}</span>
-        </div>
-      </div>
-
-      <div style={{ display:"flex", gap:10 }}>
-        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={() => setStep(1)}>← Volver</button>
-        <button style={{ ...G.btn("dark"), flex:2, justifyContent:"center", padding:"12px" }} onClick={emitir}>
-          Emitir Factura {tipo} →
+          <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>Factura electrónica</div>
+          <div style={{ fontSize:12, color:"#888", lineHeight:1.4 }}>Se envía a ARCA y obtiene CAE.</div>
         </button>
       </div>
     </Modal>
   );
 
-  // ── Step 3: Procesando ────────────────────────────────────
-  if (step === 3) return (
+  // ── Enviando ──
+  if (step === "enviando") return (
     <Modal title="" onClose={() => {}} width={380}>
       <div style={{ textAlign:"center", padding:"32px 0" }}>
-        <div style={{ fontSize:48, marginBottom:16, animation:"spin 1s linear infinite" }}>⚙️</div>
-        <div style={{ fontWeight:700, fontSize:18, marginBottom:8 }}>Enviando a AFIP...</div>
-        <div style={{ fontSize:13, color:"#888" }}>Aguardá mientras se procesa la factura electrónica</div>
-        <style>{`@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }`}</style>
+        <div style={{ width:44, height:44, border:"4px solid #f4ecff", borderTopColor:"#9238ff", borderRadius:"50%", margin:"0 auto 18px", animation:"spinFact 0.9s linear infinite" }} />
+        <div style={{ fontWeight:700, fontSize:18, marginBottom:8 }}>Enviando a ARCA…</div>
+        <div style={{ fontSize:13, color:"#888" }}>Esto tarda unos segundos. No cierres la ventana.</div>
+        <style>{`@keyframes spinFact { to { transform: rotate(360deg) } }`}</style>
       </div>
     </Modal>
   );
 
-  // ── Step 4: Éxito ─────────────────────────────────────────
-  if (step === 4) return (
+  // ── Emitida ──
+  if (step === "ok" && resultado) return (
     <Modal title="" onClose={onClose} width={460}>
       <div style={{ textAlign:"center", padding:"16px 0 8px" }}>
         <div style={{ color:"#16a34a", marginBottom:12 }}><CheckCircle2 size={56}/></div>
         <h3 style={{ margin:"0 0 4px", fontSize:22, fontWeight:800 }}>¡Factura emitida!</h3>
-        <p style={{ margin:"0 0 20px", color:"#888", fontSize:13 }}>CAE generado correctamente</p>
-        <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:12, padding:"16px 20px", marginBottom:20, textAlign:"left" }}>
-          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
-            <span style={{ fontSize:13, color:"#666" }}>Tipo</span>
-            <span style={{ fontWeight:700 }}>Factura {tipo} · {nroComprobante}</span>
+        <p style={{ margin:"0 0 20px", color:"#888", fontSize:13 }}>ARCA la aprobó y le asignó CAE.</p>
+        <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:12, padding:"16px 20px", marginBottom:16, textAlign:"left" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8, gap:12 }}>
+            <span style={{ fontSize:13, color:"#666" }}>Comprobante</span>
+            <span style={{ fontWeight:700, display:"flex", gap:6, alignItems:"center" }}>Factura {resultado.tipo} {resultado.numero}{resultado.ambiente === "homo" && <BadgePrueba/>}</span>
           </div>
           <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
-            <span style={{ fontSize:13, color:"#666" }}>CAE N°</span>
-            <span style={{ fontWeight:700, fontFamily:"monospace", fontSize:14 }}>{cae}</span>
+            <span style={{ fontSize:13, color:"#666" }}>CAE</span>
+            <span style={{ fontWeight:700, fontFamily:"monospace", fontSize:14 }}>{resultado.cae}</span>
           </div>
           <div style={{ display:"flex", justifyContent:"space-between" }}>
             <span style={{ fontSize:13, color:"#666" }}>Vto. CAE</span>
-            <span style={{ fontWeight:600 }}>{fmtDate(caeVto)}</span>
+            <span style={{ fontWeight:600 }}>{fmtDate(resultado.caeVto)}</span>
           </div>
         </div>
-        <button style={{ ...G.btn("dark"), width:"100%", justifyContent:"center", padding:"12px" }} onClick={onClose}>
-          Cerrar
-        </button>
+        {resultado.ambiente === "homo" && <p style={{ fontSize:12, color:"#92400e", margin:"0 0 16px" }}>Emitida en el entorno de prueba de ARCA: no tiene validez fiscal.</p>}
+        <button style={{ ...G.btn("dark"), width:"100%", justifyContent:"center", padding:"12px" }} onClick={onClose}>Listo</button>
       </div>
     </Modal>
   );
 
-  return null;
+  // ── Rechazada por ARCA ──
+  if (step === "rechazada" && resultado) return (
+    <Modal title="ARCA rechazó la factura" onClose={onClose} width={460}>
+      <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"12px 16px", marginBottom:16, fontSize:13, color:"#7f1d1d" }}>
+        {(resultado.errores?.length ? resultado.errores : [{ mensaje: resultado.motivo }]).map((e, i) => (
+          <div key={i} style={{ marginBottom:4 }}>{e.codigo ? <b>[{e.codigo}] </b> : null}{e.mensaje}</div>
+        ))}
+      </div>
+      <p style={{ fontSize:13, color:"#666", margin:"0 0 18px" }}>No se emitió ningún comprobante. Corregí los datos del cliente y volvé a intentar.</p>
+      <div style={{ display:"flex", gap:10 }}>
+        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cerrar</button>
+        <button style={{ ...G.btn("dark"), flex:1, justifyContent:"center" }} onClick={() => setStep("datos")}>Corregir datos</button>
+      </div>
+    </Modal>
+  );
+
+  // ── Error (red, ARCA caída, permisos…) ──
+  if (step === "error") return (
+    <Modal title="No se pudo facturar" onClose={onClose} width={440}>
+      <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"12px 16px", marginBottom:18, fontSize:13, color:"#92400e" }}>{error}</div>
+      <div style={{ display:"flex", gap:10 }}>
+        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cerrar</button>
+        <button style={{ ...G.btn("dark"), flex:1, justifyContent:"center" }} onClick={emitir}>Reintentar</button>
+      </div>
+    </Modal>
+  );
+
+  // ── Datos del cliente ──
+  const chip = (activo) => ({ border:`1.5px solid ${activo ? "#9238ff" : "#e4e4e7"}`, background: activo ? "#f4ecff" : "#fff", color: activo ? "#4c1d95" : "#374151", borderRadius:20, padding:"7px 14px", fontSize:13, fontWeight:600, cursor:"pointer" });
+  const fila = { display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:6 };
+  return (
+    <Modal title={`Facturar venta #${venta.numero}`} subtitle={`${fmtDate(venta.fecha)} · ${fmtMoney(venta.total, config.moneda)}`} onClose={onClose} width={500}>
+      <div style={{ fontSize:12, fontWeight:700, color:"#6b7280", marginBottom:8, textTransform:"uppercase", letterSpacing:.4 }}>¿A quién le facturás?</div>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:18 }}>
+        {RECEPTORES_FACTURA.map(r => <button key={r.id} style={chip(cond === r.id)} onClick={() => setCond(r.id)}>{r.label}</button>)}
+      </div>
+
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
+        <div style={{ background:"#111", color:"#fff", borderRadius:10, padding:"6px 16px", fontWeight:900, fontSize:22 }}>{tipo}</div>
+        <div style={{ fontSize:13, color:"#4b5563", lineHeight:1.4 }}>
+          <b style={{ color:"#111" }}>Factura {tipo}</b><br/>
+          {tipo === "A" ? "Discrimina IVA. El cliente necesita CUIT." : tipo === "B" ? "IVA incluido en el precio." : "Emisor monotributista: sin IVA discriminado."}
+        </div>
+      </div>
+
+      {pideDni && (
+        <FieldRow label="DNI del cliente">
+          <input style={G.inp()} inputMode="numeric" value={dni} onChange={e => setDni(e.target.value.replace(/\D/g, "").slice(0, 8))} placeholder="12345678" />
+          <div style={{ fontSize:12, color:"#6b7280", marginTop:4 }}>ARCA pide identificar al consumidor final en ventas de $10.000.000 o más.</div>
+        </FieldRow>
+      )}
+      {pideCuit && (
+        <FieldRow label="CUIT del cliente">
+          <input style={G.inp({ borderColor: cuitDigitos.length === 11 && !cuitOk ? "#dc2626" : undefined })} inputMode="numeric" value={cuit}
+            onChange={e => setCuit(fmtCuit(e.target.value))} placeholder="20-12345678-9" />
+          {cuitDigitos.length === 11 && !cuitOk && <div style={{ fontSize:12, color:"#dc2626", marginTop:4 }}>Ese CUIT no es válido. Revisá los números.</div>}
+        </FieldRow>
+      )}
+      <FieldRow label={pideCuit ? "Nombre o razón social" : "Nombre del cliente (opcional)"}>
+        <input style={G.inp()} value={nombre} onChange={e => setNombre(e.target.value)} placeholder={pideCuit ? "Ej: Distribuidora Sur SRL" : "Consumidor Final"} />
+      </FieldRow>
+
+      <div style={{ background:"#f9fafb", borderRadius:10, padding:"14px 16px", margin:"4px 0 20px" }}>
+        {tipo !== "C" && <>
+          <div style={fila}><span style={{ color:"#666" }}>Neto gravado</span><span>{fmtMoney(m.neto, config.moneda)}</span></div>
+          <div style={fila}><span style={{ color:"#666" }}>IVA 21%</span><span>{fmtMoney(m.iva, config.moneda)}</span></div>
+        </>}
+        <div style={{ display:"flex", justifyContent:"space-between", fontWeight:800, fontSize:16, borderTop: tipo !== "C" ? "1px solid #e5e7eb" : "none", paddingTop: tipo !== "C" ? 8 : 0, marginTop: tipo !== "C" ? 4 : 0 }}>
+          <span>Total</span><span>{fmtMoney(m.total, config.moneda)}</span>
+        </div>
+      </div>
+
+      <div style={{ display:"flex", gap:10 }}>
+        {conEleccion
+          ? <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={() => setStep("elegir")}>← Volver</button>
+          : <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cancelar</button>}
+        <button disabled={!cuitOk} style={{ ...G.btn("dark"), flex:2, justifyContent:"center", padding:"12px", background: cuitOk ? "#9238ff" : "#d4d4d8", borderColor: cuitOk ? "#9238ff" : "#d4d4d8", cursor: cuitOk ? "pointer" : "not-allowed" }} onClick={emitir}>
+          Emitir Factura {tipo}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Nota de crédito: anula la factura y después la venta ─────
+function NotaCreditoModal({ venta, config, onEmitida, onClose }) {
+  const f = venta.factura;
+  const [step, setStep] = useState("confirmar"); // confirmar | enviando | rechazada | error
+  const [error, setError] = useState("");
+  const [motivo, setMotivo] = useState("");
+  const emitir = async () => {
+    if (step === "enviando") return;
+    setStep("enviando"); setError("");
+    const r = await llamarAfip({ accion: "nota_credito_venta", venta_id: venta.id });
+    if (r.factura?.nc?.estado === "emitida") { onEmitida(r.factura); return; }
+    if (r.factura?.nc?.estado === "rechazada") { setMotivo(r.factura.nc.motivo); setStep("rechazada"); onEmitida && onEmitida(r.factura, true); return; }
+    setError(r.error || "No pudimos emitir la nota de crédito. Reintentá en un momento.");
+    setStep("error");
+  };
+
+  if (step === "enviando") return (
+    <Modal title="" onClose={() => {}} width={380}>
+      <div style={{ textAlign:"center", padding:"32px 0" }}>
+        <div style={{ width:44, height:44, border:"4px solid #fee2e2", borderTopColor:"#dc2626", borderRadius:"50%", margin:"0 auto 18px", animation:"spinFact 0.9s linear infinite" }} />
+        <div style={{ fontWeight:700, fontSize:18, marginBottom:8 }}>Enviando nota de crédito a ARCA…</div>
+        <div style={{ fontSize:13, color:"#888" }}>No cierres la ventana.</div>
+        <style>{`@keyframes spinFact { to { transform: rotate(360deg) } }`}</style>
+      </div>
+    </Modal>
+  );
+  if (step === "rechazada") return (
+    <Modal title="ARCA rechazó la nota de crédito" onClose={onClose} width={440}>
+      <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"12px 16px", marginBottom:16, fontSize:13, color:"#7f1d1d" }}>{motivo}</div>
+      <p style={{ fontSize:13, color:"#666", margin:"0 0 18px" }}>La factura sigue vigente y la venta no se anuló.</p>
+      <button style={{ ...G.btn("dark"), width:"100%", justifyContent:"center" }} onClick={onClose}>Cerrar</button>
+    </Modal>
+  );
+  if (step === "error") return (
+    <Modal title="No se pudo emitir la nota de crédito" onClose={onClose} width={440}>
+      <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"12px 16px", marginBottom:18, fontSize:13, color:"#92400e" }}>{error}</div>
+      <div style={{ display:"flex", gap:10 }}>
+        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cerrar</button>
+        <button style={{ ...G.btn("dark"), flex:1, justifyContent:"center" }} onClick={emitir}>Reintentar</button>
+      </div>
+    </Modal>
+  );
+  return (
+    <Modal title="Anular venta con nota de crédito" subtitle={`Venta #${venta.numero} · ${fmtMoney(venta.total, config.moneda)}`} onClose={onClose} width={460}>
+      <p style={{ fontSize:14, color:"#374151", lineHeight:1.55, margin:"0 0 14px" }}>
+        Esta venta tiene la <b>Factura {f.tipo} {f.numero}</b>. Para anularla se emite una <b>Nota de Crédito {f.tipo}</b> por el total ({fmtMoney(f.total ?? venta.total, config.moneda)}) que la cancela en ARCA.
+      </p>
+      <ul style={{ fontSize:13, color:"#4b5563", lineHeight:1.6, margin:"0 0 18px", paddingLeft:18 }}>
+        <li>La nota de crédito es un comprobante fiscal y no se puede deshacer.</li>
+        <li>Después la venta queda anulada y el stock vuelve al inventario.</li>
+      </ul>
+      <div style={{ display:"flex", gap:10 }}>
+        <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cancelar</button>
+        <button style={{ ...G.btn("red"), flex:2, justifyContent:"center" }} onClick={emitir}>Emitir nota de crédito y anular</button>
+      </div>
+    </Modal>
+  );
 }
 
 // ─── Comprobante visual imprimible ────────────────────────────
-function ComprobanteModal({ venta, config, onClose }) {
-  const f = venta.factura;
+function ComprobanteModal({ venta, config, onClose, doc = "factura" }) {
+  const base = venta.factura;
+  const esNC = doc === "nc" && base?.nc?.estado === "emitida";
+  const f = esNC ? { ...base, ...base.nc, emisor: base.emisor, receptor: base.receptor, ambiente: base.ambiente } : base;
+  const nombreDoc = esNC ? "NOTA DE CRÉDITO" : "FACTURA";
+  const [qrImg, setQrImg] = useState("");
+  useEffect(() => {
+    if (!f?.qr) return;
+    QRCode.toDataURL(f.qr, { margin: 1, width: 220 }).then(setQrImg).catch(() => setQrImg(""));
+  }, [f?.qr]);
   if (!f) return null;
+  const emisor = f.emisor || {};
+  const pv = f.pto_vta != null ? String(f.pto_vta).padStart(4, "0") : String(config.puntoVenta || "1").padStart(4, "0");
+  const neto = f.neto != null ? f.neto : montosFactura(venta.total).neto;
+  const iva = f.iva != null ? f.iva : montosFactura(venta.total).iva;
+  const total = f.total != null ? f.total : venta.total;
+  const condEmisor = emisor.condicion === "ri" ? "Responsable Inscripto" : emisor.condicion === "mono" ? "Monotributista" : config.condicionIVA;
 
   const handlePrint = () => {
     const printContent = document.getElementById("comprobante-print");
     if (!printContent) return;
     const w = window.open("", "_blank");
-    w.document.write(`<html><head><title>Factura ${f.tipo} ${f.numero}</title><style>
+    w.document.write(`<html><head><title>${esNC ? "Nota de crédito" : "Factura"} ${f.tipo} ${f.numero}</title><style>
       body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
       table { width: 100%; border-collapse: collapse; }
       td, th { padding: 8px; border: 1px solid #ddd; font-size: 13px; }
       th { background: #f5f5f5; font-weight: 700; }
-      .header { display: flex; justify-content: space-between; margin-bottom: 20px; }
-      .tipo-box { border: 3px solid #000; padding: 10px 20px; font-size: 36px; font-weight: 900; text-align: center; }
       @media print { button { display: none; } }
     </style></head><body>${printContent.innerHTML}</body></html>`);
     w.document.close();
@@ -3708,49 +5567,46 @@ function ComprobanteModal({ venta, config, onClose }) {
   };
 
   return (
-    <Modal title="Comprobante Electrónico" onClose={onClose} width={620}>
+    <Modal title="Comprobante electrónico" onClose={onClose} width={620}>
+      {f.ambiente === "homo" && (
+        <div style={{ background:"#fef3c7", border:"1px solid #fde68a", borderRadius:10, padding:"8px 14px", marginBottom:14, fontSize:12, color:"#92400e", fontWeight:600 }}>
+          Comprobante de PRUEBA (homologación de ARCA): no tiene validez fiscal.
+        </div>
+      )}
       <div id="comprobante-print" style={{ border:"2px solid #e5e7eb", borderRadius:10, padding:"24px", marginBottom:20 }}>
-        {/* Header */}
+        {f.ambiente === "homo" && <div style={{ textAlign:"center", fontWeight:800, color:"#b45309", fontSize:12, letterSpacing:1, marginBottom:10 }}>COMPROBANTE DE PRUEBA — SIN VALIDEZ FISCAL</div>}
         <div style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", gap:16, marginBottom:20, alignItems:"center" }}>
-          {/* Datos emisor */}
           <div>
             {config.logo && <img src={config.logo} alt="logo" style={{ height:40, marginBottom:8, display:"block" }} onError={e=>e.target.style.display="none"} />}
-            <div style={{ fontWeight:800, fontSize:16 }}>{config.razonSocial || config.nombre}</div>
-            <div style={{ fontSize:12, color:"#666", marginTop:4 }}>CUIT: {config.cuit}</div>
-            <div style={{ fontSize:12, color:"#666" }}>Condición IVA: {config.condicionIVA}</div>
-            {config.telefono && <div style={{ fontSize:12, color:"#666" }}>Tel: {config.telefono}</div>}
+            <div style={{ fontWeight:800, fontSize:16 }}>{emisor.razonSocial || config.razonSocial || config.nombre}</div>
+            <div style={{ fontSize:12, color:"#666", marginTop:4 }}>CUIT: {fmtCuit(emisor.cuit || config.cuit)}</div>
+            <div style={{ fontSize:12, color:"#666" }}>{condEmisor}</div>
+            {config.direccion && <div style={{ fontSize:12, color:"#666" }}>{config.direccion}</div>}
           </div>
-          {/* Tipo de comprobante */}
           <div style={{ textAlign:"center", border:"3px solid #111", padding:"12px 20px", borderRadius:8 }}>
             <div style={{ fontWeight:900, fontSize:40, lineHeight:1 }}>{f.tipo}</div>
-            <div style={{ fontSize:10, color:"#666", marginTop:4 }}>FACTURA</div>
-            <div style={{ fontSize:10, marginTop:6, fontWeight:600 }}>Nro: {f.numero}</div>
+            <div style={{ fontSize:10, color:"#666", marginTop:4 }}>{nombreDoc}</div>
+            <div style={{ fontSize:9, color:"#666", marginTop:2 }}>Cód. {String(f.cbte_tipo ?? { A:1, B:6, C:11 }[f.tipo] ?? "").padStart(3, "0")}</div>
           </div>
-          {/* Número y fecha */}
           <div style={{ textAlign:"right" }}>
-            <div style={{ fontSize:13, color:"#666", marginBottom:4 }}>Punto de venta: {String(config.puntoVenta||"1").padStart(4,"0")}</div>
-            <div style={{ fontSize:13, color:"#666", marginBottom:4 }}>Fecha: {fmtDate(f.fecha)}</div>
-            <div style={{ fontSize:11, color:"#888" }}>Fecha de vto. pago: {fmtDate(f.fecha)}</div>
+            <div style={{ fontSize:13, fontWeight:700, marginBottom:4 }}>N° {f.numero}</div>
+            <div style={{ fontSize:13, color:"#666", marginBottom:4 }}>Punto de venta: {pv}</div>
+            <div style={{ fontSize:13, color:"#666" }}>Fecha: {fmtDate(f.fecha)}</div>
           </div>
         </div>
 
         <div style={{ height:1, background:"#e5e7eb", margin:"0 0 16px" }} />
 
-        {/* Receptor */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, marginBottom:16 }}>
-          <div>
-            <div style={{ fontSize:11, color:"#888", marginBottom:4 }}>RECEPTOR</div>
-            <div style={{ fontWeight:700 }}>{f.receptor?.nombre || "Consumidor Final"}</div>
-            <div style={{ fontSize:12, color:"#666" }}>Condición IVA: {f.receptor?.condIVA}</div>
-          </div>
-          <div>
-            {f.receptor?.nroDoc && <div style={{ fontSize:12, color:"#666" }}>{f.receptor?.tipoDoc}: {f.receptor?.nroDoc}</div>}
-          </div>
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:11, color:"#888", marginBottom:4 }}>CLIENTE</div>
+          <div style={{ fontWeight:700 }}>{f.receptor?.nombre || "Consumidor Final"}</div>
+          <div style={{ fontSize:12, color:"#666" }}>Condición IVA: {f.receptor?.condIVA || "Consumidor Final"}</div>
+          {f.receptor?.nroDoc && <div style={{ fontSize:12, color:"#666" }}>{f.receptor?.tipoDoc}: {f.receptor?.tipoDoc === "CUIT" ? fmtCuit(f.receptor.nroDoc) : f.receptor.nroDoc}</div>}
+          {esNC && <div style={{ fontSize:12, color:"#111", marginTop:6, fontWeight:600 }}>Anula la Factura {base.tipo} N° {base.numero} del {fmtDate(base.fecha)}</div>}
         </div>
 
         <div style={{ height:1, background:"#e5e7eb", margin:"0 0 16px" }} />
 
-        {/* Items */}
         <table style={{ width:"100%", borderCollapse:"collapse", marginBottom:16, fontSize:13 }}>
           <thead>
             <tr style={{ background:"#f9fafb" }}>
@@ -3772,7 +5628,6 @@ function ComprobanteModal({ venta, config, onClose }) {
           </tbody>
         </table>
 
-        {/* Totales */}
         <div style={{ display:"flex", justifyContent:"flex-end" }}>
           <div style={{ minWidth:240 }}>
             {venta.descuento > 0 && (
@@ -3783,32 +5638,33 @@ function ComprobanteModal({ venta, config, onClose }) {
             {f.tipo === "A" && (
               <>
                 <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
-                  <span style={{ color:"#666" }}>Subtotal neto</span>
-                  <span>{fmtMoney(venta.total / 1.21, config.moneda)}</span>
+                  <span style={{ color:"#666" }}>Neto gravado</span><span>{fmtMoney(neto, config.moneda)}</span>
                 </div>
                 <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
-                  <span style={{ color:"#666" }}>IVA 21%</span>
-                  <span>{fmtMoney(venta.total - venta.total/1.21, config.moneda)}</span>
+                  <span style={{ color:"#666" }}>IVA 21%</span><span>{fmtMoney(iva, config.moneda)}</span>
                 </div>
               </>
             )}
             <div style={{ display:"flex", justifyContent:"space-between", fontWeight:800, fontSize:18, borderTop:"2px solid #111", paddingTop:8, marginTop:4 }}>
-              <span>TOTAL</span><span>{fmtMoney(venta.total, config.moneda)}</span>
+              <span>TOTAL</span><span>{fmtMoney(total, config.moneda)}</span>
             </div>
+            {f.tipo === "B" && (
+              <div style={{ fontSize:11, color:"#666", marginTop:6, textAlign:"right" }}>IVA contenido: {fmtMoney(iva, config.moneda)}</div>
+            )}
           </div>
         </div>
 
         <div style={{ height:1, background:"#e5e7eb", margin:"16px 0" }} />
 
-        {/* CAE */}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, fontSize:12 }}>
-          <div>
-            <span style={{ color:"#666" }}>CAE N°: </span>
-            <span style={{ fontWeight:700, fontFamily:"monospace" }}>{f.cae}</span>
-          </div>
-          <div style={{ textAlign:"right" }}>
-            <span style={{ color:"#666" }}>Fecha Vto. CAE: </span>
-            <span style={{ fontWeight:600 }}>{fmtDate(f.caeVto)}</span>
+          <div><span style={{ color:"#666" }}>CAE N°: </span><span style={{ fontWeight:700, fontFamily:"monospace" }}>{f.cae}</span></div>
+          <div style={{ textAlign:"right" }}><span style={{ color:"#666" }}>Vto. CAE: </span><span style={{ fontWeight:600 }}>{fmtDate(f.caeVto)}</span></div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:14, marginTop:14 }}>
+          {qrImg && <img src={qrImg} alt="Código QR de ARCA" style={{ width:96, height:96, display:"block" }} />}
+          <div style={{ fontSize:11, color:"#666", lineHeight:1.5 }}>
+            <b style={{ color:"#111" }}>Comprobante Autorizado</b><br/>
+            Este comprobante fue autorizado por ARCA. Escaneá el código para verificarlo.
           </div>
         </div>
       </div>
@@ -3823,10 +5679,906 @@ function ComprobanteModal({ venta, config, onClose }) {
   );
 }
 
+// ─── Activación de facturación (self-service para clientes) ───
+const MILOCAL_CUIT = "20-44118961-4";
+function ActivarFacturacionCard({ config, esDueno }) {
+  const [abierto, setAbierto] = useState(false);
+  const [cuit, setCuit] = useState(config.cuit ? fmtCuit(config.cuit) : "");
+  const [razon, setRazon] = useState(config.razonSocial || "");
+  const [condicion, setCondicion] = useState(config.tipoContrib === "responsable_inscripto" ? "ri" : "mono");
+  const [pv, setPv] = useState("");
+  const [estado, setEstado] = useState(""); // "" | verificando | ok
+  const [error, setError] = useState("");
+  const cuitOk = cuitValido(cuit);
+  const listo = cuitOk && razon.trim().length >= 3 && /^\d{1,5}$/.test(pv);
+
+  const verificar = async () => {
+    if (!listo || estado === "verificando") return;
+    setEstado("verificando"); setError("");
+    const r = await llamarAfip({ accion: "activar_facturacion", datos: { cuit: cuit.replace(/\D/g, ""), razon_social: razon.trim(), condicion, punto_venta: Number(pv) } });
+    if (r.httpOk && r.ok) { setEstado("ok"); setTimeout(() => window.location.reload(), 1800); return; }
+    if (r.codigo === "SIN_DELEGACION") { setEstado("esperando"); setError(""); return; }
+    setEstado(""); setError(r.error || "No pudimos verificar con ARCA. Probá de nuevo en unos minutos.");
+  };
+
+  const paso = (n, titulo, cuerpo) => (
+    <div style={{ display:"flex", gap:12, marginBottom:16 }}>
+      <div style={{ flex:"0 0 26px", height:26, borderRadius:"50%", background:"#f4ecff", color:"#6d28d9", fontWeight:800, fontSize:13, display:"flex", alignItems:"center", justifyContent:"center" }}>{n}</div>
+      <div style={{ fontSize:13, color:"#4b5563", lineHeight:1.55 }}><b style={{ color:"#111", display:"block", marginBottom:2 }}>{titulo}</b>{cuerpo}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ ...G.card({ marginBottom:24 }) }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, gap:12, flexWrap:"wrap" }}>
+        <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>🏛️ Facturación Electrónica (ARCA)</h3>
+        <span style={{ background:"#f4ecff", color:"#7c3aed", fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Incluida en tu plan</span>
+      </div>
+      <p style={{ margin:"0 0 14px", fontSize:13, color:"#666", lineHeight:1.5 }}>
+        Emití facturas A, B y C con CAE desde cada venta o desde el Historial, sin pagar otro sistema. Se activa una sola vez, en unos 10 minutos.
+      </p>
+      {!esDueno ? (
+        <p style={{ margin:0, fontSize:13, color:"#92400e" }}>La facturación la activa el dueño del negocio desde su cuenta.</p>
+      ) : !abierto ? (
+        <button style={{ ...G.btn("dark"), background:"#9238ff", borderColor:"#9238ff" }} onClick={() => setAbierto(true)}>Activar facturación</button>
+      ) : estado === "esperando" ? (
+        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"14px 16px", fontSize:13, color:"#92400e", lineHeight:1.55 }}>
+          <b style={{ display:"block", fontSize:14, marginBottom:4 }}>⏳ Falta que MiLocal acepte tu autorización en ARCA</b>
+          Ya nos llegó tu pedido. Cuando aceptemos la autorización, la facturación se activa sola (normalmente en el día) y no tenés que hacer nada más.
+          Si todavía no hiciste el paso 1 (autorizar a MiLocal en ARCA), hacelo ahora.
+          <div style={{ marginTop:10, display:"flex", gap:8, flexWrap:"wrap" }}>
+            <button style={G.btn("outline")} onClick={() => setEstado("")}>Revisar mis datos</button>
+            <button style={G.btn("outline")} onClick={verificar}>Volver a verificar</button>
+          </div>
+        </div>
+      ) : estado === "ok" ? (
+        <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:10, padding:"12px 16px", fontSize:14, color:"#15803d", fontWeight:700 }}>
+          ✓ ¡Listo! ARCA confirmó todo. La facturación quedó activa.
+        </div>
+      ) : (
+        <div>
+          <div style={{ fontSize:12, color:"#6b7280", marginBottom:14 }}>Hacé los pasos 1 y 2 en la web de ARCA con tu clave fiscal (nivel 3) y volvé acá.</div>
+          {paso(1, "Autorizá a MiLocal a facturar por vos", <>En ARCA entrá a <b>Administrador de Relaciones de Clave Fiscal</b> → <b>Nueva Relación</b> → <b>Buscar</b> → ARCA → WebServices → <b>Facturación Electrónica</b>. En "Representante" poné el CUIT de MiLocal: <b style={{ fontFamily:"monospace" }}>{MILOCAL_CUIT}</b> y confirmá. Nosotros aceptamos la relación en el día.</>)}
+          {paso(2, "Creá un punto de venta para MiLocal", <>Entrá a <b>Administración de puntos de venta y domicilios</b> → tu nombre → <b>A/B/M de puntos de venta</b> → <b>Agregar</b>. Elegí un número que no uses (por ejemplo 5) y en sistema elegí <b>{condicion === "ri" ? "RECE para aplicativo y web services" : "Factura Electrónica - Monotributo - Web Services"}</b>. Tiene que ser uno nuevo: no sirve el de "Comprobantes en línea".</>)}
+          {paso(3, "Completá tus datos y verificá", "Revisamos con ARCA que la autorización y el punto de venta estén bien. Si algo falta, te decimos qué.")}
+
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:12, marginTop:4 }}>
+            <FieldRow label="Tu CUIT">
+              <input style={G.inp()} inputMode="numeric" value={cuit} onChange={e => setCuit(fmtCuit(e.target.value))} placeholder="20-12345678-9" />
+              {cuit.replace(/\D/g, "").length === 11 && !cuitOk && <div style={{ fontSize:12, color:"#dc2626", marginTop:4 }}>Ese CUIT no es válido.</div>}
+            </FieldRow>
+            <FieldRow label="Nombre o razón social (como en ARCA)">
+              <input style={G.inp()} value={razon} onChange={e => setRazon(e.target.value)} placeholder="Ej: PEREZ JUAN" />
+            </FieldRow>
+            <FieldRow label="Condición frente al IVA">
+              <select style={G.inp()} value={condicion} onChange={e => setCondicion(e.target.value)}>
+                <option value="mono">Monotributista (Factura C)</option>
+                <option value="ri">Responsable Inscripto (Factura A y B)</option>
+              </select>
+            </FieldRow>
+            <FieldRow label="Punto de venta del paso 2">
+              <input style={G.inp()} inputMode="numeric" value={pv} onChange={e => setPv(e.target.value.replace(/\D/g, "").slice(0, 5))} placeholder="Ej: 5" />
+            </FieldRow>
+          </div>
+          {error && <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 14px", margin:"4px 0 14px", fontSize:13, color:"#92400e" }}>{error}</div>}
+          <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+            <button style={G.btn("outline")} onClick={() => setAbierto(false)}>Después</button>
+            <button disabled={!listo || estado === "verificando"} onClick={verificar}
+              style={{ ...G.btn("dark"), background: listo ? "#9238ff" : "#d4d4d8", borderColor: listo ? "#9238ff" : "#d4d4d8", cursor: listo ? "pointer" : "not-allowed" }}>
+              {estado === "verificando" ? "Verificando con ARCA…" : "Verificar y activar"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// TIENDANUBE — sincronización de stock
+// ═══════════════════════════════════════════════════════════
+const TN_AZUL = "#2c3e91";
+
+async function llamarTN(body) {
+  const session = await sb.getSession();
+  let resp;
+  try {
+    resp = await fetch(`${SUPABASE_FUNC_URL}/tiendanube`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, negocio_id: sb._negocioId }),
+    });
+  } catch {
+    return { httpOk: false, codigo: "RED", error: "No hay conexión. Revisá internet y reintentá." };
+  }
+  const data = await resp.json().catch(() => ({}));
+  return { httpOk: resp.ok, ...data };
+}
+
+// Después de guardar productos o ventas, si la tienda está conectada, subimos el stock que cambió.
+let _tnTimer = null;
+function tnProgramarSync() {
+  if (!sb._tnActiva) return;
+  clearTimeout(_tnTimer);
+  _tnTimer = setTimeout(() => { llamarTN({ accion: "sincronizar" }).catch(() => {}); }, 2500);
+}
+
+function BadgeTiendanube({ venta }) {
+  const pc = venta?.pagosCombinados;
+  if (venta?.canal !== "web" || !pc || Array.isArray(pc) || pc.origen !== "tiendanube") return null;
+  if (venta.importada) return <span title="Venta web traída del historial de Tiendanube" style={{ background:"#f3f4f6", color:"#4b5563", fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:20, whiteSpace:"nowrap" }}>Importada · #{pc.numero_tn}</span>;
+  return <span title="Venta hecha en tu tienda online" style={{ background:"#e8ecff", color:TN_AZUL, fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:20, whiteSpace:"nowrap" }}>Tiendanube · #{pc.numero_tn}</span>;
+}
+
+const haceCuanto = (iso) => {
+  if (!iso) return "";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "recién";
+  if (s < 3600) return `hace ${Math.round(s / 60)} min`;
+  if (s < 86400) return `hace ${Math.round(s / 3600)} h`;
+  return new Date(iso).toLocaleDateString("es-AR");
+};
+
+const TN_ESTADOS = {
+  automatico: { txt: "Vinculado automático", bg: "#dcfce7", fg: "#15803d" },
+  vinculado:  { txt: "Vinculado", bg: "#dcfce7", fg: "#15803d" },
+  sugerido:   { txt: "Revisá la sugerencia", bg: "#fef3c7", fg: "#92400e" },
+  sin_match:  { txt: "Sin coincidencia", bg: "#fee2e2", fg: "#b91c1c" },
+  ignorado:   { txt: "No se sincroniza", bg: "#f3f4f6", fg: "#6b7280" },
+};
+
+function VincularTNModal({ onClose, onGuardado }) {
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [datos, setDatos] = useState(null);   // { filas, productos }
+  const [sel, setSel] = useState({});         // tn_product_id → { accion: "vincular"|"ignorar"|"importar", producto_id, mapeo:{variant_id:talle} }
+  const [fuente, setFuente] = useState("milocal");
+  const [guardando, setGuardando] = useState(false);
+  const [filtro, setFiltro] = useState("revisar");
+
+  useEffect(() => {
+    (async () => {
+      const r = await llamarTN({ accion: "analizar" });
+      if (!r.httpOk || !r.ok) { setError(r.error || "No pudimos leer los productos de Tiendanube."); setCargando(false); return; }
+      const s = {};
+      for (const f of r.filas) {
+        const mapeo = {};
+        (f.mapeo || []).forEach(m => { mapeo[m.variant_id] = m.talle ?? null; });
+        s[f.tn_product_id] = {
+          accion: f.estado === "ignorado" ? "ignorar" : f.estado === "sin_match" ? "ignorar" : "vincular",
+          producto_id: f.producto_id || "",
+          mapeo,
+          yaGuardado: f.estado === "vinculado" || f.estado === "ignorado",
+        };
+      }
+      setDatos(r); setSel(s); setCargando(false);
+      if (!r.filas.some(f => f.estado === "sugerido" || f.estado === "sin_match")) setFiltro("todos");
+    })();
+  }, []);
+
+  const prodPorId = useMemo(() => new Map((datos?.productos || []).map(p => [p.id, p])), [datos]);
+  const cambiar = (id, patch) => setSel(s => ({ ...s, [id]: { ...s[id], ...patch, yaGuardado: false } }));
+
+  const elegirProducto = (fila, productoId) => {
+    const p = prodPorId.get(productoId);
+    const talles = p?.talles || [];
+    const mapeo = {};
+    fila.variantes.forEach(v => {
+      const n = v.valores.map(x => x.toLowerCase().trim());
+      const t = talles.find(x => n.includes(String(x).toLowerCase().trim()));
+      mapeo[v.id] = talles.length ? (t ?? (talles.length === 1 && fila.variantes.length === 1 ? talles[0] : undefined)) : null;
+    });
+    cambiar(fila.tn_product_id, { producto_id: productoId, mapeo, accion: productoId ? "vincular" : "ignorar" });
+  };
+
+  const filaValida = (f) => {
+    const s = sel[f.tn_product_id];
+    if (!s || s.accion !== "vincular") return true;
+    if (!s.producto_id) return false;
+    return f.variantes.every(v => s.mapeo[v.id] !== undefined);
+  };
+
+  const filas = datos?.filas || [];
+  const aRevisar = filas.filter(f => f.estado === "sugerido" || f.estado === "sin_match" || !filaValida(f));
+  const visibles = filtro === "revisar" ? aRevisar : filas;
+  const invalidas = filas.filter(f => !filaValida(f));
+  const nVincular = filas.filter(f => sel[f.tn_product_id]?.accion === "vincular").length;
+  const nImportar = filas.filter(f => sel[f.tn_product_id]?.accion === "importar").length;
+
+  const guardar = async () => {
+    if (invalidas.length || guardando) return;
+    setGuardando(true); setError("");
+    const vinculos = filas
+      .filter(f => { const s = sel[f.tn_product_id]; return s && !s.yaGuardado && s.accion !== "importar"; })
+      .map(f => {
+        const s = sel[f.tn_product_id];
+        return {
+          tn_product_id: f.tn_product_id,
+          producto_id: s.accion === "vincular" ? s.producto_id : null,
+          ignorar: s.accion === "ignorar",
+          mapeo: f.variantes.map(v => ({ variant_id: v.id, talle: s.accion === "vincular" ? (s.mapeo[v.id] ?? null) : null })),
+        };
+      });
+    const r = await llamarTN({ accion: "guardar_vinculos", vinculos, stock_inicial: fuente });
+    if (!r.httpOk || !r.ok) { setError(r.error || "No se pudo guardar."); setGuardando(false); return; }
+    const importar = filas.filter(f => sel[f.tn_product_id]?.accion === "importar").map(f => f.tn_product_id);
+    if (importar.length) {
+      const r2 = await llamarTN({ accion: "importar", tn_product_ids: importar });
+      if (!r2.httpOk || !r2.ok) { setError(r2.error || "Se guardaron los vínculos pero no se pudieron importar los productos."); setGuardando(false); return; }
+    }
+    setGuardando(false);
+    onGuardado({ vinculados: r.vinculados, importados: importar.length, recargar: importar.length > 0 || fuente === "tiendanube" });
+  };
+
+  return (
+    <Modal title="Vincular productos con Tiendanube" subtitle="Elegí qué producto de MiLocal corresponde a cada producto de tu tienda online. El stock queda igual en los dos lados." onClose={onClose} width={860}>
+      {cargando ? (
+        <div style={{ padding:"40px 0", textAlign:"center", color:"#888", fontSize:14 }}>Leyendo los productos de tu tienda…</div>
+      ) : error && !datos ? (
+        <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"12px 16px", fontSize:13, color:"#b91c1c" }}>{error}</div>
+      ) : (
+        <div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14, alignItems:"center" }}>
+            {[["revisar", `Para revisar (${aRevisar.length})`], ["todos", `Todos (${filas.length})`]].map(([k, t]) => (
+              <button key={k} onClick={() => setFiltro(k)} style={{ ...G.btn(filtro === k ? "dark" : "outline"), padding:"6px 12px", fontSize:12 }}>{t}</button>
+            ))}
+            <span style={{ fontSize:12, color:"#888", marginLeft:"auto" }}>{filas.length - aRevisar.length} se vincularon solos</span>
+          </div>
+
+          {visibles.length === 0 ? (
+            <div style={{ padding:"28px 0", textAlign:"center", color:"#16a34a", fontSize:14, fontWeight:600 }}>✓ No hay nada para revisar. Todo se vinculó automáticamente.</div>
+          ) : (
+            <div style={{ border:"1px solid var(--border)", borderRadius:10, overflow:"hidden", marginBottom:16 }}>
+              {visibles.map(f => {
+                const s = sel[f.tn_product_id] || {};
+                const p = prodPorId.get(s.producto_id);
+                const talles = p?.talles || [];
+                const est = TN_ESTADOS[s.accion === "ignorar" && f.estado !== "sin_match" ? "ignorado" : f.estado] || TN_ESTADOS.sugerido;
+                const conVariantes = f.variantes.length > 1 || f.variantes.some(v => v.valores.length);
+                return (
+                  <div key={f.tn_product_id} style={{ padding:"12px 14px", borderBottom:"1px solid var(--border)", background: filaValida(f) ? "transparent" : "#fffbeb" }}>
+                    <div style={{ display:"grid", gridTemplateColumns:"minmax(180px,1fr) minmax(200px,1.1fr)", gap:12, alignItems:"center" }}>
+                      <div style={{ minWidth:0 }}>
+                        <div style={{ fontWeight:600, fontSize:13, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{f.nombre}</div>
+                        <div style={{ display:"flex", gap:6, alignItems:"center", marginTop:3, flexWrap:"wrap" }}>
+                          <span style={{ background:est.bg, color:est.fg, fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:20 }}>{est.txt}</span>
+                          <span style={{ fontSize:11, color:"#999" }}>{f.variantes.length} {f.variantes.length === 1 ? "variante" : "variantes"}</span>
+                        </div>
+                      </div>
+                      <div style={{ display:"flex", gap:6 }}>
+                        <select style={G.inp({ padding:"7px 10px" })}
+                          value={s.accion === "vincular" ? s.producto_id : s.accion === "importar" ? "__importar" : "__ignorar"}
+                          onChange={e => {
+                            const v = e.target.value;
+                            if (v === "__ignorar") cambiar(f.tn_product_id, { accion: "ignorar" });
+                            else if (v === "__importar") cambiar(f.tn_product_id, { accion: "importar" });
+                            else elegirProducto(f, v);
+                          }}>
+                          <option value="__ignorar">— No sincronizar —</option>
+                          <option value="__importar">➕ Crear este producto en MiLocal</option>
+                          {(datos.productos || []).map(pp => <option key={pp.id} value={pp.id}>{pp.nombre}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    {s.accion === "vincular" && p && conVariantes && (
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginTop:10 }}>
+                        {f.variantes.map(v => (
+                          <label key={v.id} style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, background:"var(--bg-card2)", borderRadius:8, padding:"4px 8px" }}>
+                            <span style={{ color:"#666" }}>{v.valores.join(" / ") || "Única"} →</span>
+                            {talles.length ? (
+                              <select value={s.mapeo[v.id] ?? ""} onChange={e => cambiar(f.tn_product_id, { mapeo: { ...s.mapeo, [v.id]: e.target.value || undefined } })}
+                                style={{ ...G.inp({ padding:"3px 6px", width:"auto", fontSize:12 }), borderColor: s.mapeo[v.id] === undefined ? "#f59e0b" : undefined }}>
+                                <option value="">Elegí talle</option>
+                                {talles.map(t => <option key={t} value={t}>{t}</option>)}
+                              </select>
+                            ) : <span style={{ fontWeight:600 }}>stock general</span>}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{ background:"var(--bg-card2)", borderRadius:10, padding:"12px 14px", marginBottom:14 }}>
+            <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>¿Qué stock vale al empezar?</div>
+            {[["milocal", "El de MiLocal", "Tiendanube se actualiza con el stock que tenés acá (recomendado si contás tu stock en MiLocal)."],
+              ["tiendanube", "El de Tiendanube", "MiLocal toma el stock que tenés cargado en la tienda online."]].map(([k, t, d]) => (
+              <label key={k} style={{ display:"flex", gap:8, alignItems:"flex-start", fontSize:13, marginBottom:6, cursor:"pointer" }}>
+                <input type="radio" checked={fuente === k} onChange={() => setFuente(k)} style={{ marginTop:3 }} />
+                <span><b>{t}</b> <span style={{ color:"#777" }}>— {d}</span></span>
+              </label>
+            ))}
+          </div>
+
+          {error && <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"10px 14px", marginBottom:12, fontSize:13, color:"#b91c1c" }}>{error}</div>}
+          {invalidas.length > 0 && <div style={{ fontSize:12, color:"#92400e", marginBottom:10 }}>Hay {invalidas.length} {invalidas.length === 1 ? "producto" : "productos"} con talles sin elegir.</div>}
+          <div style={{ display:"flex", gap:10, justifyContent:"flex-end", flexWrap:"wrap" }}>
+            <button style={G.btn("outline")} onClick={onClose}>Cancelar</button>
+            <button disabled={!!invalidas.length || guardando} onClick={guardar}
+              style={{ ...G.btn("dark"), background: invalidas.length ? "#d4d4d8" : TN_AZUL, cursor: invalidas.length ? "not-allowed" : "pointer" }}>
+              {guardando ? "Guardando…" : `Guardar y sincronizar (${nVincular}${nImportar ? ` + ${nImportar} nuevos` : ""})`}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// Traer la información de Tiendanube: productos completos + historial de ventas web
+const RANGOS_IMPORT = [
+  { k: "no", label: "No traer", detalle: "Solo desde hoy" },
+  { k: "3", label: "3 meses", detalle: "Lo más reciente" },
+  { k: "12", label: "12 meses", detalle: "Recomendado" },
+  { k: "todo", label: "Todo", detalle: "Desde que abriste" },
+];
+
+function ImportarTNModal({ tienda, importacionActual, onClose, onVincular, onTerminado }) {
+  const corriendo = importacionActual?.estado === "corriendo";
+  const [prod, setProd] = useState(true);
+  const [rango, setRango] = useState("12");
+  const [vista, setVista] = useState(corriendo ? "progreso" : "elegir");
+  const [resProd, setResProd] = useState(null);
+  const [imp, setImp] = useState(importacionActual || null);
+  const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
+  const vivo = useRef(true);
+  useEffect(() => () => { vivo.current = false; }, []);
+
+  const seguir = async () => {
+    while (vivo.current) {
+      const r = await llamarTN({ accion: "importar_continuar" });
+      if (!vivo.current) return;
+      if (!r.httpOk || !r.ok) { setError(r.error || "Se cortó la importación; sigue sola en unos minutos."); return; }
+      setImp(r.importacion);
+      if (!r.importacion || r.importacion.estado !== "corriendo") { onTerminado?.(); return; }
+      if (r.importacion.error) { setError("Tiendanube tardó en responder; reintentando…"); await new Promise(ok => setTimeout(ok, 4000)); }
+    }
+  };
+  useEffect(() => { if (corriendo) seguir(); }, []);
+
+  const empezar = async () => {
+    if (!prod && rango === "no") { onClose(); return; }
+    setCargando(true); setError("");
+    setVista("progreso");
+    const r = await llamarTN({ accion: "importar_info", productos: prod, ventas: rango });
+    setCargando(false);
+    if (!r.httpOk || !r.ok) { setError(r.error || "No se pudo importar."); return; }
+    setResProd(r.productos);
+    setImp(r.importacion);
+    if (r.importacion?.estado === "corriendo") seguir();
+    else onTerminado?.();
+  };
+
+  const total = Number(imp?.total) || 0, hechos = Number(imp?.hechos) || 0;
+  const pct = imp?.estado === "terminado" ? 100 : total ? Math.min(99, Math.round((hechos / total) * 100)) : null;
+  const fmt = (n) => Number(n || 0).toLocaleString("es-AR");
+  const caja = (sel) => ({ padding: "10px 8px", minHeight: 56, borderRadius: 10, cursor: "pointer", textAlign: "center", fontFamily: "inherit", border: sel ? `2px solid ${TN_AZUL}` : "1.5px solid var(--border)", background: sel ? "#e8ecff" : "var(--bg-card)", color: sel ? "#1e2a66" : "var(--text)" });
+  const partes = [prod ? "productos" : null, rango !== "no" ? "ventas" : null].filter(Boolean);
+  const barra = (p, color) => <div style={{ height: 8, borderRadius: 4, background: "#e5e7eb", overflow: "hidden" }}><div style={{ height: "100%", width: `${p}%`, background: color, transition: "width .4s" }}/></div>;
+
+  return (
+    <Modal title="¿Querés traer tu información de Tiendanube?" subtitle={`${tienda ? tienda + " · " : ""}Así arrancás con todo cargado. No cambia nada en tu tienda online.`} onClose={onClose} width={620}>
+      {vista === "elegir" ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <button onClick={() => setProd(!prod)} aria-pressed={prod} style={{ display: "flex", gap: 14, alignItems: "flex-start", width: "100%", padding: "16px 18px", borderRadius: 12, cursor: "pointer", background: "var(--bg-card)", color: "var(--text)", fontFamily: "inherit", textAlign: "left", border: prod ? `2px solid ${TN_AZUL}` : "1.5px solid var(--border)" }}>
+            <span style={{ flex: "0 0 22px", height: 22, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1, background: prod ? TN_AZUL : "#fff", border: prod ? "none" : "1.5px solid #9ca3af", color: "#fff", fontSize: 14, fontWeight: 800 }}>{prod ? "✓" : ""}</span>
+            <span>
+              <span style={{ display: "block", fontSize: 15, fontWeight: 700 }}>Productos completos</span>
+              <span style={{ display: "block", fontSize: 13, color: "#4b5563", marginTop: 3, lineHeight: 1.5 }}>Foto, descripción, categoría, talles, precio, código de barras y <b>costo</b> (si lo tenés en Tiendanube). Los que ya existen en MiLocal se vinculan y se completan, no se duplican.</span>
+            </span>
+          </button>
+          <div style={{ border: "1.5px solid var(--border)", borderRadius: 12, padding: "16px 18px" }}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>Historial de ventas web</div>
+            <div style={{ fontSize: 13, color: "#4b5563", margin: "3px 0 12px", lineHeight: 1.5 }}>Para ver en Estadísticas tus meses y productos más vendidos. Vos elegís cuánto traer.</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8 }}>
+              {RANGOS_IMPORT.map(r => (
+                <button key={r.k} onClick={() => setRango(r.k)} aria-pressed={rango === r.k} style={caja(rango === r.k)}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700 }}>{r.label}</div>
+                  <div style={{ fontSize: 11.5, marginTop: 2, opacity: .8 }}>{r.detalle}</div>
+                </button>
+              ))}
+            </div>
+            {rango !== "no" && (
+              <div style={{ marginTop: 12, background: "var(--bg-card2)", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, color: "#4b5563", lineHeight: 1.55 }}>
+                Las ventas importadas <b>no tocan el stock</b>, <b>no entran a la caja</b> y <b>no se pueden facturar</b>. Quedan con la etiqueta «Importada» y su fecha original, y las podés borrar todas juntas si querés.
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <button onClick={onClose} style={{ ...G.btn("ghost"), textDecoration: "underline", textUnderlineOffset: 3 }}>Ahora no, lo hago después</button>
+            <button onClick={empezar} style={{ ...G.btn("dark"), background: TN_AZUL, padding: "12px 22px", fontSize: 14 }}>{partes.length ? "Traer " + partes.join(" y ") : "Continuar"}</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+            {(prod || resProd) && (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+                  <span style={{ fontWeight: 600 }}>Productos</span>
+                  <span style={{ fontWeight: 700, color: resProd ? "#15803d" : TN_AZUL }}>{resProd ? "Listo ✓" : "Trayendo…"}</span>
+                </div>
+                {barra(resProd ? 100 : 40, resProd ? "#16a34a" : TN_AZUL)}
+                {resProd && (
+                  <div style={{ fontSize: 12.5, color: "#4b5563" }}>
+                    {[resProd.creados && `${resProd.creados} creados`, resProd.vinculados && `${resProd.vinculados} vinculados con los que ya tenías`, resProd.completados && `${resProd.completados} completados con foto o costo`].filter(Boolean).join(" · ") || "Ya estaban todos al día."}
+                  </div>
+                )}
+              </>
+            )}
+            {(imp || (rango !== "no" && cargando)) && (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+                  <span style={{ fontWeight: 600 }}>Ventas web</span>
+                  <span style={{ fontWeight: 700, color: imp?.estado === "terminado" ? "#15803d" : TN_AZUL }}>
+                    {imp?.estado === "terminado" ? `${fmt(hechos)} ventas ✓` : total ? `${fmt(hechos)} de ${fmt(total)}` : `${fmt(hechos)} traídas…`}
+                  </span>
+                </div>
+                {barra(pct ?? 30, imp?.estado === "terminado" ? "#16a34a" : TN_AZUL)}
+              </>
+            )}
+          </div>
+          {resProd?.pendientes > 0 && (
+            <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#92400e", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ flex: 1 }}>{resProd.pendientes} {resProd.pendientes === 1 ? "producto se parece" : "productos se parecen"} a uno que ya tenés: elegí a cuál corresponde.</span>
+              <button onClick={onVincular} style={{ ...G.btn("outline"), padding: "7px 12px" }}>Revisar</button>
+            </div>
+          )}
+          {error && <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#92400e" }}>{error}</div>}
+          <div style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.55 }}>
+            {imp?.estado === "corriendo" ? "Podés cerrar esta ventana y seguir usando MiLocal: la importación sigue sola y te avisamos en la tarjeta de Tiendanube cuando termine." : (resProd || imp?.estado === "terminado") ? "¡Listo! Ya podés ver todo en Productos y en Estadísticas." : "Un momento…"}
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button onClick={onClose} style={G.btn(imp?.estado === "corriendo" || cargando ? "outline" : "dark")}>{imp?.estado === "corriendo" || cargando ? "Seguir usando MiLocal" : "Listo"}</button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function TiendanubeCard({ esDueno, onRecargar }) {
+  const [estado, setEstado] = useState(null);   // respuesta de "estado"
+  const [cargando, setCargando] = useState(true);
+  const [ocupado, setOcupado] = useState("");
+  const [aviso, setAviso] = useState(null);     // { tipo:"ok"|"error", txt }
+  const [vincular, setVincular] = useState(false);
+  const [importar, setImportar] = useState(false);
+  const [borrandoImp, setBorrandoImp] = useState(false);
+  const [confirmarDesc, setConfirmarDesc] = useState(false);
+
+  const cargar = async () => {
+    const r = await llamarTN({ accion: "estado" });
+    if (r.httpOk && r.ok) { setEstado(r); sb._tnActiva = !!r.conexion && r.vinculados > 0; }
+    setCargando(false);
+  };
+
+  useEffect(() => {
+    const ret = sb._tnRetorno; sb._tnRetorno = null;
+    if (ret === "ok") setAviso({ tipo: "ok", txt: "¡Tiendanube conectada! Ahora vinculá tus productos." });
+    else if (ret === "sin_negocio") setAviso({ tipo: "error", txt: "Para conectar la tienda, tocá «Conectar Tiendanube» desde acá (no desde la tienda de aplicaciones)." });
+    else if (ret === "error") setAviso({ tipo: "error", txt: "No se pudo completar la conexión con Tiendanube. Probá de nuevo." });
+    cargar().then(() => { if (ret === "ok") setImportar(true); });
+  }, []);
+
+  const conectar = async () => {
+    setOcupado("conectar"); setAviso(null);
+    const r = await llamarTN({ accion: "iniciar_conexion" });
+    if (r.httpOk && r.ok && r.url) { window.location.href = r.url; return; }
+    setOcupado(""); setAviso({ tipo: "error", txt: r.error || "No se pudo iniciar la conexión." });
+  };
+
+  const sincronizar = async () => {
+    setOcupado("sync");
+    const r = await llamarTN({ accion: "sincronizar" });
+    setOcupado("");
+    setAviso(r.httpOk && r.ok ? { tipo: "ok", txt: r.procesados ? `Listo: ${r.procesados} ${r.procesados === 1 ? "producto actualizado" : "productos actualizados"} en Tiendanube.` : "Todo está al día." } : { tipo: "error", txt: r.error || "No se pudo sincronizar." });
+    cargar();
+  };
+
+  const cambiarSeguridad = async (valor) => {
+    setOcupado("seg");
+    const r = await llamarTN({ accion: "stock_seguridad", valor });
+    setOcupado("");
+    setAviso(r.httpOk && r.ok ? { tipo: "ok", txt: valor ? `Listo: la web va a mostrar ${valor} ${valor === 1 ? "unidad" : "unidades"} menos que el local.` : "Listo: la web muestra el mismo stock que el local." } : { tipo: "error", txt: r.error || "No se pudo cambiar." });
+    cargar();
+  };
+
+  const revisarAhora = async () => {
+    setOcupado("rev");
+    const r = await llamarTN({ accion: "revisar_ahora" });
+    setOcupado("");
+    setAviso(r.httpOk && r.ok ? { tipo: "ok", txt: "Revisión completa: pedidos, productos nuevos y stock al día." } : { tipo: "error", txt: r.error || "No se pudo revisar." });
+    cargar(); sb._tnRecargarVinculos?.(); onRecargar?.();
+  };
+
+  const desconectar = async () => {
+    setOcupado("desc"); setConfirmarDesc(false);
+    const r = await llamarTN({ accion: "desconectar" });
+    setOcupado("");
+    if (r.httpOk && r.ok) { sb._tnActiva = false; setAviso({ tipo: "ok", txt: "Tiendanube desconectada. El stock dejó de sincronizarse." }); cargar(); }
+    else setAviso({ tipo: "error", txt: r.error || "No se pudo desconectar." });
+  };
+
+  const con = estado?.conexion;
+  const iconoAct = { pedido: "🛒", venta: "💰", alerta: "⚠️", error: "⛔", info: "•" };
+
+  return (
+    <div style={{ ...G.card({ marginBottom:24 }) }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, gap:12, flexWrap:"wrap" }}>
+        <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>🛍️ Tiendanube</h3>
+        {con ? <span style={{ background:"#dcfce7", color:"#15803d", fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Conectada</span>
+             : <span style={{ background:"#e8ecff", color:TN_AZUL, fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Nuevo</span>}
+      </div>
+
+      {aviso && (
+        <div style={{ background: aviso.tipo === "ok" ? "#f0fdf4" : "#fffbeb", border:`1px solid ${aviso.tipo === "ok" ? "#bbf7d0" : "#fde68a"}`, color: aviso.tipo === "ok" ? "#15803d" : "#92400e", borderRadius:10, padding:"10px 14px", fontSize:13, margin:"8px 0 12px" }}>{aviso.txt}</div>
+      )}
+
+      {cargando ? (
+        <p style={{ margin:0, fontSize:13, color:"#888" }}>Cargando…</p>
+      ) : !con ? (
+        <>
+          <p style={{ margin:"0 0 14px", fontSize:13, color:"#666", lineHeight:1.55 }}>
+            Conectá tu tienda online y el stock queda igual en los dos lados: cuando vendés en el local se descuenta en la web, y cuando entra un pedido web se descuenta acá y aparece en tu Historial de Ventas.
+          </p>
+          {esDueno ? (
+            <button disabled={ocupado === "conectar"} onClick={conectar} style={{ ...G.btn("dark"), background:TN_AZUL }}>
+              {ocupado === "conectar" ? "Abriendo Tiendanube…" : "Conectar Tiendanube"}
+            </button>
+          ) : <p style={{ margin:0, fontSize:13, color:"#92400e" }}>La conexión la hace el dueño del negocio desde su cuenta.</p>}
+        </>
+      ) : (
+        <>
+          <p style={{ margin:"0 0 12px", fontSize:13, color:"#666", lineHeight:1.5 }}>
+            <b style={{ color:"var(--text)" }}>{con.tienda_nombre || "Tu tienda"}</b>{con.tienda_url ? ` · ${con.tienda_url}` : ""}
+          </p>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom:14 }}>
+            {[["Productos vinculados", estado.vinculados], ["Esperando subir", estado.pendientes], ["Última sincronización", con.ultimo_sync ? haceCuanto(con.ultimo_sync) : "—"], ["Última revisión", con.ultima_revision ? haceCuanto(con.ultima_revision) : "—"]].map(([l, v]) => (
+              <div key={l} style={{ background:"var(--bg-card2)", borderRadius:10, padding:"10px 12px" }}>
+                <div style={{ fontSize:11, color:"#888" }}>{l}</div>
+                <div style={{ fontSize:18, fontWeight:800 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+          {estado.con_error > 0 && (
+            <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"10px 14px", fontSize:13, color:"#b91c1c", marginBottom:12 }}>
+              Hay {estado.con_error} {estado.con_error === 1 ? "producto que no se pudo" : "productos que no se pudieron"} actualizar en Tiendanube. Se reintenta solo; si sigue, tocá «Revisar ahora».
+            </div>
+          )}
+          {esDueno && (
+            <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", background:"var(--bg-card2)", borderRadius:10, padding:"10px 12px", marginBottom:14 }}>
+              <div style={{ flex:"1 1 220px", fontSize:12, color:"#666", lineHeight:1.45 }}>
+                <b style={{ color:"var(--text)", fontSize:13 }}>Stock de seguridad</b><br/>
+                Unidades que la web no muestra, para no vender dos veces la última prenda.
+              </div>
+              <select disabled={ocupado === "seg"} value={con.stock_seguridad || 0} onChange={e => cambiarSeguridad(+e.target.value)} style={G.inp({ width:"auto", padding:"7px 10px" })}>
+                {[0,1,2,3].map(n => <option key={n} value={n}>{n === 0 ? "No reservar" : `Reservar ${n}`}</option>)}
+              </select>
+            </div>
+          )}
+          {estado.vinculados === 0 && (
+            <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 14px", fontSize:13, color:"#92400e", marginBottom:12 }}>
+              Falta un paso: vinculá tus productos para que el stock empiece a sincronizarse.
+            </div>
+          )}
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom: estado.actividad?.length ? 16 : 0 }}>
+            {esDueno && <button style={{ ...G.btn("dark"), background:TN_AZUL }} onClick={() => setImportar(true)}>Traer información</button>}
+            {esDueno && <button style={G.btn("outline")} onClick={() => setVincular(true)}>Vincular productos</button>}
+            <button style={G.btn("outline")} disabled={ocupado === "sync"} onClick={sincronizar}><RefreshCw size={13}/>{ocupado === "sync" ? "Sincronizando…" : "Sincronizar ahora"}</button>
+            {esDueno && <button style={G.btn("outline")} disabled={ocupado === "rev"} onClick={revisarAhora}>{ocupado === "rev" ? "Revisando…" : "Revisar ahora"}</button>}
+            {esDueno && (confirmarDesc ? (
+              <span style={{ display:"inline-flex", gap:6, alignItems:"center", fontSize:12 }}>
+                ¿Seguro?
+                <button style={{ ...G.btn("red"), padding:"6px 10px" }} onClick={desconectar}>Sí, desconectar</button>
+                <button style={{ ...G.btn("outline"), padding:"6px 10px" }} onClick={() => setConfirmarDesc(false)}>No</button>
+              </span>
+            ) : <button style={G.btn("ghost")} onClick={() => setConfirmarDesc(true)}>Desconectar</button>)}
+          </div>
+          {estado.actividad?.length > 0 && (
+            <div>
+              <div style={{ fontSize:12, fontWeight:700, color:"#888", marginBottom:6 }}>Actividad reciente</div>
+              <div style={{ border:"1px solid var(--border)", borderRadius:10, maxHeight:220, overflowY:"auto" }}>
+                {estado.actividad.map((a, i) => (
+                  <div key={i} style={{ display:"flex", gap:8, padding:"8px 12px", borderBottom: i < estado.actividad.length - 1 ? "1px solid var(--border)" : "none", fontSize:12 }}>
+                    <span style={{ flex:"0 0 16px" }}>{iconoAct[a.tipo] || "•"}</span>
+                    <span style={{ flex:1, color: a.tipo === "error" ? "#b91c1c" : a.tipo === "alerta" ? "#92400e" : "var(--text)" }}>{a.texto}</span>
+                    <span style={{ color:"#aaa", whiteSpace:"nowrap" }}>{haceCuanto(a.created_at)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {con?.importacion && (con.importacion.estado === "corriendo" || con.importacion.hechos > 0) && (
+        <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", background:"var(--bg-card2)", borderRadius:10, padding:"10px 12px", marginTop:14, fontSize:13 }}>
+          <span style={{ flex:1 }}>
+            {con.importacion.estado === "corriendo"
+              ? `Importando ventas web… ${Number(con.importacion.hechos||0).toLocaleString("es-AR")}${con.importacion.total ? ` de ${Number(con.importacion.total).toLocaleString("es-AR")}` : ""}`
+              : `${Number(con.importacion.hechos||0).toLocaleString("es-AR")} ventas web importadas (no tocan stock ni caja).`}
+          </span>
+          {con.importacion.estado === "corriendo"
+            ? <button style={{ ...G.btn("outline"), padding:"6px 10px" }} onClick={() => setImportar(true)}>Ver avance</button>
+            : esDueno && (borrandoImp
+              ? <span style={{ display:"inline-flex", gap:6, alignItems:"center", fontSize:12 }}>¿Borrar todas las importadas?
+                  <button style={{ ...G.btn("red"), padding:"6px 10px" }} onClick={async () => { setBorrandoImp(false); const r = await llamarTN({ accion: "borrar_importadas" }); setAviso(r.httpOk && r.ok ? { tipo:"ok", txt:`Se borraron ${r.borradas} ventas importadas.` } : { tipo:"error", txt: r.error || "No se pudo borrar." }); cargar(); onRecargar?.(); }}>Sí, borrar</button>
+                  <button style={{ ...G.btn("outline"), padding:"6px 10px" }} onClick={() => setBorrandoImp(false)}>No</button></span>
+              : <button style={{ ...G.btn("ghost"), padding:"6px 10px", fontSize:12 }} onClick={() => setBorrandoImp(true)}>Borrar importadas</button>)}
+        </div>
+      )}
+
+      {importar && (
+        <ImportarTNModal
+          tienda={con?.tienda_nombre}
+          importacionActual={con?.importacion}
+          onClose={() => { setImportar(false); cargar(); onRecargar?.(); }}
+          onVincular={() => { setImportar(false); setVincular(true); }}
+          onTerminado={() => cargar()}
+        />
+      )}
+
+      {vincular && (
+        <VincularTNModal
+          onClose={() => setVincular(false)}
+          onGuardado={(r) => {
+            setVincular(false);
+            setAviso({ tipo: "ok", txt: `Listo: ${r.vinculados} ${r.vinculados === 1 ? "producto vinculado" : "productos vinculados"}${r.importados ? ` y ${r.importados} creados en MiLocal` : ""}. El stock ya se sincroniza solo.` });
+            cargar();
+            if (r.recargar) onRecargar?.();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// ONBOARDING — integraciones (ARCA, Tiendanube) y "¿Cómo nos conociste?"
+// Se muestra después de los datos del negocio, mientras onboarding_completo = false.
+// ═══════════════════════════════════════════════════════════
+const FUENTES_CONOCIO = ["Instagram", "TikTok", "Google", "Facebook", "Un amigo o conocido", "Otro negocio que la usa", "YouTube", "Otro"];
+const ONB_KEY = "milocal_onb_paso";
+
+function OnboardingIntegraciones({ config, onTerminar }) {
+  const leerPaso = () => { try { return localStorage.getItem(ONB_KEY) || ""; } catch { return ""; } };
+  const guardarPaso = (p) => { try { localStorage.setItem(ONB_KEY, p); } catch { /* sin storage */ } };
+  const inicial = () => {
+    const p = leerPaso();
+    if (sb._tnRetorno) return "fuente"; // volvimos de autorizar en Tiendanube
+    return ["arca", "tn", "fuente"].includes(p) ? p : "arca";
+  };
+  const [paso, setPasoState] = useState(inicial);
+  const [arcaAbierta, setArcaAbierta] = useState(false);
+  const [elecciones, setElecciones] = useState(() => { try { return JSON.parse(localStorage.getItem(ONB_KEY + "_elec") || "{}"); } catch { return {}; } });
+  const [fuente, setFuente] = useState("");
+  const [otro, setOtro] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [conectando, setConectando] = useState(false);
+  const [errorTN, setErrorTN] = useState("");
+
+  const setPaso = (p) => { guardarPaso(p); setPasoState(p); };
+  const elegir = (k, v) => {
+    const nuevo = { ...elecciones, [k]: v };
+    setElecciones(nuevo);
+    try { localStorage.setItem(ONB_KEY + "_elec", JSON.stringify(nuevo)); } catch { /* sin storage */ }
+    return nuevo;
+  };
+
+  const conectarTN = async () => {
+    setConectando(true); setErrorTN("");
+    elegir("tn", "conectar");
+    guardarPaso("fuente");
+    const r = await llamarTN({ accion: "iniciar_conexion" });
+    if (r.httpOk && r.ok && r.url) { window.location.href = r.url; return; }
+    setConectando(false); setErrorTN(r.error || "No se pudo abrir Tiendanube. Probá de nuevo o hacelo después.");
+  };
+
+  const terminar = async () => {
+    if (!fuente || guardando) return;
+    if (fuente === "Otro" && !otro.trim()) return;
+    setGuardando(true);
+    const integ = {
+      arca: config.facturacionActiva ? "activa" : (elecciones.arca || "despues"),
+      tn: sb._tnRetorno === "ok" ? "conectada" : (elecciones.tn || "despues"),
+    };
+    const { error } = await _sb.from("negocios").update({
+      como_nos_conocio: fuente,
+      como_nos_conocio_otro: fuente === "Otro" ? otro.trim().slice(0, 200) : null,
+      onboarding_integraciones: integ,
+      onboarding_completo: true,
+    }).eq("id", sb._negocioId);
+    setGuardando(false);
+    if (error) { console.error("onboarding:", error); }
+    try { localStorage.removeItem(ONB_KEY); localStorage.removeItem(ONB_KEY + "_elec"); } catch { /* sin storage */ }
+    onTerminar({ como_nos_conocio: fuente, onboarding_integraciones: integ });
+  };
+
+  const C = { ink: "#0a0a0a", body: "#4b5563", mut: "#6b7280", line: "#e5e7eb", purple: "#9238FF", purpleDark: "#7a1de6", purpleSoft: "#f4ecff", tn: "#2c3e91", tnSoft: "#e8ecff" };
+  const font = "'DM Sans', system-ui, -apple-system, sans-serif";
+  const numPaso = { arca: 3, tn: 4, fuente: 5 }[paso] || 5;
+  const titulo = { arca: "Facturación electrónica", tn: "Tienda online", fuente: "¿Cómo nos conociste?" }[paso];
+  const btnPrim = (bg) => ({ padding: "14px 36px", background: bg, color: "#fff", border: "none", borderRadius: 6, fontSize: 15, fontWeight: 600, cursor: "pointer", minHeight: 48, fontFamily: font });
+  const btnLink = { padding: "10px 14px", background: "transparent", color: C.body, border: "none", fontSize: 14, fontWeight: 600, cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3, minHeight: 44, fontFamily: font };
+  const tarjeta = (t, d) => (
+    <div key={t} style={{ border: `1px solid ${C.line}`, borderRadius: 10, padding: 16 }}>
+      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{t}</div>
+      <div style={{ fontSize: 12.5, color: C.body, lineHeight: 1.5 }}>{d}</div>
+    </div>
+  );
+  const etiqueta = (txt, bg, fg) => <div style={{ display: "inline-flex", background: bg, color: fg, borderRadius: 30, padding: "5px 12px", fontSize: 12, fontWeight: 700, marginBottom: 14 }}>{txt}</div>;
+  const h2 = { fontSize: "clamp(26px, 5vw, 36px)", lineHeight: 1.1, fontWeight: 500, letterSpacing: "-1px", margin: "0 0 10px" };
+  const sub = { fontSize: 15.5, color: C.body, margin: 0, lineHeight: 1.55 };
+  const terminarListo = !!fuente && (fuente !== "Otro" || otro.trim());
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#fff", fontFamily: font, color: C.ink, display: "flex", flexDirection: "column" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');`}</style>
+      <div style={{ borderBottom: `1px solid ${C.line}`, padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ background: C.purple, width: 34, height: 34, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}><Store size={18}/></div>
+          <span style={{ fontWeight: 700, fontSize: 19, letterSpacing: "-0.5px" }}>MiLocal</span>
+        </div>
+        <div style={{ fontSize: 13, color: C.mut }}>Configuración inicial</div>
+      </div>
+      <div style={{ background: "#f9fafb", borderBottom: `1px solid ${C.line}`, padding: "16px 24px" }}>
+        <div style={{ maxWidth: 720, margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 10 }}>
+            <span style={{ fontWeight: 700, color: C.purpleDark }}>Paso {numPaso} de 5</span>
+            <span style={{ color: C.mut }}>{titulo}</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 6 }}>
+            {[1, 2, 3, 4, 5].map(n => <div key={n} style={{ height: 4, borderRadius: 2, background: n <= numPaso ? C.purple : C.line }}/>)}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "32px 20px" }}>
+        <div style={{ width: "100%", maxWidth: 720 }}>
+
+          {paso === "arca" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+              <div style={{ textAlign: "center" }}>
+                {etiqueta("Opcional · Incluido en tu plan", C.purpleSoft, C.purpleDark)}
+                <h2 style={h2}>¿Querés facturar con ARCA desde MiLocal?</h2>
+                <p style={sub}>Emitís Factura A, B o C con CAE al cobrar, sin pagar otro sistema. Se activa una sola vez y lleva unos 10 minutos.</p>
+              </div>
+              {config.facturacionActiva ? (
+                <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+                  <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d", borderRadius: 10, padding: "12px 18px", fontWeight: 700 }}>✓ La facturación quedó activa</div>
+                  <button style={btnPrim(C.purple)} onClick={() => setPaso("tn")}>Continuar</button>
+                </div>
+              ) : arcaAbierta ? (
+                <>
+                  <ActivarFacturacionCard config={config} esDueno={true} />
+                  <div style={{ display: "flex", justifyContent: "center", marginTop: -8 }}>
+                    <button style={btnLink} onClick={() => { elegir("arca", "despues"); setPaso("tn"); }}>Lo termino después, seguir</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
+                    {tarjeta("1. Autorizás a MiLocal", "Desde la web de ARCA, con tu clave fiscal.")}
+                    {tarjeta("2. Creás un punto de venta", "Te decimos exactamente cuál elegir.")}
+                    {tarjeta("3. Verificamos y listo", "Chequeamos todo con ARCA por vos.")}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+                    <button style={btnPrim(C.purple)} onClick={() => { elegir("arca", "ahora"); guardarPaso("tn"); setArcaAbierta(true); }}>Activar facturación ahora</button>
+                    <button style={btnLink} onClick={() => { elegir("arca", "despues"); setPaso("tn"); }}>Lo hago después</button>
+                    <div style={{ fontSize: 12.5, color: C.mut }}>Lo podés activar cuando quieras desde Configuración.</div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {paso === "tn" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+              <div style={{ textAlign: "center" }}>
+                {etiqueta("Opcional", C.tnSoft, C.tn)}
+                <h2 style={h2}>¿Tenés tienda en Tiendanube?</h2>
+                <p style={sub}>Conectala y el stock queda igual en el local y en la web. Además podés traer tus productos y tus ventas para arrancar con todo cargado.</p>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
+                {tarjeta("Stock sincronizado", "Vendés en el local y se descuenta en la web, y al revés.")}
+                {tarjeta("Ventas web en tu Historial", "Separadas del local, con su filtro en Estadísticas.")}
+                {tarjeta("Tus productos, ya cargados", "Con fotos, talles, precios y costos.")}
+              </div>
+              {errorTN && <div style={{ background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", borderRadius: 10, padding: "10px 14px", fontSize: 13, textAlign: "center" }}>{errorTN}</div>}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+                <button style={btnPrim(C.tn)} disabled={conectando} onClick={conectarTN}>{conectando ? "Abriendo Tiendanube…" : "Conectar Tiendanube"}</button>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
+                  <button style={btnLink} onClick={() => { elegir("tn", "despues"); setPaso("fuente"); }}>Lo hago después</button>
+                  <button style={btnLink} onClick={() => { elegir("tn", "no_tiene"); setPaso("fuente"); }}>No tengo tienda online</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {paso === "fuente" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+              {sb._tnRetorno === "ok" && <div style={{ textAlign: "center" }}><span style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d", borderRadius: 30, padding: "6px 14px", fontSize: 13, fontWeight: 700 }}>✓ Tiendanube conectada</span></div>}
+              {sb._tnRetorno && sb._tnRetorno !== "ok" && <div style={{ textAlign: "center", fontSize: 13, color: "#92400e" }}>No se pudo conectar Tiendanube. Lo podés reintentar desde Configuración.</div>}
+              <div style={{ textAlign: "center" }}>
+                <h2 style={h2}>Última pregunta: ¿cómo nos conociste?</h2>
+                <p style={sub}>Nos ayuda a saber dónde contarle a más negocios como el tuyo.</p>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+                {FUENTES_CONOCIO.map(f => {
+                  const sel = fuente === f;
+                  return (
+                    <button key={f} onClick={() => setFuente(f)} aria-pressed={sel} style={{ padding: "14px 10px", minHeight: 52, borderRadius: 10, fontSize: 14, cursor: "pointer", fontFamily: font, border: sel ? `2px solid ${C.purple}` : `1.5px solid ${C.line}`, background: sel ? C.purpleSoft : "#fff", color: sel ? "#5b12b0" : C.ink, fontWeight: sel ? 700 : 500 }}>{f}</button>
+                  );
+                })}
+              </div>
+              {fuente === "Otro" && (
+                <div>
+                  <label htmlFor="onb-otro" style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 8 }}>Contanos dónde</label>
+                  <input id="onb-otro" value={otro} onChange={e => setOtro(e.target.value)} placeholder="Ej: una feria, un proveedor, un cartel…" style={{ width: "100%", boxSizing: "border-box", padding: "13px 16px", border: `1.5px solid ${C.line}`, borderRadius: 6, fontSize: 14.5, fontFamily: font }} />
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <button onClick={terminar} disabled={!terminarListo || guardando} style={{ ...btnPrim(terminarListo ? C.purple : C.line), color: terminarListo ? "#fff" : C.mut, cursor: terminarListo ? "pointer" : "not-allowed" }}>{guardando ? "Guardando…" : "Terminar y entrar a MiLocal"}</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {paso !== "arca" && (
+        <div style={{ borderTop: `1px solid ${C.line}`, padding: "14px 24px" }}>
+          <button onClick={() => setPaso(paso === "fuente" ? "tn" : "arca")} style={{ padding: "10px 18px", background: "transparent", color: C.ink, border: `1.5px solid ${C.line}`, borderRadius: 6, fontSize: 14, fontWeight: 500, cursor: "pointer", minHeight: 44, fontFamily: font }}>← Atrás</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Recordatorio en el Inicio de lo que quedó "para después" en el registro
+function PendientesIntegraciones({ config, setPage }) {
+  const integ = config.onboardingIntegraciones || {};
+  const [tnConectada, setTnConectada] = useState(null);
+  const [cerrado, setCerrado] = useState(() => { try { return localStorage.getItem("milocal_pend_cerrado_" + sb._negocioId) === "1"; } catch { return false; } });
+  useEffect(() => {
+    if (integ.tn !== "despues") return;
+    _sb.from("tn_vinculos").select("id", { count: "exact", head: true }).eq("negocio_id", sb._negocioId)
+      .then(({ count }) => setTnConectada((count || 0) > 0)).catch(() => {});
+  }, [integ.tn]);
+  const items = [];
+  if (integ.arca && integ.arca !== "activa" && !config.facturacionActiva) items.push({ t: "Activá la factura electrónica ARCA", d: "Facturá con CAE al cobrar, sin otro sistema.", b: "Activar", color: "#9238FF" });
+  if (integ.tn === "despues" && tnConectada === false) items.push({ t: "Conectá tu Tiendanube", d: "Stock sincronizado y ventas web en tu Historial.", b: "Conectar", color: "#2c3e91" });
+  if (!items.length || cerrado) return null;
+  return (
+    <div style={{ ...G.card({ marginBottom: 20, padding: "16px 18px" }) }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>Te quedó pendiente</div>
+        <button onClick={() => { setCerrado(true); try { localStorage.setItem("milocal_pend_cerrado_" + sb._negocioId, "1"); } catch { /* sin storage */ } }} aria-label="Ocultar" style={{ background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 16, minWidth: 32, minHeight: 32 }}>✕</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+        {items.map(i => (
+          <div key={i.t} style={{ display: "flex", alignItems: "center", gap: 12, border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13.5 }}>{i.t}</div>
+              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{i.d}</div>
+            </div>
+            <button onClick={() => setPage("config")} style={{ ...G.btn("dark"), background: i.color, whiteSpace: "nowrap" }}>{i.b}</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ConfigPage({ ctx }) {
-  const { config, setConfig, setPage, products, deleteProduct } = ctx;
+  const { config, setConfig, setPage, products, deleteProduct, sucursales = [], miRol = "dueno" } = ctx;
   const [f, setF] = useState({ ...config });
   const [saved, setSaved] = useState(false);
+  const [accionSucursal, setAccionSucursal] = useState(null);  // { tipo, sucursal }
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState("");
   const [resetting, setResetting] = useState(false);
@@ -3940,22 +6692,33 @@ function ConfigPage({ ctx }) {
       <div style={{ ...G.card({ marginBottom:24 }) }}>
         <h3 style={{ margin:"0 0 20px", fontSize:16, fontWeight:700 }}><User size={15}/>Contacto</h3>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16 }}>
+          <FieldRow label="Nombre del dueño/a"><input style={G.inp()} value={f.dueno||""} onChange={e => u("dueno", e.target.value)} placeholder="Ej: Juan Pérez" /></FieldRow>
           <FieldRow label="Teléfono"><input style={G.inp()} value={f.telefono} onChange={e => u("telefono", e.target.value)} placeholder="+54 9 11 1234-5678" /></FieldRow>
           <FieldRow label="Instagram"><input style={G.inp()} value={f.instagram} onChange={e => u("instagram", e.target.value)} placeholder="@tunegocio" /></FieldRow>
           <FieldRow label="Dirección del local"><input style={G.inp()} value={f.direccion||""} onChange={e => u("direccion", e.target.value)} placeholder="Ej: Av. Rivadavia 1234, CABA" /></FieldRow>
         </div>
       </div>
 
-      {/* Facturación Electrónica — Próximamente */}
-      <div style={{ ...G.card({ marginBottom:24 }) }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-          <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>🏛️ Facturación Electrónica (AFIP/ARCA)</h3>
-          <span style={{ background:"#f4ecff", color:"#7c3aed", fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Próximamente</span>
+      {/* Facturación Electrónica */}
+      {config.facturacionActiva ? (
+        <div style={{ ...G.card({ marginBottom:24 }) }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, gap:12, flexWrap:"wrap" }}>
+            <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>🏛️ Facturación Electrónica (ARCA)</h3>
+            <span style={{ background:"#dcfce7", color:"#15803d", fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:20 }}>Activa</span>
+          </div>
+          <p style={{ margin:"0 0 6px", fontSize:13, color:"#666", lineHeight:1.5 }}>
+            {config.razonSocial || config.nombre}{config.cuit ? ` · CUIT ${fmtCuit(config.cuit)}` : ""}{config.condicionIVA ? ` · ${config.condicionIVA}` : ""}{config.puntoVenta ? ` · Punto de venta ${String(config.puntoVenta).padStart(4,"0")}` : ""}
+          </p>
+          <p style={{ margin:0, fontSize:13, color:"#888", lineHeight:1.5 }}>
+            Facturá al terminar cada venta o después, desde el Historial de Ventas. Para cambiar estos datos escribinos.
+          </p>
         </div>
-        <p style={{ margin:0, fontSize:13, color:"#888", lineHeight:1.5 }}>
-          Estamos preparando la emisión de facturas electrónicas con CAE, integrada a AFIP. Vas a poder activarla directamente desde acá apenas esté disponible.
-        </p>
-      </div>
+      ) : (
+        <ActivarFacturacionCard config={config} esDueno={miRol === "dueno"} />
+      )}
+
+      {/* Tiendanube */}
+      <TiendanubeCard esDueno={miRol === "dueno"} onRecargar={ctx.recargarDatos} />
 
       <div style={{ display:"flex", gap:12 }}>
         <button style={{ ...G.btn(saved?"green":"dark"), fontSize:14, padding:"12px 28px" }} onClick={save}>
@@ -4018,6 +6781,76 @@ function ConfigPage({ ctx }) {
         </button>
       </div>
 
+      {/* ── Sucursales ── */}
+      {miRol === "dueno" && sucursales.length > 0 && (
+        <div style={{ ...G.card(), marginBottom:20 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, flexWrap:"wrap", gap:10 }}>
+            <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>Mis sucursales</h3>
+            <span style={{ fontSize:12.5, color:"#999" }}>{sucursales.length} {sucursales.length === 1 ? "local" : "locales"}</span>
+          </div>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Cada sucursal tiene su propia mensualidad de {fmtMoney(30000, "$")}</p>
+
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {sucursales.map(s => {
+              const esActual = s.id === sb._negocioId;
+              const estado = getSubscriptionState(dbToConfig(s));
+              const badge = {
+                trial: { t:"En prueba", bg:"#fef3c7", c:"#92400e" },
+                trial_expired: { t:"Prueba vencida", bg:"#fee2e2", c:"#dc2626" },
+                active: { t:"Al día", bg:"#dcfce7", c:"#15803d" },
+                past_due: { t:"Pago pendiente", bg:"#fee2e2", c:"#dc2626" },
+                cancelled: { t:"Cancelada", bg:"#f3f4f6", c:"#6b7280" },
+                grace_period: { t:"Período de gracia", bg:"#fef3c7", c:"#92400e" },
+              }[estado.status] || { t:estado.status, bg:"#f3f4f6", c:"#6b7280" };
+
+              return (
+                <div key={s.id} style={{ border:"1px solid #e5e7eb", borderRadius:11, padding:"14px 16px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, flexWrap:"wrap" }}>
+                    <div style={{ minWidth:0, flex:1 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 }}>
+                        <span style={{ fontWeight:700, fontSize:14.5 }}>{s.nombre}</span>
+                        {s.es_principal && <span style={{ fontSize:10.5, color:"#7c3aed", background:"#f4ecff", padding:"2px 8px", borderRadius:20, fontWeight:700 }}>Principal</span>}
+                        {esActual && <span style={{ fontSize:10.5, color:"#15803d", background:"#dcfce7", padding:"2px 8px", borderRadius:20, fontWeight:700 }}>Estás acá</span>}
+                      </div>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                        <span style={{ fontSize:11, fontWeight:700, background:badge.bg, color:badge.c, padding:"2px 9px", borderRadius:20 }}>{badge.t}</span>
+                        <span style={{ fontSize:12, color:"#aaa" }}>{s.rubro || "Sin rubro"}</span>
+                      </div>
+                    </div>
+                    <div style={{ display:"flex", gap:7, flexShrink:0, flexWrap:"wrap" }}>
+                      {!esActual && (
+                        <button onClick={() => ctx.cambiarSucursal(s.id)}
+                          style={{ background:"#f3f4f6", border:"none", borderRadius:7, padding:"7px 12px", fontSize:12.5, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                          Ir
+                        </button>
+                      )}
+                      {s.subscription_status === "active" && (
+                        <button onClick={() => setAccionSucursal({ tipo:"cancelar_pago", sucursal:s })}
+                          style={{ background:"#fef3c7", color:"#92400e", border:"none", borderRadius:7, padding:"7px 12px", fontSize:12.5, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                          Cancelar pago
+                        </button>
+                      )}
+                      {sucursales.length > 1 && (
+                        <button onClick={() => setAccionSucursal({ tipo:"eliminar", sucursal:s })}
+                          style={{ background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:7, padding:"7px 12px", fontSize:12.5, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                          Eliminar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {sucursales.length === 1 && (
+            <p style={{ margin:"14px 0 0", fontSize:12, color:"#aaa", lineHeight:1.5 }}>
+              Para eliminar una sucursal necesitás tener más de una. Si querés dar de baja tu cuenta, cancelá la suscripción desde <b>Suscripción</b>.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* ── Zona de peligro ── */}
       <div style={{ marginTop:48, marginBottom:24, background:"#fef2f2", border:"1.5px solid #fecaca", borderRadius:12, padding:"20px 24px" }}>
         <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:6 }}>
@@ -4054,6 +6887,19 @@ function ConfigPage({ ctx }) {
       </div>
 
       {/* Modal de confirmación */}
+      {accionSucursal && (
+        <AccionSucursalModal
+          tipo={accionSucursal.tipo}
+          sucursal={accionSucursal.sucursal}
+          esActual={accionSucursal.sucursal.id === sb._negocioId}
+          onListo={async () => {
+            setAccionSucursal(null);
+            await ctx.recargarSucursales();
+          }}
+          onClose={() => setAccionSucursal(null)}
+        />
+      )}
+
       {showResetModal && (
         <Modal title="¿Borrar todos los productos?" subtitle="Esta acción es irreversible" onClose={() => { setShowResetModal(false); setResetConfirmText(""); }} width={440}>
           <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:8, padding:"12px 14px", marginBottom:18, display:"flex", gap:10, alignItems:"flex-start" }}>
@@ -4119,6 +6965,7 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
   const [direccion, setDireccion] = useState("");
   const [instagram, setInstagram] = useState("");
   const [whatsappError, setWhatsappError] = useState("");
+  const [duenoError, setDuenoError] = useState("");
 
   const catsPreview = CATS_POR_RUBRO[rubro] || [];
 
@@ -4132,16 +6979,26 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
 
   const handleDone = () => {
     if (!nombre.trim() || !rubro) return;
-    // Validar WhatsApp: mínimo 8 dígitos (número corto sin código de país o completo con)
+
+    // Nombre del dueño: obligatorio, mínimo 2 caracteres
+    if (!dueno.trim() || dueno.trim().length < 2) {
+      setDuenoError("Necesitamos tu nombre para poder contactarte");
+      setWhatsappError("");
+      return;
+    }
+    setDuenoError("");
+
+    // WhatsApp: mínimo 8 dígitos (número corto sin código de país o completo con)
     const wpDigits = whatsapp.replace(/\D/g, "");
     if (!wpDigits || wpDigits.length < 8) {
       setWhatsappError("Ingresá un número de WhatsApp válido (ej: 11 3456-7890)");
       return;
     }
     setWhatsappError("");
+
     onDone({
       nombre: nombre || "Mi Negocio",
-      moneda, dueno, rubro,
+      moneda, dueno: dueno.trim(), rubro,
       telefono: whatsapp,
       direccion,
       instagram,
@@ -4190,9 +7047,9 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
       {step > 1 && (
         <div style={{ background: C.bgSoft, borderBottom: `1px solid ${C.line}`, padding: "16px 32px" }}>
           <div style={{ maxWidth: 680, margin: "0 auto", display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, minWidth: 76 }}>Paso {step - 1} de 2</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, minWidth: 76 }}>Paso {step - 1} de 5</div>
             <div style={{ flex: 1, height: 4, background: C.line, borderRadius: 2, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${((step - 1) / 2) * 100}%`, background: C.purple, borderRadius: 2, transition: "width .3s ease" }}/>
+              <div style={{ height: "100%", width: `${((step - 1) / 5) * 100}%`, background: C.purple, borderRadius: 2, transition: "width .3s ease" }}/>
             </div>
           </div>
         </div>
@@ -4337,14 +7194,19 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 16 }}>
                   <div>
-                    <label style={labelStyle}>Tu nombre (dueño/a)</label>
+                    <label style={labelStyle}>Tu nombre (dueño/a) *</label>
                     <input
                       className="onb-input"
-                      style={inputStyle}
+                      style={{ ...inputStyle, borderColor: duenoError ? "#dc2626" : C.line }}
                       value={dueno}
-                      onChange={e => setDueno(e.target.value)}
-                      placeholder="Opcional"
+                      onChange={e => { setDueno(e.target.value); if (duenoError) setDuenoError(""); }}
+                      placeholder="Ej: Juan Pérez"
                     />
+                    {duenoError && (
+                      <div style={{ fontSize: 12, color: "#dc2626", marginTop: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                        <AlertCircle size={13}/> {duenoError}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label style={labelStyle}>Moneda</label>
@@ -4419,8 +7281,8 @@ function OnboardingScreen({ onDone, initialNombre = "" }) {
                 <button
                   className="onb-btn-primary"
                   onClick={handleDone}
-                  disabled={!nombre.trim() || !whatsapp.trim()}
-                  style={(nombre.trim() && whatsapp.trim()) ? primaryBtn : disabledBtn}
+                  disabled={!nombre.trim() || !whatsapp.trim() || !dueno.trim()}
+                  style={(nombre.trim() && whatsapp.trim() && dueno.trim()) ? primaryBtn : disabledBtn}
                 >
                   ¡Comenzar a usar MiLocal!
                 </button>
@@ -4465,12 +7327,13 @@ function LandingPage({ onIngresar }) {
     { q: "¿Necesito instalar algo?", a: "No. MiLocal funciona 100% en la web. Entrás desde cualquier computadora, tablet o celular con internet, sin descargar ni instalar nada." },
     { q: "¿Mis datos están seguros?", a: "Sí. Toda tu información se guarda en la nube con respaldo automático. Cada negocio ve únicamente sus propios datos, protegidos con tu usuario y contraseña." },
     { q: "¿Sirve para mi rubro?", a: "MiLocal es multirrubro. Se adapta a indumentaria, calzado, electrónica, kioscos, farmacias y prácticamente cualquier comercio minorista. Al crear tu cuenta elegís tu rubro y el sistema se configura solo." },
-    { q: "¿Puedo emitir facturas?", a: "Sí. El sistema emite comprobantes tipo A, B y C con numeración correlativa, listos para AFIP. También podés dar tickets de venta comunes cuando no hace falta factura." },
+    { q: "¿Puedo emitir facturas?", a: "Sí. MiLocal emite factura electrónica de ARCA (A, B o C, con CAE y código QR) al terminar cada venta o después desde el historial, con tu propio CUIT y punto de venta. Está incluida en el plan, sin pagar otro sistema. La activás una sola vez desde Configuración." },
     { q: "¿Puedo usar MiLocal desde el celular?", a: "Sí. La app se adapta a cualquier dispositivo. Vendé desde el mostrador con la compu y controlá el negocio desde el celular cuando estás afuera." },
     { q: "¿Qué pasa si tengo un problema?", a: "Nos escribís por WhatsApp y te ayudamos. Estamos para que puedas vender tranquilo." },
   ];
 
   const funciones = [
+    { t: "Factura electrónica automática", d: "Facturá con ARCA en un clic al cobrar: A, B o C según el cliente, con CAE y QR. Incluida en el plan.", ic: <FileText size={24}/> },
     { t: "Control total del stock", d: "Alta y baja de productos, stock por talle y color, y alertas de faltantes automáticas.", ic: <Package size={24}/> },
     { t: "Ventas y ganancias visibles", d: "Cada venta queda registrada con precio, cantidad y margen. Sabés cuánto ganás por día.", ic: <TrendingUp size={24}/> },
     { t: "Escaneo de códigos de barra", d: "Cargá y vendé más rápido escaneando con la cámara o un lector USB.", ic: <ScanLine size={24}/> },
@@ -4512,11 +7375,15 @@ function LandingPage({ onIngresar }) {
       <section style={{ ...wrap, padding: "80px 24px 60px" }}>
         <div className="hero-grid" style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 60, alignItems: "center" }}>
           <div>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#F4ECFF", color: "#6d28d9", borderRadius: 999, padding: "7px 14px 7px 8px", fontSize: 14, fontWeight: 600, marginBottom: 22 }}>
+              <span style={{ background: C.purple, color: "#fff", borderRadius: 999, padding: "2px 9px", fontSize: 12, fontWeight: 700 }}>Nuevo</span>
+              Factura electrónica automática con ARCA
+            </div>
             <h1 className="hero-h1" style={{ fontSize: 68, lineHeight: 1.02, fontWeight: 500, letterSpacing: "-2.5px", margin: "0 0 24px" }}>
               Menos planillas.<br/>Más ventas.
             </h1>
             <p style={{ fontSize: 18, lineHeight: 1.55, color: C.body, margin: "0 0 32px", maxWidth: 520 }}>
-              MiLocal reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás y controlás el stock — todo desde un mismo lugar.
+              MiLocal reemplaza el cuaderno, la calculadora y las tres planillas de Excel. Cargás productos, cobrás, facturás con ARCA en un clic y controlás el stock — todo desde un mismo lugar.
             </p>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <button onClick={onIngresar} className="btn-primary" style={{ background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "14px 28px", fontFamily: font }}>¡Empezar gratis!</button>
@@ -4526,6 +7393,7 @@ function LandingPage({ onIngresar }) {
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Sin tarjeta de crédito</span>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Sin instalaciones</span>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Listo en 2 minutos</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={15} color={C.green}/> Factura ARCA incluida</span>
             </div>
           </div>
 
@@ -4617,7 +7485,7 @@ function LandingPage({ onIngresar }) {
             {[
               { n: "1", t: "Registrate gratis", d: "Creá tu cuenta rápido, gratis y sin tarjeta. Podés hacerlo desde tu celular o computadora.", nota: "✅ No necesitás descargar nada ni instalar programas. Funciona 100% online." },
               { n: "2", t: "Cargá tus productos", d: "Elegí tu rubro y cargá tus productos manualmente o importalos desde un Excel/CSV.", nota: "✅ El sistema se adapta a tu rubro con talles, colores, categorías y todo lo que necesites." },
-              { n: "3", t: "Empezá a vender", d: "Buscá productos por nombre, cobrá con cualquier método y emití factura AFIP si hace falta. Cada venta descuenta stock automáticamente.", nota: "✅ Cada venta genera datos útiles: qué se vendió más, alertas de stock bajo y reportes." },
+              { n: "3", t: "Empezá a vender", d: "Buscá productos por nombre, cobrá con cualquier método y emití la factura de ARCA en un clic. Cada venta descuenta stock automáticamente.", nota: "✅ Cada venta genera datos útiles: qué se vendió más, alertas de stock bajo y reportes." },
             ].map((s, i) => (
               <div key={i} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: "32px 28px", position: "relative" }}>
                 <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.purple, color: "#fff", fontWeight: 700, fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>{s.n}</div>
@@ -4661,6 +7529,53 @@ function LandingPage({ onIngresar }) {
             ))}
           </div>
           <button onClick={onIngresar} className="btn-primary" style={{ width: "100%", background: C.purple, color: "#fff", border: "none", borderRadius: 4, fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "15px", fontFamily: font }}>¡Empezar ahora!</button>
+        </div>
+      </section>
+
+      {/* ── TESTIMONIOS ── */}
+      <section style={{ background: C.bg, padding: "90px 0", borderTop: `1px solid ${C.line}` }}>
+        <div style={{ ...wrap }}>
+          <div style={{ textAlign: "center", marginBottom: 56 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.purple, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 14 }}>Lo que dicen nuestros clientes</div>
+            <h2 style={{ fontSize: 42, lineHeight: 1.05, fontWeight: 500, letterSpacing: "-1.5px", margin: 0 }}>Emprendedores que ya lo usan</h2>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 24 }}>
+            {[
+              {
+                texto: "Antes llevaba el stock en cuadernos y planillas, y siempre terminaba vendiendo productos que ya no tenía. Con MiLocal puedo controlar las ventas, el stock y la caja desde un solo lugar. Me ordenó muchísimo el negocio y ahora sé exactamente qué productos tengo que volver a comprar.",
+                nombre: "Sofía",
+                rol: "Emprendedora de belleza",
+                rubro: "Cosmética",
+                inicial: "S",
+              },
+              {
+                texto: "MiLocal me ayudó a dejar de manejar todo de memoria. Ahora puedo ver cuáles son los productos que más vendo, cuánto facturé en el mes y qué mercadería está por terminarse. Es fácil de usar y me permite tomar mejores decisiones para mi emprendimiento.",
+                nombre: "Martín",
+                rol: "Dueño de un local de accesorios",
+                rubro: "Tecnología",
+                inicial: "M",
+              },
+              {
+                texto: "Desde que usamos MiLocal tenemos mucho más control sobre el negocio. Podemos registrar cada venta, revisar el stock rápidamente y ver cómo viene el local sin tener que estar presentes todo el día. Nos ahorra tiempo y nos permite trabajar de una manera mucho más profesional.",
+                nombre: "Cliente MiLocal",
+                rol: "Dueño de comercio",
+                rubro: "Retail",
+                inicial: "M",
+              },
+            ].map((t, i) => (
+              <div key={i} style={{ background: C.bgSoft, border: `1px solid ${C.line}`, borderRadius: 14, padding: "28px 26px", display: "flex", flexDirection: "column" }}>
+                <p style={{ fontSize: 14.5, lineHeight: 1.65, color: C.body, margin: "0 0 22px", flex: 1 }}>“{t.texto}”</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 40, height: 40, borderRadius: "50%", background: C.purpleSoft, color: C.purple, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 15, flexShrink: 0 }}>{t.inicial}</div>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13.5, color: C.ink }}>{t.nombre}</div>
+                    <div style={{ fontSize: 12.5, color: C.mut }}>{t.rol}</div>
+                  </div>
+                  <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 600, color: C.purple, background: C.purpleSoft, padding: "4px 10px", borderRadius: 20 }}>{t.rubro}</span>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -5219,6 +8134,58 @@ function NuevaPasswordScreen({ onDone, onCancelar }) {
 // ══════════════════════════════════════════════════════════
 // ADMIN PANEL — solo el dueño de MiLocal puede ver esto
 // ══════════════════════════════════════════════════════════
+// ─── Admin: clientes esperando que aceptes su autorización en ARCA ───
+function SolicitudesFacturacionAdmin() {
+  const [lista, setLista] = useState(null);
+  const [procesando, setProcesando] = useState(false);
+  const [resultado, setResultado] = useState(null);
+  const cargar = async () => {
+    const r = await llamarAfip({ accion: "solicitudes" });
+    setLista(r.ok ? (r.solicitudes || []) : []);
+  };
+  useEffect(() => { cargar(); }, []);
+  if (!lista || lista.length === 0) return null;
+
+  const reverificar = async () => {
+    setProcesando(true); setResultado(null);
+    const r = await llamarAfip({ accion: "reverificar_solicitudes" });
+    setResultado(r.ok ? r.resultados : [{ activa: false, motivo: r.error }]);
+    setProcesando(false);
+    cargar();
+  };
+  const descartar = async (negocio_id) => {
+    await llamarAfip({ accion: "descartar_solicitud", negocio_id_solicitud: negocio_id });
+    cargar();
+  };
+  const activadas = (resultado || []).filter(x => x.activa).length;
+
+  return (
+    <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:12, padding:"16px 18px", margin:"0 0 20px" }}>
+      <div style={{ fontWeight:800, fontSize:15, color:"#92400e", marginBottom:4 }}>🏛️ {lista.length} {lista.length === 1 ? "cliente espera" : "clientes esperan"} que aceptes su autorización en ARCA</div>
+      <div style={{ fontSize:13, color:"#78350f", marginBottom:12, lineHeight:1.5 }}>
+        Entrá a ARCA → <b>Administrador de Relaciones</b> y aceptá las autorizaciones de "Facturación Electrónica" eligiendo el computador fiscal <b>milocal</b>. Después tocá "Ya acepté": las activamos sin que el cliente haga nada.
+      </div>
+      <div style={{ display:"grid", gap:6, marginBottom:12 }}>
+        {lista.map(s => (
+          <div key={s.negocio_id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, background:"#fff", border:"1px solid #fde68a", borderRadius:8, padding:"8px 12px", fontSize:13, flexWrap:"wrap" }}>
+            <span><b>{s.negocios?.nombre || "Negocio"}</b> · {s.razon_social} · CUIT {fmtCuit(s.cuit)} · PV {s.punto_venta} · {s.condicion === "ri" ? "RI" : "Monotributo"} <span style={{ color:"#a16207" }}>· desde {fmtDate(String(s.created_at).slice(0,10))}</span></span>
+            <button onClick={() => descartar(s.negocio_id)} style={{ background:"none", border:"none", color:"#a16207", cursor:"pointer", fontSize:12 }}>Descartar</button>
+          </div>
+        ))}
+      </div>
+      <button disabled={procesando} onClick={reverificar} style={{ background:"#9238ff", color:"#fff", border:"none", borderRadius:8, padding:"9px 16px", fontWeight:700, fontSize:13, cursor:"pointer" }}>
+        {procesando ? "Verificando con ARCA…" : "Ya acepté en ARCA → activar"}
+      </button>
+      {resultado && (
+        <div style={{ marginTop:10, fontSize:13, color:"#78350f" }}>
+          {activadas > 0 && <div style={{ color:"#15803d", fontWeight:700 }}>✓ {activadas} activada{activadas === 1 ? "" : "s"}.</div>}
+          {resultado.filter(x => !x.activa).map((x, i) => <div key={i}>• {x.cuit ? `CUIT ${fmtCuit(x.cuit)}: ` : ""}{x.motivo}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdminPage({ onVolver }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -5229,6 +8196,15 @@ function AdminPage({ onVolver }) {
   const [filtroRubro, setFiltroRubro] = useState("Todos");
   const [procesando, setProcesando] = useState(null); // id del negocio con acción en curso
   const [confirmCancelar, setConfirmCancelar] = useState(null); // negocio a confirmar cancelación
+  const [sugerencias, setSugerencias] = useState([]);
+  const [ventasAdmin, setVentasAdmin] = useState([]);
+  const [uso, setUso] = useState(null);
+  const [perfilAbierto, setPerfilAbierto] = useState(null);
+  const [confirmCancelarMP, setConfirmCancelarMP] = useState(null);
+  const [textoConfirmMP, setTextoConfirmMP] = useState("");
+  const [filtroActividad, setFiltroActividad] = useState("active");
+  const [filtroSugerencias, setFiltroSugerencias] = useState("nueva");
+  const [tabAdmin, setTabAdmin] = useState("resumen");
 
   const cargar = async () => {
     try {
@@ -5241,6 +8217,9 @@ function AdminPage({ onVolver }) {
       if (!resp.ok) { setError(data.error || "No autorizado"); setLoading(false); return; }
       setResumen(data.resumen);
       setNegocios(data.negocios || []);
+      setSugerencias(data.sugerencias || []);
+      setVentasAdmin(data.ventas || []);
+      setUso(data.uso || null);
     } catch (e) {
       setError(e.message || "Error de conexión");
     }
@@ -5248,6 +8227,24 @@ function AdminPage({ onVolver }) {
   };
 
   useEffect(() => { cargar(); }, []);
+
+  const marcarSugerencia = async (sugerenciaId, nuevoEstado) => {
+    setProcesando(sugerenciaId + nuevoEstado);
+    try {
+      const session = await sb.getSession();
+      const resp = await fetch(`${SUPABASE_FUNC_URL}/admin-actions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "marcar_sugerencia", sugerencia_id: sugerenciaId, nuevo_estado: nuevoEstado }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { alert("Error: " + (data.error || "algo salió mal")); setProcesando(null); return; }
+      setSugerencias(prev => prev.map(s => s.id === sugerenciaId ? { ...s, estado: nuevoEstado } : s));
+    } catch (e) {
+      alert("Error de conexión: " + e.message);
+    }
+    setProcesando(null);
+  };
 
   const ejecutarAccion = async (negocioId, action) => {
     setProcesando(negocioId + action);
@@ -5275,6 +8272,11 @@ function AdminPage({ onVolver }) {
     cancelled: { label: "Cancelado", bg: "#f3f4f6", color: "#6b7280" },
   };
 
+  // Si tiene cortesía vigente (mes regalado), se ve como "Activo" aunque el estado real de pago sea otro.
+  // OJO: esto es solo visual — el MRR/ARR/ARPU siguen contando nada más las cuentas que realmente pagan.
+  const tieneCortesia = (n) => n.acceso_manual_hasta && new Date(n.acceso_manual_hasta) > new Date();
+  const estadoVisual = (n) => tieneCortesia(n) ? "active" : n.subscription_status;
+
   const rubrosDisponibles = [...new Set(negocios.map(n => n.rubro).filter(Boolean))].sort();
 
   const negociosFiltrados = negocios.filter(n => {
@@ -5282,7 +8284,7 @@ function AdminPage({ onVolver }) {
       (n.nombre || "").toLowerCase().includes(busqueda.toLowerCase()) ||
       (n.email || "").toLowerCase().includes(busqueda.toLowerCase()) ||
       (n.telefono || "").includes(busqueda);
-    const matchEstado = filtroEstado === "Todos" || n.subscription_status === filtroEstado;
+    const matchEstado = filtroEstado === "Todos" || estadoVisual(n) === filtroEstado;
     const matchRubro = filtroRubro === "Todos" || n.rubro === filtroRubro;
     return matchBusqueda && matchEstado && matchRubro;
   });
@@ -5325,6 +8327,161 @@ function AdminPage({ onVolver }) {
     );
   }
 
+  // ── Métricas derivadas para Resumen / Finanzas / Recomendaciones ──
+  // (acá abajo "resumen" ya está garantizado no-nulo, porque loading/error ya se manejaron arriba)
+  const churnPct = resumen.total > 0 ? (resumen.cancelled / resumen.total) * 100 : 0;
+
+  // Conteo "visual" de activas: incluye cortesías (para mostrar en pantalla). El MRR real (resumen.mrr) NO usa este número.
+  const activasVisual = negocios.filter(n => estadoVisual(n) === "active").length;
+  const trialVisual = negocios.filter(n => estadoVisual(n) === "trial").length;
+  const pastDueVisual = negocios.filter(n => estadoVisual(n) === "past_due").length;
+  const cancelledVisual = negocios.filter(n => estadoVisual(n) === "cancelled").length;
+  const cortesiasQueNoSonPago = negocios.filter(n => tieneCortesia(n) && n.subscription_status !== "active").length;
+  const arr = resumen.mrr * 12;
+  const arpu = resumen.active > 0 ? resumen.mrr / resumen.active : 0;
+  const pendientesActivacion = negocios.filter(n => n.subscription_status === "trial" && (n.productos || 0) === 0).length;
+
+  // Ingreso mensual por rubro (solo cuentas activas, todas pagan lo mismo: $30.000)
+  const ingresoPorRubro = {};
+  negocios.filter(n => n.subscription_status === "active").forEach(n => {
+    const r = n.rubro || "Sin rubro";
+    ingresoPorRubro[r] = (ingresoPorRubro[r] || 0) + 30000;
+  });
+  const ingresoPorRubroArr = Object.entries(ingresoPorRubro).sort((a,b) => b[1]-a[1]);
+
+  // Trials por vencer en los próximos 3 días (riesgo de churn si no convierten)
+  const en3Dias = new Date(); en3Dias.setDate(en3Dias.getDate() + 3);
+  const trialsPorVencer = negocios.filter(n => n.subscription_status === "trial" && n.trial_ends_at && new Date(n.trial_ends_at) <= en3Dias && new Date(n.trial_ends_at) >= new Date());
+  const cuentasAtrasadas = negocios.filter(n => n.subscription_status === "past_due");
+  const cuentasSinActividad = negocios.filter(n => n.subscription_status === "trial" && (n.productos || 0) === 0);
+
+  // ── Engagement / retención (calculado con ventas reales de todos los negocios) ──
+  const toYMD = (d) => d.toISOString().split("T")[0];
+  const hoyYMD = toYMD(new Date());
+  const hace7dias = new Date(); hace7dias.setDate(hace7dias.getDate() - 7);
+  const hace14dias = new Date(); hace14dias.setDate(hace14dias.getDate() - 14);
+  const hace30dias = new Date(); hace30dias.setDate(hace30dias.getDate() - 30);
+
+  const dau = new Set(ventasAdmin.filter(v => v.fecha === hoyYMD).map(v => v.negocio_id)).size;
+  const wau = new Set(ventasAdmin.filter(v => new Date(v.fecha) >= hace7dias).map(v => v.negocio_id)).size;
+  const mau = new Set(ventasAdmin.filter(v => new Date(v.fecha) >= hace30dias).map(v => v.negocio_id)).size;
+
+  // Frecuencia de uso: promedio de días distintos con venta por negocio, últimos 7 días
+  const diasActivosPorNegocio = {};
+  ventasAdmin.filter(v => new Date(v.fecha) >= hace7dias).forEach(v => {
+    if (!diasActivosPorNegocio[v.negocio_id]) diasActivosPorNegocio[v.negocio_id] = new Set();
+    diasActivosPorNegocio[v.negocio_id].add(v.fecha);
+  });
+  const negociosConActividad7d = Object.keys(diasActivosPorNegocio);
+  const frecuenciaPromedio = negociosConActividad7d.length > 0
+    ? negociosConActividad7d.reduce((a, id) => a + diasActivosPorNegocio[id].size, 0) / negociosConActividad7d.length
+    : 0;
+
+  // Usuarios en riesgo: activos/trial/atrasados sin vender hace más de 14 días (o nunca vendieron, con +14 días de antigüedad)
+  const ultimaVentaPorNegocio = {};
+  ventasAdmin.forEach(v => {
+    if (!ultimaVentaPorNegocio[v.negocio_id] || v.fecha > ultimaVentaPorNegocio[v.negocio_id]) ultimaVentaPorNegocio[v.negocio_id] = v.fecha;
+  });
+  const negociosEnRiesgo = negocios.filter(n => {
+    if (!["active","trial","past_due"].includes(n.subscription_status)) return false;
+    const diasDesdeRegistro = (new Date() - new Date(n.created_at)) / 86400000;
+    if (diasDesdeRegistro < 14) return false;
+    const ultimaVenta = ultimaVentaPorNegocio[n.id];
+    if (!ultimaVenta) return true;
+    const diasDesdeUltimaVenta = (new Date() - new Date(ultimaVenta+"T12:00:00")) / 86400000;
+    return diasDesdeUltimaVenta > 14;
+  });
+
+  // Curva de retención: % de cuentas que siguen vendiendo a los N días de haberse registrado
+  const calcularRetencion = (dias) => {
+    const elegibles = negocios.filter(n => (new Date() - new Date(n.created_at)) / 86400000 >= dias);
+    if (elegibles.length === 0) return null;
+    const siguenActivos = elegibles.filter(n => {
+      const objetivo = new Date(n.created_at); objetivo.setDate(objetivo.getDate() + dias);
+      const desde = new Date(objetivo); desde.setDate(desde.getDate() - 3);
+      const hasta = new Date(objetivo); hasta.setDate(hasta.getDate() + 3);
+      return ventasAdmin.some(v => v.negocio_id === n.id && new Date(v.fecha) >= desde && new Date(v.fecha) <= hasta);
+    }).length;
+    return { dias, pct: (siguenActivos/elegibles.length)*100, base: elegibles.length };
+  };
+  const curvaRetencion = [1,7,14,30].map(calcularRetencion).filter(Boolean);
+
+  // Horarios pico (con created_at real de cada venta)
+  const ventasPorHora = Array(24).fill(0);
+  ventasAdmin.forEach(v => { if (v.created_at) ventasPorHora[new Date(v.created_at).getHours()]++; });
+  const horariosPicoData = ventasPorHora.map((cant, h) => ({ label: `${h}hs`, total: cant }));
+
+  // ¿Cómo nos conocieron? (registros con respuesta)
+  const conRespuesta = negocios.filter(n => n.como_nos_conocio);
+  const porFuente = {};
+  conRespuesta.forEach(n => { porFuente[n.como_nos_conocio] = (porFuente[n.como_nos_conocio] || 0) + 1; });
+  const fuentesData = Object.entries(porFuente).sort((a, b) => b[1] - a[1]).map(([fuente, cant]) => ({
+    fuente, cant, pct: conRespuesta.length ? (cant / conRespuesta.length) * 100 : 0,
+    pagos: conRespuesta.filter(n => n.como_nos_conocio === fuente && (n.subscription_status === "active" || n.subscription_started_at)).length,
+  }));
+  const ultimosRegistros = negocios.filter(n => n.es_principal !== false).slice(0, 12);
+  const estadoInteg = (v, activo) => activo ? { t: "Activa", c: "#15803d" } : v === "despues" ? { t: "Después", c: "#92400e" } : v === "no_tiene" ? { t: "No tiene", c: "#6b7280" } : v === "ahora" ? { t: "En proceso", c: "#2563eb" } : { t: "—", c: "#9ca3af" };
+
+  // Funnel de onboarding
+  const funnel = [
+    { label: "Se registraron", value: negocios.length },
+    { label: "Cargaron productos", value: negocios.filter(n => (n.productos||0) > 0).length },
+    { label: "Hicieron una venta", value: negocios.filter(n => (n.ventas||0) > 0).length },
+    { label: "Se suscribieron", value: negocios.filter(n => n.subscription_status === "active" || n.subscription_started_at).length },
+  ];
+
+  // Nuevos vs. recurrentes por día (últimos 14 días) — "nuevo" = negocio que vendió por primera vez ese día
+  const primeraVentaPorNegocio = {};
+  [...ventasAdmin].sort((a,b) => a.fecha.localeCompare(b.fecha)).forEach(v => { if (!primeraVentaPorNegocio[v.negocio_id]) primeraVentaPorNegocio[v.negocio_id] = v.fecha; });
+  const hace14diasYMD = toYMD(hace14dias);
+  const nuevosVsRecPorDia = {};
+  ventasAdmin.filter(v => v.fecha >= hace14diasYMD).forEach(v => {
+    if (!nuevosVsRecPorDia[v.fecha]) nuevosVsRecPorDia[v.fecha] = { nuevos:new Set(), recurrentes:new Set() };
+    if (primeraVentaPorNegocio[v.negocio_id] === v.fecha) nuevosVsRecPorDia[v.fecha].nuevos.add(v.negocio_id);
+    else nuevosVsRecPorDia[v.fecha].recurrentes.add(v.negocio_id);
+  });
+  const nuevosVsRecData = Object.entries(nuevosVsRecPorDia).sort().map(([f,d]) => ({ label:f.slice(5), nuevos:d.nuevos.size, recurrentes:d.recurrentes.size }));
+
+  // Crecimiento de cuentas por mes (para el gráfico de Resumen)
+  const crecimientoPorMes = {};
+  negocios.forEach(n => { const mes=(n.created_at||"").slice(0,7); if (mes) crecimientoPorMes[mes]=(crecimientoPorMes[mes]||0)+1; });
+  const NOMBRES_MES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+  const crecimientoData = Object.entries(crecimientoPorMes).sort().map(([mes,cant]) => ({ label: NOMBRES_MES[+mes.split("-")[1]-1], total: cant }));
+
+  // LTV estimado (ARPU / tasa de cancelación, aproximación estándar de SaaS)
+  const ltv = churnPct > 0 ? arpu / (churnPct/100) : null;
+
+  // Tasa de conversión Prueba → Pago: cuentas que en algún momento activaron el pago, sobre el total (todas arrancan en prueba)
+  const convertidas = negocios.filter(n => n.subscription_started_at).length;
+  const tasaConversion = negocios.length > 0 ? (convertidas / negocios.length) * 100 : 0;
+
+  // Stickiness: qué % de tus usuarios mensuales (MAU) también te usan a diario (DAU)
+  const stickiness = mau > 0 ? (dau / mau) * 100 : 0;
+
+  // ── Pestaña Actividad: filtrable por estado (por defecto, solo cuentas pagando) ──
+  const cuentasActivasPagando = filtroActividad === "Todos"
+    ? negocios
+    : negocios.filter(n => estadoVisual(n) === filtroActividad);
+  const actividadPorCuenta = cuentasActivasPagando.map(n => {
+    const ultimaFecha = ultimaVentaPorNegocio[n.id] || null;
+    const diasSinUsar = ultimaFecha ? Math.floor((new Date() - new Date(ultimaFecha+"T12:00:00")) / 86400000) : null;
+    return { ...n, ultimaFecha, diasSinUsar };
+  }).sort((a,b) => {
+    if (a.diasSinUsar === null) return -1; // nunca usó = lo más urgente, arriba
+    if (b.diasSinUsar === null) return 1;
+    return b.diasSinUsar - a.diasSinUsar; // más días sin usar primero
+  });
+  const cuentasEnRiesgoPagando = actividadPorCuenta.filter(n => n.diasSinUsar === null || n.diasSinUsar > 14);
+
+  // Feed de actividad reciente: ventas de las cuentas que entran en el filtro elegido, más recientes primero
+  const idsActivos = new Set(cuentasActivasPagando.map(n => n.id));
+  const nombrePorIdActivo = {}; cuentasActivasPagando.forEach(n => { nombrePorIdActivo[n.id] = n.nombre; });
+  const feedActividad = ventasAdmin
+    .filter(v => idsActivos.has(v.negocio_id) && v.created_at)
+    .sort((a,b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 60)
+    .map(v => ({ ...v, nombre: nombrePorIdActivo[v.negocio_id] }));
+
   return (
     <div style={{ minHeight:"100vh", background:"#f9fafb", fontFamily:"'DM Sans',system-ui,sans-serif", padding:"28px 32px" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');`}</style>
@@ -5337,23 +8494,119 @@ function AdminPage({ onVolver }) {
         <button onClick={onVolver} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:8, padding:"9px 18px", cursor:"pointer", fontSize:14, fontFamily:"inherit", fontWeight:500 }}>← Volver a MiLocal</button>
       </div>
 
-      {/* KPIs */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:14, marginBottom:24 }}>
+      {/* Pestañas */}
+      <div style={{ display:"flex", gap:6, marginBottom:24, borderBottom:"1px solid #e5e7eb" }}>
         {[
-          { label: "Total negocios", value: resumen.total, bg: "#ede9fe", color: "#7c3aed" },
-          { label: "En prueba", value: resumen.trial, bg: "#fef3c7", color: "#92400e" },
-          { label: "Activos", value: resumen.active, bg: "#dcfce7", color: "#15803d" },
-          { label: "Atrasados", value: resumen.past_due, bg: "#fee2e2", color: "#dc2626" },
-          { label: "Cancelados", value: resumen.cancelled, bg: "#f3f4f6", color: "#6b7280" },
-          { label: "MRR", value: fmtMoney(resumen.mrr, "$"), bg: "#dbeafe", color: "#1e40af" },
+          { id:"resumen", label:"Resumen" },
+          { id:"cuentas", label:"Cuentas" },
+          { id:"engagement", label:"Engagement" },
+          { id:"uso", label:"Uso" },
+          { id:"actividad", label:"Actividad" },
+          { id:"finanzas", label:"Finanzas" },
+          { id:"recomendaciones", label:"Recomendaciones" },
+          { id:"sugerencias", label:"Sugerencias", badge: sugerencias.filter(s => s.estado === "nueva").length || null },
+        ].map(t => (
+          <button key={t.id} onClick={() => setTabAdmin(t.id)} style={{
+            background:"none", border:"none", borderBottom: tabAdmin===t.id ? "2px solid #9238FF" : "2px solid transparent",
+            color: tabAdmin===t.id ? "#9238FF" : "#888", fontWeight: tabAdmin===t.id ? 700 : 500,
+            fontSize:14, padding:"10px 16px", cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", gap:6, marginBottom:-1,
+          }}>
+            {t.label}
+            {t.badge && <span style={{ background:"#dc2626", color:"#fff", fontSize:10.5, fontWeight:700, padding:"1px 7px", borderRadius:20 }}>{t.badge}</span>}
+          </button>
+        ))}
+      </div>
+
+      <SolicitudesFacturacionAdmin />
+
+      {tabAdmin === "resumen" && (
+      <>
+      {/* KPIs principales */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:14, marginBottom:14 }}>
+        {[
+          { label: "Cuentas creadas", value: resumen.total, sub:"total", bg: "#ede9fe", color: "#7c3aed" },
+          { label: "Cuentas activas", value: activasVisual, sub: cortesiasQueNoSonPago > 0 ? `${resumen.trial} en prueba · ${cortesiasQueNoSonPago} con cortesía` : `${resumen.trial} en prueba`, bg: "#dcfce7", color: "#15803d" },
+          { label: "Cuentas que pagaron", value: resumen.active, sub:`de ${resumen.total} totales`, bg: "#dbeafe", color: "#1e40af" },
+          { label: "Cuentas canceladas", value: resumen.cancelled, sub:`churn ${churnPct.toFixed(1)}%`, bg: "#fee2e2", color: "#dc2626" },
         ].map((k, i) => (
           <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
-            <div style={{ display:"inline-block", background:k.bg, color:k.color, fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:20, marginBottom:10 }}>{k.label}</div>
-            <div style={{ fontSize:24, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
+            <div style={{ fontSize:26, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:12, color:"#aaa", marginTop:4 }}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:14, marginBottom:24 }}>
+        {[
+          { label: "MRR (ingreso mensual recurrente)", value: fmtMoney(resumen.mrr, "$"), sub:"recurrente", bg: "#dcfce7", color: "#15803d" },
+          { label: "ARR (anual proyectado)", value: fmtMoney(arr, "$"), sub:"MRR × 12", bg: "#ede9fe", color: "#7c3aed" },
+          { label: "Pendientes de activación", value: pendientesActivacion, sub:"en prueba, sin cargar productos", bg: "#fef3c7", color: "#92400e" },
+          { label: "Conversión Prueba → Pago", value: `${tasaConversion.toFixed(1)}%`, sub:`${convertidas} de ${negocios.length} se suscribieron`, bg: "#dcfce7", color: "#15803d" },
+        ].map((k, i) => (
+          <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+            <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
+            <div style={{ fontSize:26, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:12, color:"#aaa", marginTop:4 }}>{k.sub}</div>
           </div>
         ))}
       </div>
 
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:16 }}>
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Crecimiento de cuentas</h3>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Nuevos registros por mes</p>
+          {crecimientoData.length < 2 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Necesitamos más de un mes de datos para mostrar la tendencia.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <AreaChart data={crecimientoData} margin={{ top:8, right:8, left:0, bottom:4 }}>
+                <defs>
+                  <linearGradient id="gradCrecimiento" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#9238FF" stopOpacity={0.28}/>
+                    <stop offset="100%" stopColor="#9238FF" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f0f0f0"/>
+                <XAxis dataKey="label" tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false}/>
+                <YAxis tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false} allowDecimals={false}/>
+                <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [v, "cuentas nuevas"]}/>
+                <Area type="monotone" dataKey="total" stroke="#9238FF" strokeWidth={2.5} fill="url(#gradCrecimiento)"/>
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Distribución de cuentas</h3>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Por estado (las cortesías cuentan como Activas acá), del total de {resumen.total}</p>
+          <ResponsiveContainer width="100%" height={240}>
+            <PieChart>
+              <Pie
+                data={[
+                  { name:"Activas", value: activasVisual, color:"#15803d" },
+                  { name:"En prueba", value: trialVisual, color:"#d97706" },
+                  { name:"Atrasadas", value: pastDueVisual, color:"#dc2626" },
+                  { name:"Canceladas", value: cancelledVisual, color:"#6b7280" },
+                ].filter(d => d.value > 0)}
+                dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={3}
+              >
+                {[
+                  { name:"Activas", value: activasVisual, color:"#15803d" },
+                  { name:"En prueba", value: trialVisual, color:"#d97706" },
+                  { name:"Atrasadas", value: pastDueVisual, color:"#dc2626" },
+                  { name:"Canceladas", value: cancelledVisual, color:"#6b7280" },
+                ].filter(d => d.value > 0).map((d,i) => <Cell key={i} fill={d.color}/>)}
+              </Pie>
+              <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }}/>
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+      </>
+      )}
+
+      {tabAdmin === "cuentas" && (
+      <>
       {/* Filtros */}
       <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
         <input
@@ -5381,77 +8634,826 @@ function AdminPage({ onVolver }) {
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
             <thead>
               <tr style={{ background:"#f9fafb", borderBottom:"1px solid #e5e7eb" }}>
-                {["Negocio","Dueño/a","Email","WhatsApp","Rubro","Instagram","Registrado","Estado","Vence / Próx. cobro","Acciones"].map(h => (
+                {["Negocio","Rubro","Estado","Actividad","Registrado","Vence / Próx. cobro",""].map(h => (
                   <th key={h} style={{ padding:"12px 16px", textAlign:"left", fontWeight:600, color:"#666", whiteSpace:"nowrap" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {negociosFiltrados.map(n => {
-                const est = ESTADOS[n.subscription_status] || ESTADOS.trial;
+                const est = ESTADOS[estadoVisual(n)] || ESTADOS.trial;
                 const fechaRelevante = n.subscription_status === "active" ? n.next_billing_date : n.trial_ends_at;
-                const wa = linkWhatsApp(n.telefono);
-                const tieneCortesia = n.acceso_manual_hasta && new Date(n.acceso_manual_hasta) > new Date();
-                const puedeAccionar = n.subscription_status !== "cancelled";
+                const tieneCortesiaN = tieneCortesia(n);
+                const ultimaVenta = ultimaVentaPorNegocio[n.id];
+                const diasSinVender = ultimaVenta ? Math.floor((new Date() - new Date(ultimaVenta+"T12:00:00"))/86400000) : null;
                 return (
-                  <tr key={n.id} style={{ borderBottom:"1px solid #f3f4f6" }}>
-                    <td style={{ padding:"12px 16px", fontWeight:600 }}>{n.nombre}</td>
-                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.dueno || "—"}</td>
-                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.email || "—"}</td>
+                  <tr key={n.id}
+                    onClick={() => setPerfilAbierto(n)}
+                    style={{ borderBottom:"1px solid #f3f4f6", cursor:"pointer" }}
+                    onMouseEnter={e => e.currentTarget.style.background="#fafbfc"}
+                    onMouseLeave={e => e.currentTarget.style.background="transparent"}
+                  >
                     <td style={{ padding:"12px 16px" }}>
-                      {wa ? (
-                        <a href={wa} target="_blank" rel="noopener noreferrer" style={{ color:"#16a34a", fontWeight:600, textDecoration:"none", display:"flex", alignItems:"center", gap:5 }}>
-                          {n.telefono}
-                        </a>
-                      ) : "—"}
+                      <div style={{ fontWeight:600 }}>{n.nombre}</div>
+                      <div style={{ fontSize:11.5, color:"#aaa" }}>{n.dueno || n.email || "—"}</div>
                     </td>
                     <td style={{ padding:"12px 16px", color:"#666" }}>{n.rubro || "—"}</td>
-                    <td style={{ padding:"12px 16px", color:"#666" }}>{n.instagram ? `@${n.instagram.replace(/^@/,"")}` : "—"}</td>
+                    <td style={{ padding:"12px 16px" }}>
+                      <span style={{ background:est.bg, color:est.color, fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>{est.label}</span>
+                      {tieneCortesiaN && (
+                        <div style={{ marginTop:5, fontSize:10.5, color:"#7c3aed", fontWeight:600 }}>🎁 cortesía</div>
+                      )}
+                    </td>
+                    <td style={{ padding:"12px 16px", whiteSpace:"nowrap" }}>
+                      <div style={{ fontSize:12.5, fontWeight:600, color: diasSinVender === null ? "#dc2626" : diasSinVender > 14 ? "#d97706" : "#16a34a" }}>
+                        {diasSinVender === null ? "Sin ventas" : diasSinVender === 0 ? "Vendió hoy" : diasSinVender === 1 ? "Ayer" : `Hace ${diasSinVender}d`}
+                      </div>
+                      <div style={{ fontSize:11, color:"#aaa" }}>{n.ventas || 0} ventas · {n.productos || 0} prod.</div>
+                    </td>
                     <td style={{ padding:"12px 16px", color:"#666", whiteSpace:"nowrap" }}>
                       <div>{fmtFecha(n.created_at)}</div>
                       <div style={{ fontSize:11, color:"#aaa" }}>{diasDesde(n.created_at)}</div>
                     </td>
-                    <td style={{ padding:"12px 16px" }}>
-                      <span style={{ background:est.bg, color:est.color, fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>{est.label}</span>
-                      {tieneCortesia && (
-                        <div style={{ marginTop:5, fontSize:10.5, color:"#7c3aed", fontWeight:600 }}>🎁 cortesía hasta {fmtFecha(n.acceso_manual_hasta)}</div>
-                      )}
-                    </td>
                     <td style={{ padding:"12px 16px", color:"#666", whiteSpace:"nowrap" }}>{fmtFecha(fechaRelevante)}</td>
-                    <td style={{ padding:"12px 16px", whiteSpace:"nowrap" }}>
-                      {puedeAccionar && (
-                        <div style={{ display:"flex", gap:6 }}>
-                          <button
-                            onClick={() => ejecutarAccion(n.id, "regalar_mes")}
-                            disabled={procesando === n.id + "regalar_mes"}
-                            title="Regalar 30 días de acceso sin cobrar"
-                            style={{ background:"#f4ecff", color:"#7c3aed", border:"none", borderRadius:6, padding:"6px 10px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
-                          >
-                            {procesando === n.id + "regalar_mes" ? "..." : "🎁 Regalar mes"}
-                          </button>
-                          {tieneCortesia && (
-                            <button
-                              onClick={() => setConfirmCancelar(n)}
-                              disabled={procesando === n.id + "cancelar_regalo"}
-                              title="Deshacer el mes regalado"
-                              style={{ background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:6, padding:"6px 10px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
-                            >
-                              {procesando === n.id + "cancelar_regalo" ? "..." : "Quitar regalo"}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </td>
+                    <td style={{ padding:"12px 16px", color:"#ccc", fontSize:18 }}>›</td>
                   </tr>
                 );
               })}
               {negociosFiltrados.length === 0 && (
-                <tr><td colSpan={10} style={{ padding:"32px 16px", textAlign:"center", color:"#aaa" }}>No hay negocios que coincidan con el filtro</td></tr>
+                <tr><td colSpan={7} style={{ padding:"32px 16px", textAlign:"center", color:"#aaa" }}>No hay negocios que coincidan con el filtro</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
+      </>
+      )}
+
+      {tabAdmin === "engagement" && (
+      <>
+      {/* DAU / WAU / MAU */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
+        {[
+          { label:"DAU", sub:"cuentas activas hoy", value: dau, bg:"#dcfce7", color:"#15803d" },
+          { label:"WAU", sub:"cuentas activas esta semana", value: wau, bg:"#dbeafe", color:"#1e40af" },
+          { label:"MAU", sub:"cuentas activas este mes", value: mau, bg:"#ede9fe", color:"#7c3aed" },
+          { label:"Frecuencia de uso", sub:"días activos/semana (prom.)", value: frecuenciaPromedio.toFixed(1), bg:"#f4ecff", color:"#9238FF" },
+          { label:"Stickiness (DAU/MAU)", sub:"qué % de tus usuarios mensuales te usan a diario", value: `${stickiness.toFixed(1)}%`, bg:"#fce7f3", color:"#be185d" },
+        ].map((k,i) => (
+          <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+            <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
+            <div style={{ fontSize:26, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:12, color:"#aaa", marginTop:4 }}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(360px,1fr))", gap:16, marginBottom:20 }}>
+        {/* Curva de retención */}
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Curva de retención</h3>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>% de cuentas que siguen vendiendo X días después de registrarse</p>
+          {curvaRetencion.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Todavía no hay cuentas con suficiente antigüedad para calcular esto.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={curvaRetencion.map(r => ({ label:`Día ${r.dias}`, total:+r.pct.toFixed(0) }))} margin={{ top:8, right:8, left:0, bottom:4 }}>
+                <XAxis dataKey="label" tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false}/>
+                <YAxis tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false} tickFormatter={v=>`${v}%`}/>
+                <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [`${v}%`, "retención"]}/>
+                <Bar dataKey="total" fill="#9238FF" radius={[8,8,0,0]} maxBarSize={56}/>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Horarios pico */}
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Horarios pico de actividad</h3>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Ventas registradas por hora del día, en toda la plataforma</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={horariosPicoData} margin={{ top:8, right:8, left:0, bottom:4 }}>
+              <XAxis dataKey="label" tick={{ fontSize:10.5, fill:"#999" }} axisLine={false} tickLine={false} interval={2}/>
+              <YAxis tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false} allowDecimals={false}/>
+              <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [v, "ventas"]}/>
+              <Bar dataKey="total" fill="#111" radius={[6,6,0,0]} maxBarSize={18}/>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(360px,1fr))", gap:16, marginBottom:20 }}>
+        {/* Funnel de onboarding */}
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Funnel de onboarding</h3>
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {funnel.map((f,i) => {
+              const pctDelTotal = funnel[0].value > 0 ? (f.value/funnel[0].value)*100 : 0;
+              return (
+                <div key={i}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
+                    <span style={{ color:"#333" }}>{f.label}</span>
+                    <span style={{ fontWeight:700 }}>{f.value} <span style={{ color:"#aaa", fontWeight:500 }}>({pctDelTotal.toFixed(0)}%)</span></span>
+                  </div>
+                  <div style={{ background:"#f3f4f6", borderRadius:20, height:10, overflow:"hidden" }}>
+                    <div style={{ background:`linear-gradient(90deg, #9238FF, #7c3aed)`, height:"100%", width:`${pctDelTotal}%`, borderRadius:20 }}/>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Nuevos vs recurrentes */}
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Cuentas nuevas vs. recurrentes</h3>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Que vendieron cada día, últimos 14 días</p>
+          {nuevosVsRecData.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>No hay ventas en los últimos 14 días.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={nuevosVsRecData} margin={{ top:8, right:8, left:0, bottom:4 }}>
+                <XAxis dataKey="label" tick={{ fontSize:10.5, fill:"#999" }} axisLine={false} tickLine={false}/>
+                <YAxis tick={{ fontSize:12, fill:"#999" }} axisLine={false} tickLine={false} allowDecimals={false}/>
+                <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }}/>
+                <Bar dataKey="recurrentes" stackId="a" fill="#c4b5fd" name="Recurrentes" radius={[0,0,0,0]}/>
+                <Bar dataKey="nuevos" stackId="a" fill="#9238FF" name="Nuevas" radius={[6,6,0,0]}/>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      {/* Cómo nos conocieron + últimos registros */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(360px,1fr))", gap:16, marginBottom:20 }}>
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>¿Cómo nos conocieron?</h3>
+          <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>{conRespuesta.length} {conRespuesta.length === 1 ? "registro respondió" : "registros respondieron"} · se pregunta desde el registro nuevo</p>
+          {fuentesData.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Todavía no hay respuestas. Van a aparecer con los próximos registros.</div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {fuentesData.map(f => (
+                <div key={f.fuente}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4, gap:8 }}>
+                    <span style={{ color:"#333" }}>{f.fuente}</span>
+                    <span style={{ fontWeight:700, whiteSpace:"nowrap" }}>{f.cant} <span style={{ color:"#aaa", fontWeight:500 }}>({f.pct.toFixed(0)}%)</span>{f.pagos > 0 && <span style={{ color:"#15803d", fontWeight:600 }}> · {f.pagos} pagan</span>}</span>
+                  </div>
+                  <div style={{ background:"#f3f4f6", borderRadius:20, height:10, overflow:"hidden" }}>
+                    <div style={{ background:"#9238FF", height:"100%", width:`${f.pct}%`, borderRadius:20 }}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px", minWidth:0 }}>
+          <h3 style={{ margin:"0 0 12px", fontSize:15, fontWeight:700 }}>Últimos registros</h3>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12.5, minWidth:520 }}>
+              <thead><tr style={{ color:"#999", textAlign:"left" }}>{["Negocio","Cómo nos conoció","ARCA","Tiendanube","Registro"].map(h => <th key={h} style={{ padding:"6px 6px", fontWeight:600, borderBottom:"1px solid #f0f0f0" }}>{h}</th>)}</tr></thead>
+              <tbody>{ultimosRegistros.map(n => {
+                const integ = n.onboarding_integraciones || {};
+                const a = estadoInteg(integ.arca, n.facturacion_activa);
+                const t = estadoInteg(integ.tn, n.tiendanube === "activa");
+                const f = n.como_nos_conocio ? (n.como_nos_conocio === "Otro" && n.como_nos_conocio_otro ? `Otro: ${n.como_nos_conocio_otro}` : n.como_nos_conocio) : null;
+                return (
+                  <tr key={n.id} style={{ borderBottom:"1px solid #f7f7f7" }}>
+                    <td style={{ padding:"7px 6px", fontWeight:600, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{n.nombre}</td>
+                    <td style={{ padding:"7px 6px" }}>{f ? <span style={{ background:"#f4ecff", color:"#5b12b0", padding:"2px 8px", borderRadius:20, fontWeight:600 }}>{f}</span> : <span style={{ color:"#bbb" }}>—</span>}</td>
+                    <td style={{ padding:"7px 6px", color:a.c, fontWeight:600 }}>{a.t}</td>
+                    <td style={{ padding:"7px 6px", color:t.c, fontWeight:600 }}>{t.t === "Activa" ? "Conectada" : t.t}</td>
+                    <td style={{ padding:"7px 6px", color:"#888", whiteSpace:"nowrap" }}>{n.created_at ? new Date(n.created_at).toLocaleDateString("es-AR") : "—"}</td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Usuarios en riesgo */}
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+        <h3 style={{ margin:"0 0 4px", fontSize:15, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
+          ⚠️ Cuentas en riesgo
+          {negociosEnRiesgo.length > 0 && <span style={{ background:"#dc2626", color:"#fff", fontSize:11, fontWeight:700, padding:"2px 9px", borderRadius:20 }}>{negociosEnRiesgo.length}</span>}
+        </h3>
+        <p style={{ margin:"0 0 14px", fontSize:12.5, color:"#999" }}>Sin ninguna venta en los últimos 14 días</p>
+        {negociosEnRiesgo.length === 0 ? (
+          <div style={{ textAlign:"center", padding:"20px 0", color:"#aaa", fontSize:13 }}>Ninguna cuenta está en riesgo ahora mismo. 🎉</div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {negociosEnRiesgo.map(n => (
+              <div key={n.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 14px", background:"#fef2f2", borderRadius:8, fontSize:13 }}>
+                <span style={{ fontWeight:600 }}>{n.nombre}</span>
+                <span style={{ color:"#999" }}>{ultimaVentaPorNegocio[n.id] ? `Última venta: ${fmtFecha(ultimaVentaPorNegocio[n.id])}` : "Nunca vendió"}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      </>
+      )}
+
+      {tabAdmin === "uso" && (
+      <>
+      {!uso || uso.totalEventos === 0 ? (
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"40px 24px", textAlign:"center" }}>
+          <div style={{ fontSize:32, marginBottom:12 }}>📊</div>
+          <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>Todavía no hay datos de uso</div>
+          <div style={{ fontSize:13, color:"#888", lineHeight:1.5, maxWidth:440, margin:"0 auto" }}>
+            El registro de navegación empieza a funcionar desde que se sube esta versión. En unos días vas a poder ver qué secciones usan más tus clientes, desde qué dispositivos entran y cuánto tiempo pasan adentro.
+          </div>
+        </div>
+      ) : (
+      <>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
+        {[
+          { label:"Sesiones registradas", value: uso.totalSesiones, sub:"visitas a la app" },
+          { label:"Duración promedio", value: uso.duracionPromedioMin >= 1 ? `${uso.duracionPromedioMin.toFixed(1)} min` : `${Math.round(uso.duracionPromedioMin*60)} seg`, sub:`sobre ${uso.sesionesMedibles} sesiones medibles` },
+          { label:"Pantallas por sesión", value: uso.pantallasPorSesion.toFixed(1), sub:"promedio de navegación" },
+          { label:"Total de visitas", value: uso.totalEventos, sub:"a todas las secciones" },
+        ].map((k,i) => (
+          <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+            <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
+            <div style={{ fontSize:26, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:12, color:"#aaa", marginTop:4 }}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px", marginBottom:20 }}>
+        <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Secciones más usadas</h3>
+        <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Cuántas veces se abrió cada sección, y cuántas cuentas distintas la usaron</p>
+        <ResponsiveContainer width="100%" height={Math.max(200, uso.seccionesRanking.length * 40)}>
+          <BarChart data={uso.seccionesRanking.map(s => ({ label: SECCION_LABELS[s.seccion] || s.seccion, total: s.visitas }))} layout="vertical" margin={{ top:4, right:24, left:4, bottom:4 }}>
+            <XAxis type="number" tick={{ fontSize:11, fill:"#999" }} axisLine={false} tickLine={false} allowDecimals={false}/>
+            <YAxis type="category" dataKey="label" tick={{ fontSize:12.5, fill:"#333" }} axisLine={false} tickLine={false} width={130}/>
+            <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [v, "visitas"]}/>
+            <Bar dataKey="total" fill="#9238FF" radius={[0,8,8,0]} maxBarSize={26}/>
+          </BarChart>
+        </ResponsiveContainer>
+        <div style={{ marginTop:14, borderTop:"1px solid #f0f0f0", paddingTop:12 }}>
+          {uso.seccionesRanking.map(s => (
+            <div key={s.seccion} style={{ display:"flex", justifyContent:"space-between", fontSize:12.5, padding:"5px 0", color:"#666" }}>
+              <span>{SECCION_LABELS[s.seccion] || s.seccion}</span>
+              <span><b style={{ color:"#111" }}>{s.usuarios}</b> cuenta{s.usuarios!==1?"s":""} distinta{s.usuarios!==1?"s":""}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))", gap:16 }}>
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Dispositivos</h3>
+          {Object.keys(uso.porDispositivo).length === 0 ? (
+            <div style={{ textAlign:"center", padding:"20px 0", color:"#aaa", fontSize:13 }}>Sin datos todavía.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie data={Object.entries(uso.porDispositivo).map(([k,v]) => ({ name: k==="movil"?"Celular":k==="tablet"?"Tablet":"Computadora", value:v }))}
+                  dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={3}>
+                  {Object.keys(uso.porDispositivo).map((k,i) => <Cell key={i} fill={["#9238FF","#c4b5fd","#ddd0fb"][i%3]}/>)}
+                </Pie>
+                <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }}/>
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Sistemas operativos</h3>
+          {Object.keys(uso.porSistema).length === 0 ? (
+            <div style={{ textAlign:"center", padding:"20px 0", color:"#aaa", fontSize:13 }}>Sin datos todavía.</div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {Object.entries(uso.porSistema).sort((a,b)=>b[1]-a[1]).map(([sis,cant]) => (
+                <div key={sis}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
+                    <span style={{ color:"#333" }}>{sis}</span>
+                    <span style={{ fontWeight:700 }}>{((cant/uso.totalEventos)*100).toFixed(0)}%</span>
+                  </div>
+                  <div style={{ background:"#f3f4f6", borderRadius:20, height:8, overflow:"hidden" }}>
+                    <div style={{ background:"#9238FF", height:"100%", width:`${(cant/uso.totalEventos)*100}%`, borderRadius:20 }}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      </>
+      )}
+      </>
+      )}
+
+      {tabAdmin === "actividad" && (
+      <>
+      <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
+        {[
+          { id:"active", label:"Activas" },
+          { id:"trial", label:"En prueba" },
+          { id:"past_due", label:"Atrasadas" },
+          { id:"cancelled", label:"Canceladas" },
+          { id:"Todos", label:"Todas" },
+        ].map(f => (
+          <button key={f.id} onClick={() => setFiltroActividad(f.id)} style={{
+            background: filtroActividad===f.id ? "#111" : "#fff", color: filtroActividad===f.id ? "#fff" : "#666",
+            border:"1px solid #e5e7eb", borderRadius:20, padding:"7px 16px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit",
+          }}>{f.label}</button>
+        ))}
+      </div>
+      <p style={{ margin:"0 0 18px", fontSize:13, color:"#999" }}>
+        Mostrando {cuentasActivasPagando.length} cuenta{cuentasActivasPagando.length!==1?"s":""} {filtroActividad!=="Todos" ? `en estado "${ESTADOS[filtroActividad]?.label || filtroActividad}"` : ""}. Las cortesías cuentan como "Activas".
+      </p>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:14, marginBottom:20 }}>
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+          <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>Cuentas mostradas</div>
+          <div style={{ fontSize:26, fontWeight:800 }}>{cuentasActivasPagando.length}</div>
+        </div>
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+          <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>Sin uso hace +14 días</div>
+          <div style={{ fontSize:26, fontWeight:800, color: cuentasEnRiesgoPagando.length>0?"#dc2626":"#111" }}>{cuentasEnRiesgoPagando.length}</div>
+        </div>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"1.1fr 1fr", gap:16 }}>
+        {/* Tabla: última vez que usaron el sistema */}
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 14px", fontSize:15, fontWeight:700 }}>Última actividad por cuenta</h3>
+          {actividadPorCuenta.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Todavía no hay cuentas con plan activo.</div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+              {actividadPorCuenta.map(n => {
+                const enRiesgo = n.diasSinUsar === null || n.diasSinUsar > 14;
+                const alerta = n.diasSinUsar === null || n.diasSinUsar > 30;
+                return (
+                  <div key={n.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 12px", background: alerta?"#fef2f2":enRiesgo?"#fffbeb":"#f9fafb", borderRadius:8, fontSize:13 }}>
+                    <span style={{ fontWeight:600 }}>{n.nombre}</span>
+                    <span style={{ color: alerta?"#dc2626":enRiesgo?"#d97706":"#888", fontWeight: enRiesgo?700:400, fontSize:12.5 }}>
+                      {n.diasSinUsar === null ? "Nunca vendió" : n.diasSinUsar === 0 ? "Hoy" : n.diasSinUsar === 1 ? "Ayer" : `Hace ${n.diasSinUsar} días`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Feed de actividad reciente */}
+        <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+          <h3 style={{ margin:"0 0 14px", fontSize:15, fontWeight:700 }}>Actividad reciente</h3>
+          {feedActividad.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Todavía no hay ventas registradas.</div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:0, maxHeight:480, overflowY:"auto" }}>
+              {feedActividad.map((v,i) => (
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 4px", borderBottom:"1px solid #f5f5f5", fontSize:13 }}>
+                  <div>
+                    <span style={{ fontWeight:600 }}>{v.nombre}</span>
+                    <span style={{ color:"#999" }}> vendió {v.items} producto{v.items!==1?"s":""}</span>
+                  </div>
+                  <div style={{ textAlign:"right", flexShrink:0 }}>
+                    <div style={{ fontWeight:700, color:"#16a34a" }}>{fmtMoney(v.total, "$")}</div>
+                    <div style={{ fontSize:11, color:"#aaa" }}>{new Date(v.created_at).toLocaleString("es-AR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" })}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      </>
+      )}
+
+      {tabAdmin === "finanzas" && (
+      <>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:14, marginBottom:20 }}>
+        {[
+          { label: "MRR", value: fmtMoney(resumen.mrr, "$"), sub:"mensual recurrente", bg:"#dcfce7", color:"#15803d" },
+          { label: "ARR", value: fmtMoney(arr, "$"), sub:"anual proyectado", bg:"#ede9fe", color:"#7c3aed" },
+          { label: "ARPU", value: fmtMoney(arpu, "$"), sub:"ingreso por cuenta activa", bg:"#f4ecff", color:"#9238FF" },
+          { label: "LTV estimado", value: ltv ? fmtMoney(ltv, "$") : "—", sub:"ARPU ÷ tasa de cancelación", bg:"#fef3c7", color:"#92400e" },
+          { label: "Cuentas pagadoras", value: resumen.active, sub:"activas y pagando", bg:"#dbeafe", color:"#1e40af" },
+        ].map((k,i) => (
+          <div key={i} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"18px 20px" }}>
+            <div style={{ fontSize:13, color:"#666", marginBottom:10 }}>{k.label}</div>
+            <div style={{ fontSize:26, fontWeight:800, letterSpacing:"-1px" }}>{k.value}</div>
+            <div style={{ fontSize:12, color:"#aaa", marginTop:4 }}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+      {!ltv && <p style={{ margin:"-12px 0 20px", fontSize:12, color:"#aaa" }}>El LTV se calcula cuando haya al menos una cuenta cancelada — todavía no hay suficientes datos para estimarlo.</p>}
+
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px", marginBottom:20 }}>
+        <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:700 }}>Ingreso mensual por rubro</h3>
+        {ingresoPorRubroArr.length === 0 ? (
+          <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>Todavía no hay cuentas activas pagando.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={Math.max(180, ingresoPorRubroArr.length * 42)}>
+            <BarChart data={ingresoPorRubroArr.map(([rubro,monto]) => ({ label:rubro, total:monto }))} layout="vertical" margin={{ top:4, right:24, left:4, bottom:4 }}>
+              <XAxis type="number" tick={{ fontSize:11, fill:"#999" }} axisLine={false} tickLine={false} tickFormatter={v => `$${v>=1000?(v/1000).toFixed(0)+"k":v}`}/>
+              <YAxis type="category" dataKey="label" tick={{ fontSize:12.5, fill:"#333" }} axisLine={false} tickLine={false} width={150}/>
+              <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [fmtMoney(v,"$"), "ingreso"]}/>
+              <Bar dataKey="total" fill="#9238FF" radius={[0,8,8,0]} maxBarSize={26}/>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+        <h3 style={{ margin:"0 0 2px", fontSize:15, fontWeight:700 }}>Proyección de ingresos</h3>
+        <p style={{ margin:"0 0 16px", fontSize:12.5, color:"#999" }}>Si tu MRR se mantiene como está hoy (${fmtMoney(resumen.mrr,"$")}/mes), sin contar crecimiento ni bajas futuras</p>
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={[
+            { label:"Este mes", total: resumen.mrr },
+            { label:"Próx. 3 meses", total: resumen.mrr*3 },
+            { label:"Próx. 12 meses", total: arr },
+          ]} margin={{ top:8, right:8, left:0, bottom:4 }}>
+            <XAxis dataKey="label" tick={{ fontSize:12.5, fill:"#999" }} axisLine={false} tickLine={false}/>
+            <YAxis tick={{ fontSize:11, fill:"#999" }} axisLine={false} tickLine={false} tickFormatter={v => `$${v>=1000000?(v/1000000).toFixed(1)+"M":v>=1000?(v/1000).toFixed(0)+"k":v}`}/>
+            <Tooltip contentStyle={{ borderRadius:10, border:"1px solid #e5e7eb", fontSize:13 }} formatter={v => [fmtMoney(v,"$"), "proyectado"]}/>
+            <Bar dataKey="total" fill="#9238FF" radius={[10,10,0,0]} maxBarSize={90}/>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      </>
+      )}
+
+      {tabAdmin === "recomendaciones" && (
+      <>
+      <p style={{ margin:"0 0 18px", fontSize:13, color:"#999" }}>Alertas calculadas automáticamente a partir de tus datos reales.</p>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))", gap:14 }}>
+        {pendientesActivacion > 0 && (
+          <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:12, padding:"18px 20px", display:"flex", gap:14 }}>
+            <AlertTriangle size={20} color="#dc2626" style={{ flexShrink:0 }}/>
+            <div>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:5 }}>{pendientesActivacion} cuenta{pendientesActivacion!==1?"s":""} pendiente{pendientesActivacion!==1?"s":""} de activación</div>
+              <div style={{ fontSize:13, color:"#666", lineHeight:1.5 }}>
+                {cuentasSinActividad.slice(0,3).map(n=>n.nombre).join(", ")}{cuentasSinActividad.length>3?` y ${cuentasSinActividad.length-3} más`:""} se registraron pero no cargaron productos todavía. Contactalas para ayudarlas a arrancar antes de que venza la prueba.
+              </div>
+            </div>
+          </div>
+        )}
+        {churnPct > 10 && (
+          <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:12, padding:"18px 20px", display:"flex", gap:14 }}>
+            <AlertTriangle size={20} color="#dc2626" style={{ flexShrink:0 }}/>
+            <div>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:5 }}>Tasa de cancelación alta ({churnPct.toFixed(1)}%)</div>
+              <div style={{ fontSize:13, color:"#666", lineHeight:1.5 }}>El churn supera el 10%. Vale la pena revisar por qué cancelaron y si hay un patrón en común (rubro, tiempo de uso, etc.).</div>
+            </div>
+          </div>
+        )}
+        {trialsPorVencer.length > 0 && (
+          <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:12, padding:"18px 20px", display:"flex", gap:14 }}>
+            <TrendingUp size={20} color="#d97706" style={{ flexShrink:0 }}/>
+            <div>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:5 }}>{trialsPorVencer.length} prueba{trialsPorVencer.length!==1?"s":""} vencen en los próximos 3 días</div>
+              <div style={{ fontSize:13, color:"#666", lineHeight:1.5 }}>{trialsPorVencer.map(n=>n.nombre).join(", ")}. Es el mejor momento para contactarlas y ayudarlas a convertir antes de perder el acceso.</div>
+            </div>
+          </div>
+        )}
+        {cuentasAtrasadas.length > 0 && (
+          <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:12, padding:"18px 20px", display:"flex", gap:14 }}>
+            <AlertTriangle size={20} color="#dc2626" style={{ flexShrink:0 }}/>
+            <div>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:5 }}>{cuentasAtrasadas.length} cuenta{cuentasAtrasadas.length!==1?"s":""} atrasada{cuentasAtrasadas.length!==1?"s":""} en el pago</div>
+              <div style={{ fontSize:13, color:"#666", lineHeight:1.5 }}>{cuentasAtrasadas.map(n=>n.nombre).join(", ")}. Revisá si conviene contactarlas antes de que se bloqueen del todo.</div>
+            </div>
+          </div>
+        )}
+        {sugerencias.filter(s=>s.estado==="nueva").length > 0 && (
+          <div style={{ background:"#f4ecff", border:"1px solid #ddd0fb", borderRadius:12, padding:"18px 20px", display:"flex", gap:14 }}>
+            <TrendingUp size={20} color="#9238FF" style={{ flexShrink:0 }}/>
+            <div>
+              <div style={{ fontWeight:700, fontSize:14, marginBottom:5 }}>{sugerencias.filter(s=>s.estado==="nueva").length} sugerencia{sugerencias.filter(s=>s.estado==="nueva").length!==1?"s":""} sin revisar</div>
+              <div style={{ fontSize:13, color:"#666", lineHeight:1.5 }}>Tus clientes te dejaron ideas de mejora — revisalas en la pestaña "Sugerencias".</div>
+            </div>
+          </div>
+        )}
+        {pendientesActivacion===0 && churnPct<=10 && trialsPorVencer.length===0 && cuentasAtrasadas.length===0 && sugerencias.filter(s=>s.estado==="nueva").length===0 && (
+          <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:12, padding:"24px", textAlign:"center", gridColumn:"1/-1" }}>
+            <div style={{ fontSize:28, marginBottom:8 }}>✅</div>
+            <div style={{ fontWeight:700, fontSize:14 }}>Todo tranquilo por ahora</div>
+            <div style={{ fontSize:13, color:"#666", marginTop:4 }}>No hay alertas activas en este momento.</div>
+          </div>
+        )}
+      </div>
+      </>
+      )}
+
+      {tabAdmin === "sugerencias" && (
+      <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"20px 22px" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:10 }}>
+          <h3 style={{ margin:0, fontSize:16, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
+            💡 Sugerencias de mejora
+            {sugerencias.filter(s => s.estado === "nueva").length > 0 && (
+              <span style={{ background:"#dc2626", color:"#fff", fontSize:11, fontWeight:700, padding:"2px 9px", borderRadius:20 }}>{sugerencias.filter(s => s.estado === "nueva").length} nuevas</span>
+            )}
+          </h3>
+          <select value={filtroSugerencias} onChange={e => setFiltroSugerencias(e.target.value)} style={{ padding:"7px 12px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:13 }}>
+            <option value="Todas">Todas</option>
+            <option value="nueva">Nuevas</option>
+            <option value="revisada">Revisadas</option>
+            <option value="implementada">Implementadas</option>
+          </select>
+        </div>
+
+        {sugerencias.filter(s => filtroSugerencias === "Todas" || s.estado === filtroSugerencias).length === 0 ? (
+          <div style={{ textAlign:"center", padding:"24px 0", color:"#aaa", fontSize:13 }}>No hay sugerencias {filtroSugerencias !== "Todas" ? `en estado "${filtroSugerencias}"` : "todavía"}.</div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {sugerencias.filter(s => filtroSugerencias === "Todas" || s.estado === filtroSugerencias).map(s => {
+              const catColor = { "Mejora":"#7c3aed", "Nueva función":"#2563eb", "Bug":"#dc2626", "Otro":"#6b7280" }[s.categoria] || "#6b7280";
+              const estColor = { nueva:{bg:"#fee2e2",c:"#dc2626"}, revisada:{bg:"#fef3c7",c:"#92400e"}, implementada:{bg:"#dcfce7",c:"#15803d"} }[s.estado];
+              return (
+                <div key={s.id} style={{ border:"1px solid #f0f0f0", borderRadius:10, padding:"14px 16px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:6, flexWrap:"wrap" }}>
+                    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                      <span style={{ fontWeight:600, fontSize:13.5 }}>{s.negocioNombre}</span>
+                      <span style={{ fontSize:10.5, fontWeight:700, color:catColor, background:catColor+"18", padding:"2px 8px", borderRadius:20 }}>{s.categoria}</span>
+                      <span style={{ fontSize:10.5, fontWeight:700, color:estColor.c, background:estColor.bg, padding:"2px 8px", borderRadius:20 }}>{s.estado}</span>
+                    </div>
+                    <span style={{ fontSize:11, color:"#aaa", flexShrink:0 }}>{new Date(s.created_at).toLocaleDateString("es-AR")}</span>
+                  </div>
+                  <p style={{ margin:"0 0 10px", fontSize:13.5, color:"#333", lineHeight:1.5 }}>{s.texto}</p>
+                  <div style={{ display:"flex", gap:6 }}>
+                    {s.estado !== "revisada" && (
+                      <button onClick={() => marcarSugerencia(s.id, "revisada")} disabled={procesando === s.id+"revisada"} style={{ background:"#fef3c7", color:"#92400e", border:"none", borderRadius:6, padding:"5px 10px", fontSize:11.5, fontWeight:600, cursor:"pointer" }}>
+                        {procesando === s.id+"revisada" ? "..." : "Marcar revisada"}
+                      </button>
+                    )}
+                    {s.estado !== "implementada" && (
+                      <button onClick={() => marcarSugerencia(s.id, "implementada")} disabled={procesando === s.id+"implementada"} style={{ background:"#dcfce7", color:"#15803d", border:"none", borderRadius:6, padding:"5px 10px", fontSize:11.5, fontWeight:600, cursor:"pointer" }}>
+                        {procesando === s.id+"implementada" ? "..." : "✓ Implementada"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      )}
+
+      {/* ── Perfil de cuenta (panel lateral) ── */}
+      {perfilAbierto && (() => {
+        const n = perfilAbierto;
+        const est = ESTADOS[estadoVisual(n)] || ESTADOS.trial;
+        const usoN = uso?.porNegocio?.[n.id] || null;
+        const ventasN = ventasAdmin.filter(v => v.negocio_id === n.id);
+        const ultimaVenta = ultimaVentaPorNegocio[n.id];
+        const diasSinVender = ultimaVenta ? Math.floor((new Date() - new Date(ultimaVenta+"T12:00:00"))/86400000) : null;
+        const diasDesdeAlta = Math.floor((new Date() - new Date(n.created_at))/86400000);
+        const wa = linkWhatsApp(n.telefono);
+        const ticketProm = ventasN.length > 0 ? ventasN.reduce((a,v)=>a+v.total,0)/ventasN.length : 0;
+        // Días distintos con actividad (ventas)
+        const diasActivos = new Set(ventasN.map(v => v.fecha)).size;
+        const frecuencia = diasDesdeAlta > 0 ? (diasActivos / diasDesdeAlta) * 7 : 0;
+        // Ventas por día, últimos 30 días
+        const hace30 = new Date(); hace30.setDate(hace30.getDate()-30);
+        const porDia = {};
+        ventasN.filter(v => new Date(v.fecha) >= hace30).forEach(v => { porDia[v.fecha] = (porDia[v.fecha]||0) + v.total; });
+        const dataDias = Object.entries(porDia).sort().map(([f,t]) => ({ label:f.slice(5), total:Math.round(t) }));
+        const metodos = Object.entries(n.metodosPago || {}).sort((a,b)=>b[1]-a[1]);
+        const puedeAccionar = n.subscription_status !== "cancelled";
+
+        return (
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.35)", zIndex:900, display:"flex", justifyContent:"flex-end" }}
+            onClick={() => setPerfilAbierto(null)}>
+            <div style={{ background:"#fff", width:"min(660px, 100%)", height:"100%", overflowY:"auto", padding:"28px 30px" }}
+              onClick={e => e.stopPropagation()}>
+
+              {/* Encabezado */}
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:22 }}>
+                <div>
+                  <h2 style={{ margin:"0 0 6px", fontSize:24, fontWeight:800, letterSpacing:"-0.5px" }}>{n.nombre}</h2>
+                  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                    <span style={{ background:est.bg, color:est.color, fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>{est.label}</span>
+                    {tieneCortesia(n) && <span style={{ background:"#f4ecff", color:"#7c3aed", fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>🎁 cortesía hasta {fmtFecha(n.acceso_manual_hasta)}</span>}
+                    <span style={{ fontSize:12.5, color:"#999" }}>{n.rubro || "Sin rubro"}</span>
+                  </div>
+                </div>
+                <button onClick={() => setPerfilAbierto(null)} style={{ background:"#f3f4f6", border:"none", borderRadius:8, width:34, height:34, cursor:"pointer", fontSize:18, color:"#666", flexShrink:0 }}>×</button>
+              </div>
+
+              {/* Datos de contacto */}
+              <div style={{ background:"#f9fafb", borderRadius:12, padding:"16px 18px", marginBottom:20 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Contacto</div>
+                {[
+                  ["Dueño/a", n.dueno || "—"],
+                  ["Email", n.email || "—"],
+                  ["WhatsApp", n.telefono || "—", wa],
+                  ["Instagram", n.instagram ? `@${n.instagram.replace(/^@/,"")}` : "—"],
+                  ["Dirección", n.direccion || "—"],
+                ].map(([lbl, val, link], i) => (
+                  <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", fontSize:13.5, gap:12 }}>
+                    <span style={{ color:"#888", flexShrink:0 }}>{lbl}</span>
+                    {link ? (
+                      <a href={link} target="_blank" rel="noopener noreferrer" style={{ color:"#16a34a", fontWeight:600, textDecoration:"none", textAlign:"right" }}>{val}</a>
+                    ) : (
+                      <span style={{ fontWeight:600, textAlign:"right", wordBreak:"break-word" }}>{val}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Comportamiento */}
+              <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Comportamiento</div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:12, marginBottom:20 }}>
+                {[
+                  { l:"Última venta", v: diasSinVender === null ? "Nunca" : diasSinVender === 0 ? "Hoy" : diasSinVender === 1 ? "Ayer" : `Hace ${diasSinVender}d`,
+                    c: diasSinVender === null ? "#dc2626" : diasSinVender > 14 ? "#d97706" : "#16a34a" },
+                  { l:"Último ingreso", v: n.ultimoLogin ? fmtFecha(n.ultimoLogin) : "—" },
+                  { l:"Antigüedad", v: `${diasDesdeAlta} días` },
+                  { l:"Días con ventas", v: diasActivos },
+                  { l:"Frecuencia", v: `${frecuencia.toFixed(1)} d/sem` },
+                  { l:"Ticket promedio", v: fmtMoney(ticketProm, "$") },
+                ].map((k,i) => (
+                  <div key={i} style={{ border:"1px solid #e5e7eb", borderRadius:10, padding:"12px 14px" }}>
+                    <div style={{ fontSize:11.5, color:"#999", marginBottom:5 }}>{k.l}</div>
+                    <div style={{ fontSize:17, fontWeight:800, color:k.c || "#111" }}>{k.v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Qué cargó en el sistema */}
+              <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Datos cargados</div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:12, marginBottom:20 }}>
+                {[
+                  ["Productos", n.productos||0],
+                  ["Categorías", n.categorias||0],
+                  ["Ventas", n.ventas||0],
+                  ["Facturado", fmtMoney(n.facturado||0, "$")],
+                  ["Gastos", n.gastos||0],
+                  ["Remitos", n.remitos||0],
+                  ["Proveedores", n.proveedores||0],
+                ].map(([l,v],i) => (
+                  <div key={i} style={{ border:"1px solid #e5e7eb", borderRadius:10, padding:"12px 14px" }}>
+                    <div style={{ fontSize:11.5, color:"#999", marginBottom:5 }}>{l}</div>
+                    <div style={{ fontSize:17, fontWeight:800 }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Qué funciones usa */}
+              <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Qué funciones usa</div>
+              {!usoN ? (
+                <div style={{ background:"#f9fafb", borderRadius:10, padding:"18px", fontSize:13, color:"#888", marginBottom:20, textAlign:"center" }}>
+                  Todavía no hay datos de navegación de esta cuenta.
+                </div>
+              ) : (
+                <div style={{ marginBottom:20 }}>
+                  <div style={{ display:"flex", gap:16, marginBottom:14, fontSize:12.5, color:"#666" }}>
+                    <span><b style={{ color:"#111" }}>{usoN.sesiones}</b> sesiones</span>
+                    <span><b style={{ color:"#111" }}>{usoN.total}</b> pantallas vistas</span>
+                    {Object.keys(usoN.dispositivos).length > 0 && (
+                      <span>Desde: <b style={{ color:"#111" }}>{Object.entries(usoN.dispositivos).sort((a,b)=>b[1]-a[1])[0][0] === "movil" ? "Celular" : Object.entries(usoN.dispositivos).sort((a,b)=>b[1]-a[1])[0][0] === "tablet" ? "Tablet" : "Computadora"}</b></span>
+                    )}
+                  </div>
+                  {usoN.secciones.slice(0,8).map(s => {
+                    const max = usoN.secciones[0].visitas;
+                    return (
+                      <div key={s.seccion} style={{ marginBottom:9 }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", fontSize:12.5, marginBottom:4 }}>
+                          <span style={{ color:"#333" }}>{SECCION_LABELS[s.seccion] || s.seccion}</span>
+                          <span style={{ fontWeight:700, color:"#666" }}>{s.visitas}</span>
+                        </div>
+                        <div style={{ background:"#f3f4f6", borderRadius:20, height:7, overflow:"hidden" }}>
+                          <div style={{ background:"#9238FF", height:"100%", width:`${(s.visitas/max)*100}%`, borderRadius:20 }}/>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Métodos de pago que usa */}
+              {metodos.length > 0 && (
+                <>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Cómo cobra</div>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:20 }}>
+                    {metodos.map(([m,c]) => (
+                      <span key={m} style={{ background:"#f3f4f6", borderRadius:8, padding:"7px 12px", fontSize:12.5 }}>
+                        {m} <b>{c}</b>
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Ventas últimos 30 días */}
+              {dataDias.length > 0 && (
+                <>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Ventas últimos 30 días</div>
+                  <div style={{ border:"1px solid #e5e7eb", borderRadius:12, padding:"16px 14px", marginBottom:20 }}>
+                    <ResponsiveContainer width="100%" height={160}>
+                      <BarChart data={dataDias} margin={{ top:4, right:4, left:0, bottom:4 }}>
+                        <XAxis dataKey="label" tick={{ fontSize:10, fill:"#aaa" }} axisLine={false} tickLine={false} interval="preserveStartEnd"/>
+                        <YAxis tick={{ fontSize:10, fill:"#aaa" }} axisLine={false} tickLine={false} tickFormatter={v=>`$${v>=1000?(v/1000).toFixed(0)+"k":v}`}/>
+                        <Tooltip contentStyle={{ borderRadius:8, border:"1px solid #e5e7eb", fontSize:12 }} formatter={v=>[fmtMoney(v,"$"),"vendido"]}/>
+                        <Bar dataKey="total" fill="#9238FF" radius={[4,4,0,0]}/>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </>
+              )}
+
+              {/* Suscripción y acciones */}
+              <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:12, textTransform:"uppercase", letterSpacing:"0.5px" }}>Suscripción</div>
+              <div style={{ background:"#f9fafb", borderRadius:12, padding:"16px 18px", marginBottom:16 }}>
+                {[
+                  ["Se registró", fmtFecha(n.created_at)],
+                  ["Fin de prueba", n.trial_ends_at ? fmtFecha(n.trial_ends_at) : "—"],
+                  ["Empezó a pagar", n.subscription_started_at ? fmtFecha(n.subscription_started_at) : "—"],
+                  ["Próximo cobro", n.next_billing_date ? fmtFecha(n.next_billing_date) : "—"],
+                ].map(([l,v],i) => (
+                  <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", fontSize:13.5 }}>
+                    <span style={{ color:"#888" }}>{l}</span><span style={{ fontWeight:600 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+
+              {puedeAccionar && (
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  <button
+                    onClick={() => ejecutarAccion(n.id, "regalar_mes")}
+                    disabled={procesando === n.id + "regalar_mes"}
+                    style={{ flex:"1 1 45%", background:"#f4ecff", color:"#7c3aed", border:"none", borderRadius:9, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+                  >
+                    {procesando === n.id + "regalar_mes" ? "..." : "🎁 Regalar mes"}
+                  </button>
+                  {tieneCortesia(n) && (
+                    <button
+                      onClick={() => { setConfirmCancelar(n); setPerfilAbierto(null); }}
+                      style={{ flex:"1 1 45%", background:"#fee2e2", color:"#dc2626", border:"none", borderRadius:9, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+                    >
+                      Quitar regalo
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Cancelar la suscripción real en Mercado Pago */}
+              {n.mp_preapproval_id && n.subscription_status !== "cancelled" && (
+                <div style={{ marginTop:16, paddingTop:16, borderTop:"1px solid #f0f0f0" }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#999", marginBottom:10, textTransform:"uppercase", letterSpacing:"0.5px" }}>Zona de riesgo</div>
+                  <button
+                    onClick={() => { setConfirmCancelarMP(n); setPerfilAbierto(null); }}
+                    style={{ width:"100%", background:"#fff", color:"#dc2626", border:"2px solid #fecaca", borderRadius:9, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+                  >
+                    Cancelar suscripción en Mercado Pago
+                  </button>
+                  <p style={{ margin:"8px 0 0", fontSize:11.5, color:"#aaa", lineHeight:1.45 }}>
+                    Deja de cobrarle definitivamente. No se puede deshacer desde acá: si vuelve, tiene que suscribirse de nuevo.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Modal de confirmación para CANCELAR LA SUSCRIPCIÓN EN MERCADO PAGO */}
+      {confirmCancelarMP && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }} onClick={() => { setConfirmCancelarMP(null); setTextoConfirmMP(""); }}>
+          <div style={{ background:"#fff", borderRadius:12, padding:"26px 28px", width:"90%", maxWidth:440 }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin:"0 0 12px", fontSize:17, fontWeight:800, color:"#dc2626" }}>Cancelar la suscripción de {confirmCancelarMP.nombre}</h3>
+            <p style={{ margin:"0 0 14px", fontSize:14, color:"#444", lineHeight:1.55 }}>
+              Se va a cancelar el cobro automático en Mercado Pago. <b>No le vas a poder volver a cobrar desde acá</b> — si quiere volver, tiene que suscribirse de nuevo desde la app.
+            </p>
+            <p style={{ margin:"0 0 8px", fontSize:13, color:"#666" }}>
+              Para confirmar, escribí <b>{confirmCancelarMP.nombre}</b>:
+            </p>
+            <input
+              value={textoConfirmMP}
+              onChange={e => setTextoConfirmMP(e.target.value)}
+              placeholder={confirmCancelarMP.nombre}
+              autoFocus
+              style={{ width:"100%", padding:"11px 14px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:14, marginBottom:18, fontFamily:"inherit" }}
+            />
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={() => { setConfirmCancelarMP(null); setTextoConfirmMP(""); }} style={{ flex:1, background:"#f3f4f6", border:"none", borderRadius:8, padding:"11px", cursor:"pointer", fontFamily:"inherit", fontWeight:600 }}>Volver</button>
+              <button
+                disabled={textoConfirmMP.trim() !== confirmCancelarMP.nombre || procesando === confirmCancelarMP.id + "cancelar_suscripcion_mp"}
+                onClick={async () => { await ejecutarAccion(confirmCancelarMP.id, "cancelar_suscripcion_mp"); setConfirmCancelarMP(null); setTextoConfirmMP(""); }}
+                style={{
+                  flex:1,
+                  background: textoConfirmMP.trim() === confirmCancelarMP.nombre ? "#dc2626" : "#fca5a5",
+                  color:"#fff", border:"none", borderRadius:8, padding:"11px",
+                  cursor: textoConfirmMP.trim() === confirmCancelarMP.nombre ? "pointer" : "not-allowed",
+                  fontFamily:"inherit", fontWeight:700
+                }}
+              >
+                {procesando === confirmCancelarMP.id + "cancelar_suscripcion_mp" ? "Cancelando..." : "Sí, cancelar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de confirmación para quitar el mes regalado */}
       {confirmCancelar && (
@@ -5540,6 +9542,8 @@ async function iniciarSuscripcion() {
       "Authorization": "Bearer " + session.access_token,
       "Content-Type": "application/json",
     },
+    // Cada sucursal tiene su propia suscripción: le decimos cuál está activando
+    body: JSON.stringify({ negocio_id: sb._negocioId }),
   });
   const data = await resp.json();
   if (!resp.ok) throw new Error(data?.error || "Error creando suscripción");
@@ -5608,10 +9612,17 @@ function PastDueBanner({ daysLeft, onSuscribir }) {
 }
 
 // ─── Pantalla de bloqueo cuando trial/pago venció ──────────
-function AccesoBloqueadoScreen({ config, onSuscribir, onLogout }) {
+function AccesoBloqueadoScreen({ config, onSuscribir, onLogout, sucursales = [], negocioActualId, onCambiarSucursal }) {
   const state = getSubscriptionState(config);
   const isTrial = state.status === 'trial_expired';
   const isCancelled = state.status === 'cancelled';
+
+  // Otras sucursales a las que sí puede entrar (para no dejarlo encerrado acá)
+  const otrasDisponibles = sucursales.filter(s => {
+    if (s.id === negocioActualId) return false;
+    const st = getSubscriptionState(dbToConfig(s));
+    return !st.isBlocked;
+  });
 
   const [loading, setLoading] = useState(false);
   const handleSuscribir = async () => {
@@ -5620,70 +9631,102 @@ function AccesoBloqueadoScreen({ config, onSuscribir, onLogout }) {
     catch (e) { alert("Error: " + e.message); setLoading(false); }
   };
 
+  const C = {
+    ink: "#0a0a0a", body: "#4b5563", mut: "#9ca3af", line: "#e5e7eb",
+    bg: "#ffffff", bgSoft: "#f9fafb",
+    purple: "#9238FF", purpleDark: "#7a1de6", purpleSoft: "#f4ecff",
+  };
+  const font = "'DM Sans', system-ui, -apple-system, sans-serif";
+
   return (
-    <div style={{
-      minHeight: "100vh", background: "#f9fafb", display: "flex",
-      alignItems: "center", justifyContent: "center", padding: 20,
-      fontFamily: "'Segoe UI', system-ui, sans-serif"
-    }}>
-      <div style={{
-        background: "#fff", borderRadius: 16, padding: "48px 44px", maxWidth: 480, width: "100%",
-        boxShadow: "0 20px 60px rgba(0,0,0,0.08)", textAlign: "center"
-      }}>
-        <div style={{
-          width: 64, height: 64, borderRadius: 16, background: "#fef3c7", color: "#d97706",
-          display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px"
-        }}>
-          <Lock size={32}/>
-        </div>
-        <h1 style={{ fontSize: 24, fontWeight: 800, margin: "0 0 12px", color: "#111", letterSpacing: "-0.5px" }}>
-          {isTrial ? "Tu prueba gratis terminó" :
-           isCancelled ? "Tu suscripción está cancelada" :
-           "Servicio suspendido por falta de pago"}
-        </h1>
-        <p style={{ fontSize: 15, color: "#4b5563", lineHeight: 1.6, margin: "0 0 28px" }}>
-          {isTrial ? "Suscribite ahora para seguir usando MiLocal. Tus datos y productos están intactos, los recuperás al reactivar." :
-           isCancelled ? "Reactivá tu suscripción cuando quieras y volvés a tener acceso a todos tus datos." :
-           "No pudimos procesar tu último cobro y ya pasó el período de gracia de 3 días. Actualizá tu método de pago para reactivar tu cuenta."}
-        </p>
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: font }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap'); .abs-btn:hover:not(:disabled) { background: ${C.purpleDark} !important; }`}</style>
 
-        <div style={{
-          background: "#f9fafb", borderRadius: 10, padding: "18px 20px", marginBottom: 24, textAlign: "left"
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <span style={{ fontSize: 13, color: "#6b7280" }}>Plan</span>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>MiLocal — Completo</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 13, color: "#6b7280" }}>Precio</span>
-            <span style={{ fontSize: 15, fontWeight: 800 }}>$30.000<span style={{ fontWeight: 400, fontSize: 12, color: "#6b7280" }}>/mes</span></span>
-          </div>
+      <div style={{ width: "100%", maxWidth: 420 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center", marginBottom: 28 }}>
+          <img src="/milocal-icon.png" alt="MiLocal" style={{ width: 36, height: 36, borderRadius: 8 }}/>
+          <span style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.5px", color: C.ink }}>MiLocal</span>
         </div>
 
-        <button onClick={handleSuscribir} disabled={loading} style={{
-          width: "100%", background: "#111", color: "#fff", border: "none", borderRadius: 10,
-          padding: "14px", fontSize: 15, fontWeight: 700, cursor: loading ? "wait" : "pointer",
-          marginBottom: 12
-        }}>
-          {loading ? "Un momento..." : "Suscribirme por $30.000/mes"}
-        </button>
-        <button onClick={onLogout} style={{
-          width: "100%", background: "transparent", color: "#6b7280", border: "none",
-          padding: "10px", fontSize: 13, cursor: "pointer"
-        }}>
-          Cerrar sesión
-        </button>
+        <div style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 14, padding: "40px 36px", textAlign: "center" }}>
+          <div style={{ width: 56, height: 56, borderRadius: 14, background: C.purpleSoft, color: C.purple, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
+            <Lock size={26}/>
+          </div>
+          <h1 style={{ fontSize: 23, fontWeight: 700, margin: "0 0 10px", color: C.ink, letterSpacing: "-0.5px" }}>
+            {isTrial ? "Tu prueba gratis terminó" :
+             isCancelled ? "Tu suscripción está cancelada" :
+             "Servicio suspendido por falta de pago"}
+          </h1>
+          <p style={{ fontSize: 14.5, color: C.body, lineHeight: 1.6, margin: "0 0 26px" }}>
+            {isTrial ? "Suscribite ahora para seguir usando MiLocal. Tus datos y productos están intactos, los recuperás al reactivar." :
+             isCancelled ? "Reactivá tu suscripción cuando quieras y volvés a tener acceso a todos tus datos." :
+             "No pudimos procesar tu último cobro y ya pasó el período de gracia de 3 días. Actualizá tu método de pago para reactivar tu cuenta."}
+          </p>
 
-        <p style={{ fontSize: 12, color: "#9ca3af", marginTop: 20, lineHeight: 1.5 }}>
-          Con tu suscripción tenés acceso completo al sistema. Podés cancelar cuando quieras.
-        </p>
+          <div style={{ background: C.bgSoft, borderRadius: 10, padding: "16px 18px", marginBottom: 22, textAlign: "left" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 9 }}>
+              <span style={{ fontSize: 13, color: C.mut }}>Plan</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>MiLocal — Completo</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 13, color: C.mut }}>Precio</span>
+              <span style={{ fontSize: 16, fontWeight: 700, color: C.ink }}>$30.000<span style={{ fontWeight: 400, fontSize: 12.5, color: C.mut }}>/mes</span></span>
+            </div>
+          </div>
+
+          <button
+            className="abs-btn"
+            onClick={handleSuscribir}
+            disabled={loading}
+            style={{
+              width: "100%", background: C.purple, color: "#fff", border: "none", borderRadius: 4,
+              padding: "14px", fontSize: 15, fontWeight: 600, cursor: loading ? "wait" : "pointer",
+              marginBottom: 12, fontFamily: font, transition: "background .15s",
+            }}
+          >
+            {loading ? "Un momento..." : "Suscribirme por $30.000/mes"}
+          </button>
+
+          {/* Si tiene otras sucursales al día, que pueda entrar ahí en vez de quedar encerrado */}
+          {otrasDisponibles.length > 0 && (
+            <div style={{ borderTop: `1px solid ${C.line}`, marginTop: 18, paddingTop: 18 }}>
+              <p style={{ fontSize: 13, color: C.body, margin: "0 0 12px", lineHeight: 1.5 }}>
+                Esto afecta solo a <b>{config.nombre}</b>. Tus otras sucursales siguen funcionando:
+              </p>
+              {otrasDisponibles.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => onCambiarSucursal(s.id)}
+                  style={{
+                    width: "100%", display: "flex", alignItems: "center", gap: 9,
+                    background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8,
+                    padding: "12px 14px", marginBottom: 8, cursor: "pointer",
+                    fontFamily: font, fontSize: 14, fontWeight: 600, color: C.ink, textAlign: "left",
+                  }}
+                >
+                  <Store size={15} style={{ color: C.purple, flexShrink: 0 }}/>
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.nombre}</span>
+                  <ChevronRight size={14} style={{ color: C.mut, flexShrink: 0 }}/>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <button onClick={onLogout} style={{ width: "100%", background: "transparent", color: C.mut, border: "none", padding: "8px", fontSize: 13, cursor: "pointer", fontFamily: font, marginTop: otrasDisponibles.length > 0 ? 4 : 12 }}>
+            Cerrar sesión
+          </button>
+
+          <p style={{ fontSize: 12, color: C.mut, marginTop: 18, lineHeight: 1.5 }}>
+            Con tu suscripción tenés acceso completo al sistema. Podés cancelar cuando quieras.
+          </p>
+        </div>
       </div>
     </div>
   );
 }
 
 // ─── Página de gestión de suscripción ───────────────────────
-function SuscripcionPage({ config, onSuscribir, onCancelar }) {
+function SuscripcionPage({ config, onSuscribir, onCancelar, sucursales = [] }) {
   const state = getSubscriptionState(config);
   const [loading, setLoading] = useState(false);
 
@@ -5747,7 +9790,12 @@ function SuscripcionPage({ config, onSuscribir, onCancelar }) {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span>Monto</span>
-                <span style={{ fontWeight: 600, color: "#111" }}>{fmtMoney(PRECIO_SUSCRIPCION, "$")}</span>
+                <span style={{ fontWeight: 600, color: "#111" }}>
+                  {fmtMoney(PRECIO_SUSCRIPCION, "$")}
+                  {sucursales.length > 1 && (
+                    <span style={{ fontWeight: 400, color: "#888", fontSize: 12.5 }}> (esta sucursal)</span>
+                  )}
+                </span>
               </div>
             </div>
           )}
@@ -5812,6 +9860,13 @@ function SuscripcionPage({ config, onSuscribir, onCancelar }) {
 
 export default function App() {
   const [page, setPage] = useState("dashboard");
+  // ── Multi-sucursal ──
+  const [sucursales, setSucursales] = useState([]);
+  const [miRol, setMiRol] = useState("dueno");
+  const [misPermisos, setMisPermisos] = useState(["*"]);
+  const [cambiandoSucursal, setCambiandoSucursal] = useState(false);
+  const [menuSucursales, setMenuSucursales] = useState(false);
+  const [showNuevaSucursal, setShowNuevaSucursal] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [token, setToken] = useState(null);
@@ -5860,12 +9915,20 @@ export default function App() {
   const [remitos, setRemitos] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [showSubscriptionSuccess, setShowSubscriptionSuccess] = useState(false);
+  const [showSugerencia, setShowSugerencia] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false); // drawer del sidebar en mobile
+  const [tnVinculados, setTnVinculados] = useState(null); // Set de productos vinculados a Tiendanube (null = sin integración)
 
   // ── Detectar retorno desde Mercado Pago (?subscription=success) ──
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
+    const tnRet = params.get("tiendanube");
+    if (tnRet) {
+      sb._tnRetorno = tnRet;
+      window.history.replaceState({}, "", window.location.pathname);
+      setPage("config");
+    }
     if (params.get("subscription") === "success") {
       setShowSubscriptionSuccess(true);
       const cleanUrl = window.location.pathname;
@@ -5906,18 +9969,55 @@ export default function App() {
   // ── Cargar datos cuando hay token ────────────────────────
   useEffect(() => {
     if (!token) return;
+    if (loaded) return;   // ya cargado: evita el bucle al setLoaded(true)
     const loadData = async () => {
       try {
         const userId = token.userId;
-        let negocio = await sb.getNegocio(userId);
-        // Si no hay negocio, crear uno automáticamente
-        if (!negocio) {
-          const { data: neg } = await _sb.from("negocios").insert({ user_id: userId, nombre: "Mi Negocio" }).select().single();
-          negocio = neg;
-          if (neg) await _sb.from("caja").insert({ negocio_id: neg.id, abierta: false, monto: 0 });
+
+        // Traemos TODAS las sucursales a las que este usuario tiene acceso
+        const negocios = await sb.getMisNegocios();
+
+        // undefined = la consulta falló (red, permisos, etc). En ese caso NO creamos
+        // nada: si creáramos, generaríamos cuentas vacías duplicadas.
+        if (negocios === undefined) {
+          console.error("No se pudo verificar los negocios del usuario. No se crea uno nuevo por seguridad.");
+          setAuthReady(true);
+          setLoaded(true);
+          return;
         }
+
+        let negocio;
+        if (negocios.length === 0) {
+          // Confirmado que no tiene ninguno → recién ahí creamos el primero
+          const { data: neg, error: errCrear } = await _sb
+            .from("negocios")
+            .insert({ user_id: userId, nombre: "Mi Negocio", es_principal: true })
+            .select()
+            .single();
+          if (errCrear) {
+            console.error("Error creando negocio:", errCrear);
+            setAuthReady(true);
+            setLoaded(true);
+            return;
+          }
+          negocio = neg;
+          await _sb.from("caja").insert({ negocio_id: neg.id, abierta: false, monto: 0 });
+          await _sb.from("miembros").insert({ negocio_id: neg.id, user_id: userId, rol: "dueno", permisos: ["*"] });
+        } else {
+          // Respetamos la última sucursal elegida, si sigue siendo accesible
+          const guardado = localStorage.getItem("milocal_sucursal");
+          negocio = negocios.find(n => n.id === guardado) || negocios[0];
+        }
+
         if (!negocio) { setAuthReady(true); setLoaded(true); return; }
         sb._negocioId = negocio.id;
+        setSucursales(negocios.length ? negocios : [negocio]);
+
+        // Rol y permisos del usuario en ESTA sucursal
+        const membresia = await sb.getMembresia(negocio.id, userId);
+        const esDuenoReal = negocio.user_id === userId;
+        setMiRol(esDuenoReal ? "dueno" : (membresia?.rol || "empleado"));
+        setMisPermisos(esDuenoReal ? ["*"] : (membresia?.permisos || ["venta"]));
 
         const [prods, ventasData, cajaData, gastosData, remitosData, provData] = await Promise.all([
           sb.get("productos", "nombre"),
@@ -5949,7 +10049,57 @@ export default function App() {
       setAuthReady(true); setLoaded(true);
     };
     loadData();
-  }, [token]);
+  }, [token, loaded]);
+
+  // ── Tiendanube: traer cambios que hace el servidor (pedidos web) ──
+  // Cuando entra un pedido web, el servidor descuenta stock y registra la venta.
+  // Cada 30 s traemos esos cambios para que la pantalla no pise el stock con datos viejos.
+  useEffect(() => {
+    if (!token || !loaded || !sb._negocioId) return;
+    let vivo = true, desde = new Date(Date.now() - 15000).toISOString(), intervalo = null;
+    const revisar = async () => {
+      if (!sb._tnActiva || document.hidden) return;
+      const ahora = new Date(Date.now() - 15000).toISOString(); // margen por diferencias de reloj
+      try {
+        const [{ data: prods }, { data: vts }] = await Promise.all([
+          _sb.from("productos").select("*").eq("negocio_id", sb._negocioId).gt("updated_at", desde),
+          _sb.from("ventas").select("*").eq("negocio_id", sb._negocioId).gt("created_at", desde),
+        ]);
+        if (!vivo) return;
+        desde = ahora;
+        if (prods?.length) {
+          const nuevos = new Map(prods.map(r => [r.id, dbToProduct(r)]));
+          setProducts(prev => {
+            const ids = new Set(prev.map(x => x.id));
+            return [...prev.map(x => nuevos.get(x.id) || x), ...[...nuevos.values()].filter(x => !ids.has(x.id))];
+          });
+        }
+        if (vts?.length) {
+          setSales(prev => {
+            const ids = new Set(prev.map(x => x.id));
+            const agregar = vts.filter(r => !ids.has(r.id)).map(dbToVenta);
+            return agregar.length ? [...prev, ...agregar] : prev;
+          });
+        }
+      } catch { /* silencioso */ }
+    };
+    const cargarVinculos = async () => {
+      const { data } = await _sb.from("tn_vinculos").select("producto_id").eq("negocio_id", sb._negocioId).eq("estado", "vinculado");
+      if (!vivo) return;
+      const ids = new Set((data || []).map(v => v.producto_id).filter(Boolean));
+      sb._tnActiva = ids.size > 0;
+      setTnVinculados(ids.size > 0 ? ids : null);
+    };
+    sb._tnRecargarVinculos = cargarVinculos;
+    (async () => {
+      await cargarVinculos();
+      if (!vivo) return;
+      intervalo = setInterval(revisar, 15000);
+    })();
+    const alVolver = () => { if (!document.hidden) revisar(); };
+    document.addEventListener("visibilitychange", alVolver);
+    return () => { vivo = false; if (intervalo) clearInterval(intervalo); document.removeEventListener("visibilitychange", alVolver); };
+  }, [token, loaded]);
 
   // ── Revisión periódica del estado de suscripción ──────────
   // Sin esto, si el usuario deja la pestaña abierta durante días, no se entera
@@ -5980,8 +10130,89 @@ export default function App() {
     return () => clearInterval(interval);
   }, [token, loaded]);
 
+  // ── Registrar navegación (para saber qué secciones se usan más) ──
+  // Silencioso a propósito: si falla, nunca debe romper ni frenar la app del cliente.
+  const registrarEvento = async (seccion) => {
+    try {
+      if (!sb._negocioId) return;
+      const { dispositivo, sistema } = detectarDispositivo();
+      await _sb.from("eventos_uso").insert({
+        negocio_id: sb._negocioId,
+        seccion,
+        dispositivo,
+        sistema,
+        session_id: SESSION_ID,
+      });
+    } catch { /* sin ruido: el tracking nunca debe molestar al usuario */ }
+  };
+
+  // Registrar cada cambio de sección
+  useEffect(() => {
+    if (!token || !loaded || !sb._negocioId) return;
+    registrarEvento(page);
+  }, [page, token, loaded]);
+
+  // Si el usuario quedó parado en una sección que no puede ver (cambió de sucursal
+  // o le sacaron un permiso), lo movemos a la primera que sí tenga habilitada.
+  // IMPORTANTE: este hook va acá arriba, antes de los returns condicionales de más
+  // abajo — si queda después, React deja de renderizar y la app sale en blanco.
+  useEffect(() => {
+    if (!loaded) return;
+    const esDueno = miRol === "dueno";
+    const permitido = (id) => {
+      if (id === "consolidado") return esDueno && sucursales.length >= 2;
+      if (["equipo","suscripcion","config"].includes(id)) return esDueno;
+      if (esDueno || misPermisos.includes("*")) return true;
+      return misPermisos.includes(id);
+    };
+    if (!permitido(page)) {
+      const primera = ["venta","dashboard","inventario","historial","estadisticas","proyeccion","finanzas","calculadora","remitos"]
+        .find(permitido);
+      if (primera) setPage(primera);
+    }
+  }, [miRol, misPermisos, loaded, page, sucursales.length]);
+
   const handleLogin = (access_token, userId) => { setToken({ access_token, userId }); setAuthReady(false); };
-  const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); navegar("login"); };
+  const handleLogout = async () => { await sb.signOut(); setToken(null); setLoaded(false); setAuthReady(true); setProducts([]); setSales([]); setGastos([]); setRemitos([]); setProveedores([]); setSucursales([]); localStorage.removeItem("milocal_sucursal"); navegar("login"); };
+
+  // ── Cambiar de sucursal: recarga todos los datos del local elegido ──
+  const cambiarSucursal = async (negocioId) => {
+    if (negocioId === sb._negocioId || cambiandoSucursal) return;
+    setCambiandoSucursal(true);
+    try {
+      localStorage.setItem("milocal_sucursal", negocioId);
+      setLoaded(false);          // dispara la recarga completa de datos
+      setPage("dashboard");      // evitamos quedar en una sección sin permiso
+    } finally {
+      setCambiandoSucursal(false);
+    }
+  };
+
+  // ── Crear una sucursal nueva (solo el dueño) ──
+  const crearSucursal = async (nombre, rubro) => {
+    if (!token?.userId) throw new Error("Sesión no válida");
+    const neg = await sb.crearSucursal(token.userId, nombre, rubro);
+    setSucursales(prev => [...prev, neg]);
+    await cambiarSucursal(neg.id);
+    return neg;
+  };
+
+  // Releer las sucursales después de eliminar o cancelar una.
+  // Si la que estaba abierta ya no existe, movemos al usuario a otra.
+  const recargarSucursales = async () => {
+    const lista = await sb.getMisNegocios();
+    if (!lista) return;
+    setSucursales(lista);
+    const sigueExistiendo = lista.some(s => s.id === sb._negocioId);
+    if (!sigueExistiendo && lista.length > 0) {
+      localStorage.setItem("milocal_sucursal", lista[0].id);
+      setPage("dashboard");
+      setLoaded(false);   // recarga completa con la sucursal nueva
+    } else {
+      setLoaded(false);   // refresca el estado de suscripción de la actual
+    }
+  };
+
 
   // ── Guardar config en Supabase ───────────────────────────
   const saveConfig = async (newConfig) => {
@@ -5990,23 +10221,56 @@ export default function App() {
   };
 
   // ── Guardar producto(s) en Supabase ──────────────────────
-  const saveProduct = async (p) => {
+  const saveProduct = async (p, original) => {
     if (!sb._negocioId) return;
+    const mismoStock = original && original.id === p.id && (+original.stock || 0) === (+p.stock || 0)
+      && JSON.stringify(original.stockPorTalle || {}) === JSON.stringify(p.stockPorTalle || {})
+      && JSON.stringify(original.talles || []) === JSON.stringify(p.talles || []);
+    if (mismoStock) {
+      // No se tocó el stock: guardamos el resto sin pisar el stock actual (puede haber cambiado por una venta web)
+      const { stock, stock_por_talle, ...resto } = productToDb(p, sb._negocioId);
+      const { data, error } = await _sb.from("productos").update(resto).eq("id", p.id).eq("negocio_id", sb._negocioId).select("*").maybeSingle();
+      if (error) { console.error("saveProduct:", error); return; }
+      if (data) setProducts(prev => prev.map(x => x.id === data.id ? dbToProduct(data) : x));
+      return;
+    }
     await sb.upsert("productos", productToDb(p, sb._negocioId));
+    tnProgramarSync();
   };
   const saveProducts = async (arr) => {
     if (!sb._negocioId || !arr.length) return;
     const { error } = await _sb.from("productos").upsert(arr.map(p => productToDb(p, sb._negocioId)));
     if (error) console.error("saveProducts:", error, arr);
+    tnProgramarSync();
   };
   const deleteProduct = async (id) => {
     if (sb._negocioId) await sb.del("productos", id);
+  };
+
+  // ── Ajuste relativo de stock (ventas y anulaciones) ─────
+  // Suma o resta en la base sin pisar cambios hechos por otros (ej: un pedido web
+  // que llegó mientras tanto). Si la función no responde, cae al guardado normal.
+  const ajustarStock = async (items, signo, respaldo) => {
+    if (!sb._negocioId) return;
+    try {
+      const { data, error } = await _sb.rpc("ajustar_stock_items", { p_items: items, p_signo: signo });
+      if (error) throw error;
+      if (data?.length) {
+        const frescos = new Map(data.map(r => [r.id, dbToProduct(r)]));
+        setProducts(prev => prev.map(x => frescos.get(x.id) || x));
+      }
+      tnProgramarSync();
+    } catch (e) {
+      console.error("ajustarStock, uso guardado completo:", e);
+      if (respaldo?.length) await saveProducts(respaldo);
+    }
   };
 
   // ── Guardar venta en Supabase ────────────────────────────
   const saveVenta = async (v) => {
     if (!sb._negocioId) return;
     await sb.upsert("ventas", ventaToDb(v, sb._negocioId));
+    tnProgramarSync();
   };
 
   // ── Guardar caja en Supabase ─────────────────────────────
@@ -6029,6 +10293,15 @@ export default function App() {
     return row;
   };
   const deleteGasto = async (id) => { if (sb._negocioId) await sb.del("gastos", id); };
+
+  const saveSugerencia = async (texto, categoria) => {
+    if (!sb._negocioId) throw new Error("No hay negocio activo");
+    const row = await sb.insert("sugerencias", { id: uid(), negocio_id: sb._negocioId, texto, categoria: categoria || "Mejora" });
+    if (!row) throw new Error("No se pudo guardar la sugerencia");
+  };
+
+  // ── Registrar navegación (para saber qué secciones se usan más) ──
+  // Silencioso a propósito: si falla, nunca debe romper ni frenar la app del cliente.
 
   // ── Guardar proveedor en Supabase ────────────────────────
   const saveProveedor = async (p) => {
@@ -6103,21 +10376,39 @@ export default function App() {
 
   const ctx = { config, setConfig: saveConfig, products, setProducts, sales, setSales, caja, setCaja, gastos, setGastos, remitos, setRemitos, proveedores, setProveedores, setPage,
     // Supabase DB operations
-    saveProduct, saveProducts, deleteProduct, saveVenta, saveCaja, saveGasto, deleteGasto, saveProveedor, deleteProveedor, saveRemito,
+    saveProduct, saveProducts, deleteProduct, saveVenta, ajustarStock, tnVinculados, saveCaja, saveGasto, deleteGasto, saveProveedor, deleteProveedor, saveRemito, saveSugerencia,
+    sucursales, miRol, misPermisos, cambiarSucursal, crearSucursal, recargarSucursales,
+    recargarDatos: () => setLoaded(false),
     handleLogout,
   };
 
-  const NAV = [
+  const NAV_COMPLETO = [
     { id:"venta", label:"Nueva Venta", icon:<ShoppingCart size={16}/> },
     { id:"dashboard", label:"Dashboard", icon:<LayoutDashboard size={16}/> },
+    { id:"consolidado", label:"Todos los locales", icon:<BarChart2 size={16}/>, soloDueno:true, soloMultiple:true },
     { id:"inventario", label:"Productos e Inventario", icon:<Package size={16}/> },
     { id:"historial", label:"Historial", icon:<Clock size={16}/> },
     { id:"estadisticas", label:"Estadísticas", icon:<TrendingUp size={16}/> },
+    { id:"proyeccion", label:"Proyección", icon:<Target size={16}/> },
     { id:"finanzas", label:"Finanzas", icon:<DollarSign size={16}/> },
+    { id:"calculadora", label:"Calculadora de precios", icon:<Calculator size={16}/> },
     { id:"remitos", label:"Remitos", icon:<FileText size={16}/> },
-    { id:"suscripcion", label:"Suscripción", icon:<DollarSign size={16}/> },
-    { id:"config", label:"Configuración", icon:<Settings size={16}/> },
+    { id:"equipo", label:"Equipo", icon:<User size={16}/>, soloDueno:true },
+    { id:"suscripcion", label:"Suscripción", icon:<DollarSign size={16}/>, soloDueno:true },
+    { id:"config", label:"Configuración", icon:<Settings size={16}/>, soloDueno:true },
   ];
+
+  // El dueño ve todo ("*"). Un empleado solo lo que se le habilitó.
+  const puedeVer = (seccionId) => {
+    if (miRol === "dueno" || misPermisos.includes("*")) return true;
+    return misPermisos.includes(seccionId);
+  };
+
+  const NAV = NAV_COMPLETO.filter(n => {
+    if (n.soloMultiple && sucursales.length < 2) return false;
+    if (n.soloDueno) return miRol === "dueno";
+    return puedeVer(n.id);
+  });
 
   // ── Handlers de suscripción ──
   const handleSuscribir = async () => {
@@ -6135,9 +10426,13 @@ export default function App() {
     inventario:<InventarioPage ctx={ctx}/>,
     historial:<HistorialPage ctx={ctx}/>,
     estadisticas:<EstadisticasPage ctx={ctx}/>,
+    proyeccion:<ProyeccionPage ctx={ctx}/>,
     finanzas:<FinanzasPage ctx={ctx}/>,
+    calculadora:<CalculadoraPreciosPage ctx={ctx}/>,
+    equipo:<EquipoPage ctx={ctx}/>,
+    consolidado:<ConsolidadoPage ctx={ctx}/>,
     remitos:<RemitosPage ctx={ctx}/>,
-    suscripcion:<SuscripcionPage config={config} onSuscribir={handleSuscribir} onCancelar={handleCancelar}/>,
+    suscripcion:<SuscripcionPage config={config} onSuscribir={handleSuscribir} onCancelar={handleCancelar} sucursales={sucursales}/>,
     config:<ConfigPage ctx={ctx}/>
   };
   const stockAlert = products.filter(p => p.stock <= (p.stockMinimo||3)).length;
@@ -6147,12 +10442,21 @@ export default function App() {
 
   // ── Onboarding: primer uso sin rubro configurado ──
   if (!config.rubro) {
-    return <OnboardingScreen initialNombre={config.nombre} onDone={async (cfg) => { await saveConfig(cfg); setPage("inventario"); }} />;
+    return <OnboardingScreen initialNombre={config.nombre} onDone={async (cfg) => { await saveConfig({ ...config, ...cfg }); setPage("inventario"); }} />;
+  }
+
+  // ── Onboarding: integraciones opcionales y "¿Cómo nos conociste?" (solo el dueño, una vez) ──
+  if (config.onboardingCompleto === false && miRol === "dueno") {
+    return <OnboardingIntegraciones config={config} onTerminar={(r) => {
+      setConfig(prev => ({ ...prev, onboardingCompleto: true, onboardingIntegraciones: r.onboarding_integraciones }));
+      setPage(sb._tnRetorno === "ok" ? "config" : "inventario");
+    }} />;
   }
 
   // ── Bloqueo por suscripción vencida ──
   if (subState.isBlocked) {
-    return <AccesoBloqueadoScreen config={config} onSuscribir={handleSuscribir} onLogout={handleLogout} />;
+    return <AccesoBloqueadoScreen config={config} onSuscribir={handleSuscribir} onLogout={handleLogout}
+             sucursales={sucursales} negocioActualId={sb._negocioId} onCambiarSucursal={cambiarSucursal} />;
   }
 
   return (
@@ -6162,15 +10466,28 @@ export default function App() {
         @media (max-width: 900px) {
           .app-sidebar { transform: translateX(-100%); transition: transform .25s ease; }
           .app-sidebar.open { transform: translateX(0); box-shadow: 4px 0 24px rgba(0,0,0,0.15); }
-          .app-main { margin-left: 0 !important; padding-top: 58px; }
+          .app-main { margin-left: 0 !important; padding-top: 58px; overflow-x: hidden; }
           .app-topbar-mobile { display: flex !important; }
           .app-overlay.open { display: block !important; }
           .app-sidebar-close { display: flex !important; }
-          .venta-grid { grid-template-columns: 1fr !important; }
+          .venta-grid { flex-direction: column !important; }
+          .proyeccion-grid { grid-template-columns: 1fr !important; }
+          .venta-carrito-panel { position: static !important; }
+          .accesos-rapidos-grid, .buscador-grid { grid-template-columns: repeat(3,1fr) !important; }
+          .inventario-grid { grid-template-columns: repeat(3,1fr) !important; }
         }
         @media (max-width: 640px) {
           .app-page-pad { padding: 16px !important; }
           .app-main table { display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+          .accesos-rapidos-grid, .buscador-grid { grid-template-columns: repeat(2,1fr) !important; }
+          .inventario-grid { grid-template-columns: repeat(2,1fr) !important; }
+          .dashboard-cards-2col h3 { font-size: 13px !important; }
+          .dashboard-cards-2col > div { padding: 14px 12px !important; }
+          .dashboard-cards-2col .dc-row-title { font-size: 11.5px !important; }
+          .dashboard-cards-2col .dc-row-meta { font-size: 9.5px !important; }
+          .dashboard-cards-2col .dc-row-amount { font-size: 11.5px !important; }
+          .dashboard-cards-2col .dc-link { font-size: 10.5px !important; }
+          .dashboard-cards-2col .dc-label { font-size: 10px !important; }
         }
       `}</style>
       <div style={{ display:"flex", fontFamily:"'DM Sans', system-ui, -apple-system, sans-serif", minHeight:"100vh", background:"var(--bg-page)" }}>
@@ -6216,6 +10533,62 @@ export default function App() {
               <X size={20}/>
             </button>
           </div>
+
+          {/* ── Selector de sucursal (solo si hay más de una, o si es dueño) ── */}
+          {(sucursales.length > 1 || miRol === "dueno") && (
+            <div style={{ padding:"12px 12px 0", position:"relative" }}>
+              <button
+                onClick={() => setMenuSucursales(v => !v)}
+                style={{
+                  width:"100%", display:"flex", alignItems:"center", gap:8,
+                  background:"var(--bg-card)", border:"1px solid var(--border-mid)", borderRadius:8,
+                  padding:"9px 12px", cursor:"pointer", fontFamily:"inherit", textAlign:"left",
+                }}
+              >
+                <Store size={14} style={{ color:"var(--accent)", flexShrink:0 }}/>
+                <span style={{ flex:1, fontSize:13, fontWeight:600, color:"var(--text)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {config.nombre}
+                </span>
+                <ChevronRight size={13} style={{ color:"var(--text-muted)", flexShrink:0, transform: menuSucursales ? "rotate(90deg)" : "none", transition:"transform .15s" }}/>
+              </button>
+
+              {menuSucursales && (
+                <>
+                  <div onClick={() => setMenuSucursales(false)} style={{ position:"fixed", inset:0, zIndex:10 }}/>
+                  <div style={{ position:"absolute", top:"calc(100% + 4px)", left:12, right:12, background:"#fff", border:"1px solid var(--border-mid)", borderRadius:9, boxShadow:"0 10px 28px rgba(0,0,0,0.12)", zIndex:11, overflow:"hidden" }}>
+                    {sucursales.map(s => {
+                      const activa = s.id === sb._negocioId;
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => { setMenuSucursales(false); setSidebarOpen(false); cambiarSucursal(s.id); }}
+                          style={{
+                            width:"100%", display:"flex", alignItems:"center", gap:8, padding:"10px 13px",
+                            background: activa ? "var(--accent-soft)" : "transparent", border:"none",
+                            borderBottom:"1px solid var(--border)", cursor:"pointer", textAlign:"left", fontFamily:"inherit",
+                          }}
+                        >
+                          <span style={{ flex:1, fontSize:13, fontWeight: activa ? 700 : 500, color: activa ? "var(--accent)" : "var(--text2)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                            {s.nombre}
+                            {s.es_principal && <span style={{ fontSize:10, color:"var(--text-muted)", marginLeft:6 }}>principal</span>}
+                          </span>
+                          {activa && <CheckCircle2 size={13} style={{ color:"var(--accent)", flexShrink:0 }}/>}
+                        </button>
+                      );
+                    })}
+                    {miRol === "dueno" && (
+                      <button
+                        onClick={() => { setMenuSucursales(false); setShowNuevaSucursal(true); }}
+                        style={{ width:"100%", display:"flex", alignItems:"center", gap:8, padding:"11px 13px", background:"transparent", border:"none", cursor:"pointer", textAlign:"left", fontFamily:"inherit", color:"var(--accent)", fontWeight:600, fontSize:13 }}
+                      >
+                        <Plus size={14}/> Agregar sucursal
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <nav style={{ flex:1, padding:"14px 12px", display:"flex", flexDirection:"column", gap:3, overflowY:"auto" }}>
             {NAV.map(n => {
               const isActive = page === n.id;
@@ -6244,6 +10617,11 @@ export default function App() {
           </nav>
           <div style={{ padding:"16px 20px", borderTop:"1px solid var(--border)" }}>
             {caja.abierta && <div style={{ background:"#f0fdf4", borderRadius:7, padding:"6px 12px", marginBottom:10, fontSize:13, color:"#16a34a", fontWeight:600, display:"flex", alignItems:"center", gap:6 }}><Unlock size={13}/>Caja abierta</div>}
+            <button onClick={() => setShowSugerencia(true)} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", background:"none", border:"1px solid var(--border-mid)", borderRadius:7, padding:"9px 12px", cursor:"pointer", fontSize:13.5, color:"var(--text-muted)", marginBottom:8, fontFamily:"inherit" }}>
+              💡 Sugerir mejora
+            </button>
+            {showSugerencia && <SugerenciaModal onSave={saveSugerencia} onClose={() => setShowSugerencia(false)} />}
+            {showNuevaSucursal && <NuevaSucursalModal onCrear={crearSucursal} onClose={() => setShowNuevaSucursal(false)} />}
             <button onClick={handleLogout} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", background:"none", border:"1px solid var(--border-mid)", borderRadius:7, padding:"9px 12px", cursor:"pointer", fontSize:13.5, color:"var(--text-muted)", marginBottom:10, fontFamily:"inherit" }}>
               <LogOut size={13}/> Cerrar sesión
             </button>
@@ -6266,10 +10644,28 @@ export default function App() {
             <PastDueBanner daysLeft={subState.daysLeft} onSuscribir={() => setPage("suscripcion")} />
           )}
           <ErrorBoundary>
-            {PAGES[page] ?? PAGES.dashboard}
+            {puedeVer(page) || (NAV_COMPLETO.find(n => n.id === page)?.soloDueno && miRol === "dueno")
+              ? (PAGES[page] ?? PAGES.dashboard)
+              : (
+                <div className="app-page-pad" style={{ ...G.page, display:"flex", alignItems:"center", justifyContent:"center", minHeight:"60vh" }}>
+                  <div style={{ textAlign:"center", maxWidth:380 }}>
+                    <div style={{ width:56, height:56, borderRadius:14, background:"#f3f4f6", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" }}>
+                      <Lock size={24} color="#9ca3af"/>
+                    </div>
+                    <h2 style={{ margin:"0 0 8px", fontSize:19, fontWeight:700 }}>No tenés acceso a esta sección</h2>
+                    <p style={{ margin:"0 0 18px", fontSize:14, color:"#888", lineHeight:1.5 }}>
+                      Pedile al dueño del negocio que te habilite el permiso si lo necesitás.
+                    </p>
+                    <button onClick={() => setPage(NAV[0]?.id || "venta")} style={{ ...G.btn("dark") }}>
+                      Volver
+                    </button>
+                  </div>
+                </div>
+              )}
           </ErrorBoundary>
         </main>
       </div>
     </>
   );
 }
+
