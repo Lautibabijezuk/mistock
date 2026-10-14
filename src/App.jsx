@@ -426,6 +426,15 @@ function colorDeVariante(t, colores) {
 }
 const esCombinado = (p) => (p?.colores || []).length > 0 && (p?.talles || []).length > 0 && p.talles.every(t => colorDeVariante(t, p.colores));
 const claveVar = (base, color) => (!base || base === "Único") ? color : base + SEP_VAR + color;
+// Stock infinito: variantes que en Tiendanube no controlan stock (sb._tnSinControl: producto → talles)
+const esInfinito = (p, talle) => {
+  const set = sb._tnSinControl?.get(p?.id);
+  if (!set) return false;
+  if (talle) return set.has(talle);
+  return set.has("") || ((p.talles || []).length > 0 && p.talles.every(t => set.has(t)));
+};
+const tieneInfinito = (p) => !!sb._tnSinControl?.get(p?.id)?.size;
+const fmtStock = (n) => n === Infinity ? "∞" : n;
 const COLORES_DEFAULT = ["Azul Marino","Blanco","Negro","Rojo","Verde","Amarillo","Rosa","Gris","Beige","Marrón","Celeste","Violeta"];
 const PIE_COLORS = ["#111","#16a34a","#2563eb","#d97706","#dc2626","#7c3aed","#0891b2","#ea580c"];
 
@@ -1572,7 +1581,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
     const filtrados = products
       .filter(p => {
         if (soloConStock) {
-          const tieneStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0;
+          const tieneStock = tieneInfinito(p) || (esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).some(v=>+v>0) : p.stock > 0);
           if (!tieneStock) return false;
         }
         return !search || p.nombre.toLowerCase().includes(search.toLowerCase()) || (p.sku||"").toLowerCase().includes(search.toLowerCase());
@@ -1595,7 +1604,7 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
             {filtrados.length > 0 ? (
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, maxHeight:320, overflowY:"auto" }}>
                 {filtrados.map(p => {
-                  const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
+                  const totalStock = tieneInfinito(p) ? Infinity : esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
                   const inList = list.filter(i => i.id === p.id).reduce((a,i)=>a+i.cantidad,0);
                   return (
                     <div key={p.id} onClick={() => handleSelectProd(p, side)}
@@ -1609,15 +1618,15 @@ function CambioProductosModal({ products, setProducts, saveProducts, rubro, onCl
                         <div style={{ fontWeight:700, fontSize:11, color:"#111", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", marginBottom:4 }}>{p.nombre}</div>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: esModa&&(p.talles||[]).length>0?4:0 }}>
                           <span style={{ fontWeight:800, fontSize:12, color:"#111" }}>{fmtMoney(p.precio)}</span>
-                          <span style={{ fontSize:9, color:totalStock<=3?"#d97706":"#bbb" }}>{totalStock} ud.</span>
+                          <span style={{ fontSize:9, color:totalStock<=3?"#d97706":"#bbb" }}>{fmtStock(totalStock)} ud.</span>
                         </div>
                         {esModa && (p.talles||[]).length > 0 && (
                           <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min((p.talles||[]).length,6)},1fr)`, gap:2 }}>
                             {(p.talles||[]).map(t => {
-                              const cnt=(p.stockPorTalle||{})[t]||0;
+                              const cnt = esInfinito(p, t) ? Infinity : ((p.stockPorTalle||{})[t]||0);
                               return <div key={t} style={{ background:cnt===0?"#fff0f0":"#fafafa", border:`1px solid ${cnt===0?"#fca5a5":"#e5e7eb"}`, borderRadius:4, padding:"2px 1px", textAlign:"center" }}>
                                 <div style={{ fontSize:7, color:"#999" }}>{t}</div>
-                                <div style={{ fontWeight:700, fontSize:9, color:cnt===0?"#dc2626":"#111" }}>{cnt}</div>
+                                <div style={{ fontWeight:700, fontSize:9, color:cnt===0?"#dc2626":"#111" }}>{fmtStock(cnt)}</div>
                               </div>;
                             })}
                           </div>
@@ -2123,7 +2132,7 @@ function AjusteStockModal({ prod, rubro, onSave, onClose }) {
               return (
                 <button key={t} onClick={() => setTalleSelec(t)} style={{ padding:"8px 4px", borderRadius:9, border:`2px solid ${talleSelec===t?"#111":"#e5e7eb"}`, background:talleSelec===t?"#111":"#fff", cursor:"pointer", textAlign:"center" }}>
                   <div style={{ fontSize:11, color:talleSelec===t?"#fff":"#888" }}>{t}</div>
-                  <div style={{ fontSize:14, fontWeight:700, color:talleSelec===t?"#fff":cnt===0?"#dc2626":"#111" }}>{cnt}</div>
+                  <div style={{ fontSize:14, fontWeight:700, color:talleSelec===t?"#fff":cnt===0?"#dc2626":"#111" }}>{fmtStock(cnt)}</div>
                 </button>
               );
             })}
@@ -2356,7 +2365,7 @@ function RemitoModal({ proveedores, products, setProducts, saveProducts, rubro, 
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8, marginBottom:12, maxHeight:340, overflowY:"auto" }}>
             {filtProd.map(p => {
               const tieneTalles = esModa && (p.talles||[]).length > 0;
-              const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
+              const totalStock = tieneInfinito(p) ? Infinity : esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
               const enRemito = f.items.filter(i => i.id === p.id).reduce((a,i)=>a+i.cantidad,0);
               return (
                 <div key={p.id} onClick={() => tieneTalles ? setProdPendiente(p) : addProdSimple(p)}
@@ -2370,15 +2379,15 @@ function RemitoModal({ proveedores, products, setProducts, saveProducts, rubro, 
                     <div style={{ fontWeight:700, fontSize:11, color:"#111", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", marginBottom:4 }}>{p.nombre}</div>
                     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: tieneTalles?4:0 }}>
                       <span style={{ fontWeight:800, fontSize:12, color:"#111" }}>{fmtMoney(p.precio)}</span>
-                      <span style={{ fontSize:9, color:totalStock<=3?"#d97706":"#bbb" }}>{totalStock} ud.</span>
+                      <span style={{ fontSize:9, color:totalStock<=3?"#d97706":"#bbb" }}>{fmtStock(totalStock)} ud.</span>
                     </div>
                     {tieneTalles && (
                       <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min((p.talles||[]).length,6)},1fr)`, gap:2 }}>
                         {(p.talles||[]).map(t => {
-                          const cnt=(p.stockPorTalle||{})[t]||0;
+                          const cnt = esInfinito(p, t) ? Infinity : ((p.stockPorTalle||{})[t]||0);
                           return <div key={t} style={{ background:cnt===0?"#fff0f0":"#fafafa", border:`1px solid ${cnt===0?"#fca5a5":"#e5e7eb"}`, borderRadius:4, padding:"2px 1px", textAlign:"center" }}>
                             <div style={{ fontSize:7, color:"#999" }}>{t}</div>
-                            <div style={{ fontWeight:700, fontSize:9, color:cnt===0?"#dc2626":"#111" }}>{cnt}</div>
+                            <div style={{ fontWeight:700, fontSize:9, color:cnt===0?"#dc2626":"#111" }}>{fmtStock(cnt)}</div>
                           </div>;
                         })}
                       </div>
@@ -2863,7 +2872,8 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
   const combinado = esCombinado(prod);
   const partesVar = combinado ? (prod.talles||[]).map(k => ({ k, ...colorDeVariante(k, prod.colores) })) : [];
   const conBase = partesVar.some(x => x.base);
-  const stockColor = (c) => partesVar.filter(x => x.color === c).reduce((a, x) => a + (+stockPorTalle[x.k] || 0), 0);
+  const stockDeVar = (k) => esInfinito(prod, k) ? Infinity : (+stockPorTalle[k] || 0);
+  const stockColor = (c) => partesVar.filter(x => x.color === c).reduce((a, x) => a + stockDeVar(x.k), 0);
   const tallesVisibles = combinado ? partesVar.filter(x => x.color === colorSelec && x.base).map(x => ({ k: x.k, label: x.base })) : (prod.talles||[]).map(t => ({ k: t, label: t }));
   const elegirColor = (c) => {
     setColorSelec(c);
@@ -2879,7 +2889,7 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
       )}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
         <span style={{ fontWeight:800, fontSize:22, color:"#111" }}>{fmtMoney(prod.precio, moneda)}</span>
-        {tieneTalles && <span style={{ fontSize:12, color:"#888" }}>{totalDisp} unidades disponibles</span>}
+        {tieneTalles && <span style={{ fontSize:12, color:"#888" }}>{tieneInfinito(prod) ? "Stock ilimitado en algunas variantes" : `${totalDisp} unidades disponibles`}</span>}
       </div>
 
       {/* Colores — seleccionable */}
@@ -2895,7 +2905,7 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
                   background: selec ? "#111" : "#f3f4f6", borderRadius:20, padding:"7px 16px",
                   fontSize:13, color: selec ? "#fff" : "#555", fontWeight: selec ? 700 : 500,
                   border: selec ? "2px solid #111" : "2px solid transparent", cursor:"pointer", transition:"all .15s",
-                }}>{c}{combinado ? ` · ${stockColor(c)}` : ""}</button>
+                }}>{c}{combinado ? ` · ${fmtStock(stockColor(c))}` : ""}</button>
               );
             })}
           </div>
@@ -2908,7 +2918,7 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
           <div style={{ fontSize:13, fontWeight:600, color:"#666", marginBottom:10 }}>Seleccionar talle:</div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:8 }}>
             {tallesVisibles.map(({ k: t, label }) => {
-              const cnt = stockPorTalle[t] || 0;
+              const cnt = stockDeVar(t);
               const agotado = cnt === 0;
               const selec = talleSelec === t;
               return (
@@ -2919,7 +2929,7 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
                   opacity: agotado ? 0.45 : 1, transition:"all .15s"
                 }}>
                   <div style={{ fontSize:13, fontWeight:700, color:selec?"#fff":agotado?"#bbb":"#111" }}>{label}</div>
-                  <div style={{ fontSize:11, color:selec?"#ccc":agotado?"#ccc":"#888", marginTop:2 }}>{cnt} ud.</div>
+                  <div style={{ fontSize:11, color:selec?"#ccc":agotado?"#ccc":"#888", marginTop:2 }}>{fmtStock(cnt)} ud.</div>
                 </button>
               );
             })}
@@ -2929,7 +2939,7 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
 
       <button
         style={{ ...G.btn(!faltaElegir ? "dark" : "light"), width:"100%", justifyContent:"center", padding:"13px", fontSize:15 }}
-        onClick={() => { if (!faltaElegir) { onSelect(talleSelec, tieneTalles ? stockPorTalle[talleSelec] : null, colorSelec); onClose(); } }}
+        onClick={() => { if (!faltaElegir) { onSelect(talleSelec, tieneTalles ? stockDeVar(talleSelec) : (esInfinito(prod) ? Infinity : null), colorSelec); onClose(); } }}
         disabled={faltaElegir}
       >
         {faltaElegir ? (tieneColores && !colorSelec ? "Seleccioná un color" : "Seleccioná un talle") : "Agregar al carrito"}
@@ -2946,9 +2956,9 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
   useEffect(() => { setTimeout(() => inputRef.current?.focus(), 50); }, []);
 
   const filtrados = products.filter(p => {
-    const tieneStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
+    const tieneStock = tieneInfinito(p) || (esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
       ? Object.values(p.stockPorTalle).some(v => +v > 0)
-      : p.stock > 0;
+      : p.stock > 0);
     if (!tieneStock) return false;
     if (!q) return true;
     const busq = q.toLowerCase();
@@ -2991,7 +3001,7 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
               {filtrados.map(p => {
                 const inCart = cart.filter(i => (i.productoId||i.id) === p.id);
                 const totalEnCarrito = inCart.reduce((a, i) => a + i.cantidad, 0);
-                const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
+                const totalStock = tieneInfinito(p) ? Infinity : esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v)=>a+(+v||0),0) : p.stock;
                 return (
                   <div key={p.id} onClick={() => onSelect(p)}
                     style={{ background:"#fff", border:`1.5px solid ${totalEnCarrito>0?"#111":"#ebebeb"}`, borderRadius:14, overflow:"hidden", cursor:"pointer", boxShadow:"0 2px 6px rgba(0,0,0,0.05)", transition:"border-color .15s" }}>
@@ -3007,15 +3017,15 @@ function BuscadorProductosModal({ products, esModa, cart, moneda, onSelect, onCl
                       </div>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: esModa && (p.talles||[]).length>0 ? 6 : 0 }}>
                         <span style={{ fontWeight:800, fontSize:14, color:"#111" }}>{fmtMoney(p.precio, moneda)}</span>
-                        <span style={{ fontSize:10, color: totalStock<=3?"#d97706":"#bbb" }}>{totalStock} ud.</span>
+                        <span style={{ fontSize:10, color: totalStock<=3?"#d97706":"#bbb" }}>{fmtStock(totalStock)} ud.</span>
                       </div>
                       {esModa && (p.talles||[]).length > 0 && (
                         <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min((p.talles||[]).length,6)},1fr)`, gap:3 }}>
                           {(p.talles||[]).map(t => {
-                            const cnt = (p.stockPorTalle||{})[t]||0;
+                            const cnt = esInfinito(p, t) ? Infinity : ((p.stockPorTalle||{})[t]||0);
                             return <div key={t} style={{ background:cnt===0?"#fff0f0":"#fafafa", border:`1px solid ${cnt===0?"#fca5a5":"#e5e7eb"}`, borderRadius:5, padding:"2px 1px", textAlign:"center" }}>
                               <div style={{ fontSize:7, color:"#999" }}>{t}</div>
-                              <div style={{ fontWeight:700, fontSize:10, color:cnt===0?"#dc2626":"#111" }}>{cnt}</div>
+                              <div style={{ fontWeight:700, fontSize:10, color:cnt===0?"#dc2626":"#111" }}>{fmtStock(cnt)}</div>
                             </div>;
                           })}
                         </div>
@@ -3072,9 +3082,9 @@ function VentaPage({ ctx }) {
   const buscarPorCodigo = /^\d{8,}$/.test(search.trim());
 
   const prods = products.filter(p => {
-    const tieneStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
+    const tieneStock = tieneInfinito(p) || (esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
       ? Object.values(p.stockPorTalle).some(v => +v > 0)
-      : p.stock > 0;
+      : p.stock > 0);
     if (!tieneStock) return false;
     if (buscarPorCodigo) {
       return (p.codigoBarras || "").trim() === search.trim();
@@ -3092,9 +3102,9 @@ function VentaPage({ ctx }) {
       return;
     }
     // Verificar stock
-    const tieneStock = esModa && encontrado.stockPorTalle && Object.keys(encontrado.stockPorTalle).length > 0
+    const tieneStock = tieneInfinito(encontrado) || (esModa && encontrado.stockPorTalle && Object.keys(encontrado.stockPorTalle).length > 0
       ? Object.values(encontrado.stockPorTalle).some(v => +v > 0)
-      : encontrado.stock > 0;
+      : encontrado.stock > 0);
     if (!tieneStock) {
       alert(`"${encontrado.nombre}" no tiene stock disponible`);
       return;
@@ -3109,7 +3119,7 @@ function VentaPage({ ctx }) {
 
   const addToCart = (prod, talle = null, stockMax = null, color = null) => {
     const cartKey = [prod.id, talle, color].filter(Boolean).join("__") || prod.id;
-    const maxStock = stockMax !== null ? stockMax : prod.stock;
+    const maxStock = esInfinito(prod, talle) ? Infinity : stockMax !== null ? stockMax : prod.stock;
     const cv = talle && esCombinado(prod) ? colorDeVariante(talle, prod.colores) : null;
     const sufijo = cv
       ? [cv.base ? `T.${cv.base}` : null, cv.color].filter(Boolean).join(" - ")
@@ -3142,19 +3152,19 @@ function VentaPage({ ctx }) {
 
   const [guardandoVenta, setGuardandoVenta] = useState(false);
 
-  const esPagoCombinado = metodoPago === "combinar";
+  const esCombinado = metodoPago === "combinar";
   const sumaSplit = (+splitMonto1 || 0) + (+splitMonto2 || 0);
-  const splitValido = !esPagoCombinado || Math.abs(sumaSplit - total) < 1;
+  const splitValido = !esCombinado || Math.abs(sumaSplit - total) < 1;
 
   const completarVenta = async () => {
     if (guardandoVenta) return; // evita doble click → venta duplicada
     if (cart.length === 0 || !metodoPago) return;
-    if (esPagoCombinado && !splitValido) return;
+    if (esCombinado && !splitValido) return;
     if (!caja.abierta) { setShowCaja(true); return; }
     setGuardandoVenta(true);
     try {
-    const metodoPagoFinal = esPagoCombinado ? `Combinado (${splitMetodo1} + ${splitMetodo2})` : metodoPago;
-    const pagosCombinados = esPagoCombinado ? [
+    const metodoPagoFinal = esCombinado ? `Combinado (${splitMetodo1} + ${splitMetodo2})` : metodoPago;
+    const pagosCombinados = esCombinado ? [
       { metodo: splitMetodo1, monto: +splitMonto1 || 0 },
       { metodo: splitMetodo2, monto: +splitMonto2 || 0 },
     ] : null;
@@ -3270,7 +3280,7 @@ function VentaPage({ ctx }) {
                   .map(p => {
                     const inCart = cart.filter(i => (i.productoId||i.id) === p.id);
                     const totalEnCarrito = inCart.reduce((a, i) => a + i.cantidad, 0);
-                    const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v) => a+(+v||0),0) : p.stock;
+                    const totalStock = tieneInfinito(p) ? Infinity : esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0 ? Object.values(p.stockPorTalle).reduce((a,v) => a+(+v||0),0) : p.stock;
                     return (
                       <div key={p.id} onClick={() => handleProdClick(p)}
                         style={{ background:"#fff", border:`1.5px solid ${totalEnCarrito>0?"#111":"#ebebeb"}`, borderRadius:14, overflow:"hidden", cursor:"pointer", boxShadow:"0 2px 6px rgba(0,0,0,0.05)", transition:"border-color .15s" }}>
@@ -3286,15 +3296,15 @@ function VentaPage({ ctx }) {
                           </div>
                           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: esModa && (p.talles||[]).length>0 ? 6 : 0 }}>
                             <span style={{ fontWeight:800, fontSize:15, color:"#111" }}>{fmtMoney(p.precio, config.moneda)}</span>
-                            <span style={{ fontSize:11, color: totalStock<=3?"#d97706":"#bbb" }}>{totalStock} ud.</span>
+                            <span style={{ fontSize:11, color: totalStock<=3?"#d97706":"#bbb" }}>{fmtStock(totalStock)} ud.</span>
                           </div>
                           {esModa && (p.talles||[]).length > 0 && (
                             <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min((p.talles||[]).length,6)},1fr)`, gap:3 }}>
                               {(p.talles||[]).map(t => {
-                                const cnt = (p.stockPorTalle||{})[t]||0;
+                                const cnt = esInfinito(p, t) ? Infinity : ((p.stockPorTalle||{})[t]||0);
                                 return <div key={t} style={{ background:cnt===0?"#fff0f0":"#fafafa", border:`1px solid ${cnt===0?"#fca5a5":"#e5e7eb"}`, borderRadius:5, padding:"2px 1px", textAlign:"center" }}>
                                   <div style={{ fontSize:7, color:"#999" }}>{t}</div>
-                                  <div style={{ fontWeight:700, fontSize:10, color:cnt===0?"#dc2626":"#111" }}>{cnt}</div>
+                                  <div style={{ fontWeight:700, fontSize:10, color:cnt===0?"#dc2626":"#111" }}>{fmtStock(cnt)}</div>
                                 </div>;
                               })}
                             </div>
@@ -3405,7 +3415,7 @@ function VentaPage({ ctx }) {
             <input style={{ ...G.inp(), marginBottom:10 }} type="number" placeholder="Monto recibido" value={efectivoDado} onChange={e => setEfectivoDado(e.target.value)} />
           )}
 
-          {esPagoCombinado && (
+          {esCombinado && (
             <div style={{ background:"#f9fafb", borderRadius:10, padding:10, marginBottom:10 }}>
               <div style={{ display:"flex", gap:8, marginBottom:8 }}>
                 <select style={{ ...G.inp(), flex:1 }} value={splitMetodo1} onChange={e => setSplitMetodo1(e.target.value)}>
@@ -3434,9 +3444,9 @@ function VentaPage({ ctx }) {
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={() => setShowCobro(false)} style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }}>Volver</button>
             <button
-              disabled={!metodoPago || guardandoVenta || (esPagoCombinado && !splitValido)}
+              disabled={!metodoPago || guardandoVenta || (esCombinado && !splitValido)}
               onClick={completarVenta}
-              style={{ ...G.btn((metodoPago && !guardandoVenta && (!esPagoCombinado || splitValido))?"dark":"light"), flex:1, justifyContent:"center", cursor: guardandoVenta ? "wait" : "pointer" }}
+              style={{ ...G.btn((metodoPago && !guardandoVenta && (!esCombinado || splitValido))?"dark":"light"), flex:1, justifyContent:"center", cursor: guardandoVenta ? "wait" : "pointer" }}
             >
               {guardandoVenta ? "Guardando..." : "Confirmar venta"}
             </button>
@@ -4073,7 +4083,7 @@ function InventarioPage({ ctx }) {
           : <div className="inventario-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:16 }}>
             {filtered.map(p => {
               const esModa = RUBROS_CON_TALLES.includes(config.rubro);
-              const totalStock = esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
+              const totalStock = tieneInfinito(p) ? Infinity : esModa && p.stockPorTalle && Object.keys(p.stockPorTalle).length > 0
                 ? Object.values(p.stockPorTalle).reduce((a,v) => a+(+v||0), 0)
                 : p.stock;
               const color1 = p.colores?.[0];
@@ -4096,7 +4106,7 @@ function InventarioPage({ ctx }) {
                     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
                       <span style={{ fontWeight:800, fontSize:17, color:"#111" }}>{fmtMoney(p.precio, config.moneda)}</span>
                       <span style={{ background: totalStock === 0 ? "#dc2626" : "#16a34a", color:"#fff", borderRadius:20, padding:"3px 10px", fontSize:12, fontWeight:700 }}>
-                        {totalStock} uds
+                        {fmtStock(totalStock)} uds
                       </span>
                     </div>
 
@@ -4104,7 +4114,7 @@ function InventarioPage({ ctx }) {
                     {color1 && (
                       <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:"#666", marginBottom:6, fontWeight:500 }}>
                         <span>{color1}</span>
-                        <span style={{ color:"#bbb" }}>{totalStock}</span>
+                        <span style={{ color:"#bbb" }}>{fmtStock(totalStock)}</span>
                       </div>
                     )}
 
@@ -4112,11 +4122,11 @@ function InventarioPage({ ctx }) {
                     {esModa && (p.talles||[]).length > 0 && (
                       <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min((p.talles||[]).length, 6)}, 1fr)`, gap:3 }}>
                         {(p.talles||[]).map(t => {
-                          const cnt = (p.stockPorTalle || {})[t] || 0;
+                          const cnt = esInfinito(p, t) ? Infinity : ((p.stockPorTalle || {})[t] || 0);
                           return (
                             <div key={t} style={{ background: cnt===0?"#fff0f0":"#fff", border:`1px solid ${cnt===0?"#fca5a5":"#e5e7eb"}`, borderRadius:7, padding:"3px 2px", textAlign:"center" }}>
                               <div style={{ fontSize:8, color:"#999" }}>{t}</div>
-                              <div style={{ fontWeight:700, fontSize:12, color: cnt===0?"#dc2626":"#111" }}>{cnt}</div>
+                              <div style={{ fontWeight:700, fontSize:12, color: cnt===0?"#dc2626":"#111" }}>{fmtStock(cnt)}</div>
                             </div>
                           );
                         })}
@@ -10084,9 +10094,12 @@ export default function App() {
       } catch { /* silencioso */ }
     };
     const cargarVinculos = async () => {
-      const { data } = await _sb.from("tn_vinculos").select("producto_id").eq("negocio_id", sb._negocioId).eq("estado", "vinculado");
+      const { data } = await _sb.from("tn_vinculos").select("producto_id, talle, sin_control").eq("negocio_id", sb._negocioId).eq("estado", "vinculado");
       if (!vivo) return;
       const ids = new Set((data || []).map(v => v.producto_id).filter(Boolean));
+      const sc = new Map();
+      (data || []).filter(v => v.sin_control && v.producto_id).forEach(v => { if (!sc.has(v.producto_id)) sc.set(v.producto_id, new Set()); sc.get(v.producto_id).add(v.talle || ""); });
+      sb._tnSinControl = sc;
       sb._tnActiva = ids.size > 0;
       setTnVinculados(ids.size > 0 ? ids : null);
     };
@@ -10668,4 +10681,3 @@ export default function App() {
     </>
   );
 }
-
