@@ -10077,6 +10077,7 @@ export default function App() {
         ]);
         if (!vivo) return;
         desde = ahora;
+        cargarVinculos?.(); // por si una variante pasó de ilimitada (∞) a tener stock, o al revés
         if (prods?.length) {
           const nuevos = new Map(prods.map(r => [r.id, dbToProduct(r)]));
           setProducts(prev => {
