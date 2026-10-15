@@ -1771,6 +1771,7 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
     return base;
   });
   const [catNueva, setCatNueva] = useState(false);
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
 
   const u = (k, v) => setF(p => ({ ...p, [k]:v }));
   const [tallePreset, setTallePreset] = useState("Ropa — XS al XXL");
@@ -1946,8 +1947,20 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
                   canvas.height = h;
                   const ctx = canvas.getContext("2d");
                   ctx.drawImage(img, 0, 0, w, h);
-                  const compressed = canvas.toDataURL("image/jpeg", 0.85);
-                  u("imagen", compressed);
+                  // La foto va al almacenamiento de archivos (el navegador la guarda y no se vuelve a bajar cada vez)
+                  setSubiendoFoto(true);
+                  canvas.toBlob(async (blob) => {
+                    try {
+                      if (!blob || !sb._negocioId) throw new Error("sin archivo");
+                      const ruta = `${sb._negocioId}/${uid()}.jpg`;
+                      const { error } = await _sb.storage.from("productos").upload(ruta, blob, { contentType: "image/jpeg", cacheControl: "31536000" });
+                      if (error) throw error;
+                      u("imagen", _sb.storage.from("productos").getPublicUrl(ruta).data.publicUrl);
+                    } catch (err) {
+                      console.error("subir foto:", err);
+                      u("imagen", canvas.toDataURL("image/jpeg", 0.85)); // respaldo: igual queda guardada
+                    } finally { setSubiendoFoto(false); }
+                  }, "image/jpeg", 0.85);
                 };
                 img.src = ev.target.result;
               };
@@ -2078,7 +2091,7 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
 
       <div style={{ display:"flex", gap:10 }}>
         <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={onClose}>Cancelar</button>
-        <button style={{ ...G.btn("dark"), flex:1, justifyContent:"center" }} onClick={save}>Guardar producto</button>
+        <button style={{ ...G.btn("dark"), flex:1, justifyContent:"center", opacity: subiendoFoto ? .6 : 1 }} disabled={subiendoFoto} onClick={save}>{subiendoFoto ? "Subiendo foto…" : "Guardar producto"}</button>
       </div>
       {escanerAbierto && (
         <EscanerModal
