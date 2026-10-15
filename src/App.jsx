@@ -165,7 +165,7 @@ const sb = {
 };
 // ── Conversores DB ↔ App ──────────────────────────────────
 const dbToProduct = r => ({
-  id: r.id, nombre: r.nombre, descripcion: r.descripcion, categoria: r.categoria,
+  id: r.id, createdAt: r.created_at || null, nombre: r.nombre, descripcion: r.descripcion, categoria: r.categoria,
   sku: r.sku, precio: parseFloat(r.precio)||0, costo: parseFloat(r.costo)||0,
   stock: r.stock||0, stockMinimo: r.stock_minimo||3,
   talles: r.talles||[], colores: r.colores||[], stockPorTalle: r.stock_por_talle||{},
@@ -424,7 +424,7 @@ function colorDeVariante(t, colores) {
   const c = cs.filter(c => String(t).endsWith(SEP_VAR + c)).sort((a, b) => b.length - a.length)[0];
   return c ? { base: String(t).slice(0, -(SEP_VAR.length + c.length)), color: c } : null;
 }
-const esCombinado = (p) => (p?.colores || []).length > 0 && (p?.talles || []).length > 0 && p.talles.every(t => colorDeVariante(t, p.colores));
+const esVarTalleColor = (p) => (p?.colores || []).length > 0 && (p?.talles || []).length > 0 && p.talles.every(t => colorDeVariante(t, p.colores));
 const claveVar = (base, color) => (!base || base === "Único") ? color : base + SEP_VAR + color;
 // Stock infinito: variantes que en Tiendanube no controlan stock (sb._tnSinControl: producto → talles)
 const esInfinito = (p, talle) => {
@@ -1756,7 +1756,7 @@ function ProductoModal({ prod, onSave, onClose, cats, rubro }) {
     if (!base.colorCustom) base.colorCustom = "";
     // Stock por talle y color: separamos la clave "M / Negro" en talle base + color
     base.stockColor = {};
-    if (esModa && esCombinado(base)) {
+    if (esModa && esVarTalleColor(base)) {
       const bases = [];
       base.talles.forEach(t => { const x = colorDeVariante(t, base.colores); const b = x.base || "Único"; if (!bases.includes(b)) bases.push(b); });
       base.stockColor = { ...base.stockPorTalle };
@@ -2869,7 +2869,7 @@ function TalleSelectorModal({ prod, onSelect, onClose, moneda }) {
   const totalDisp = Object.values(stockPorTalle).reduce((a,v) => a+(+v||0), 0);
   const tieneTalles = (prod.talles||[]).length > 0;
   const tieneColores = (prod.colores||[]).length > 0;
-  const combinado = esCombinado(prod);
+  const combinado = esVarTalleColor(prod);
   const partesVar = combinado ? (prod.talles||[]).map(k => ({ k, ...colorDeVariante(k, prod.colores) })) : [];
   const conBase = partesVar.some(x => x.base);
   const stockDeVar = (k) => esInfinito(prod, k) ? Infinity : (+stockPorTalle[k] || 0);
@@ -3120,7 +3120,7 @@ function VentaPage({ ctx }) {
   const addToCart = (prod, talle = null, stockMax = null, color = null) => {
     const cartKey = [prod.id, talle, color].filter(Boolean).join("__") || prod.id;
     const maxStock = esInfinito(prod, talle) ? Infinity : stockMax !== null ? stockMax : prod.stock;
-    const cv = talle && esCombinado(prod) ? colorDeVariante(talle, prod.colores) : null;
+    const cv = talle && esVarTalleColor(prod) ? colorDeVariante(talle, prod.colores) : null;
     const sufijo = cv
       ? [cv.base ? `T.${cv.base}` : null, cv.color].filter(Boolean).join(" - ")
       : [talle ? `T.${talle}` : null, color].filter(Boolean).join(" - ");
@@ -3934,7 +3934,7 @@ function InventarioPage({ ctx }) {
   };
   const resumenPublicar = (p) => {
     if (!p) return [];
-    const comb = esCombinado(p);
+    const comb = esVarTalleColor(p);
     const vars = (p.talles || []).length || 1;
     const colores = (p.colores || []).length;
     return [
@@ -9919,6 +9919,11 @@ export default function App() {
 
   const [config, setConfig] = useState({ nombre:"Mi Showroom", moneda:"$", dueno:"", rubro:"", telefono:"", instagram:"", logo:"", cuit:"", razonSocial:"", tipoContrib:"monotributista", puntoVenta:"0001", condicionIVA:"Monotributista", facturacionActiva:false });
   const [products, setProducts] = useState([]);
+  // Siempre de lo más nuevo a lo más viejo (los recién creados, que todavía no tienen fecha, van primero)
+  const productosOrdenados = useMemo(() => [...products].sort((a, b) => {
+    if (!a.createdAt || !b.createdAt) return (a.createdAt ? 1 : 0) - (b.createdAt ? 1 : 0);
+    return b.createdAt.localeCompare(a.createdAt);
+  }), [products]);
   const [sales, setSales] = useState([]);
   const [caja, setCaja] = useState({ abierta:false, monto:0, fecha:null });
   const [gastos, setGastos] = useState([]);
@@ -10388,7 +10393,7 @@ export default function App() {
   );
 
 
-  const ctx = { config, setConfig: saveConfig, products, setProducts, sales, setSales, caja, setCaja, gastos, setGastos, remitos, setRemitos, proveedores, setProveedores, setPage,
+  const ctx = { config, setConfig: saveConfig, products: productosOrdenados, setProducts, sales, setSales, caja, setCaja, gastos, setGastos, remitos, setRemitos, proveedores, setProveedores, setPage,
     // Supabase DB operations
     saveProduct, saveProducts, deleteProduct, saveVenta, ajustarStock, tnVinculados, saveCaja, saveGasto, deleteGasto, saveProveedor, deleteProveedor, saveRemito, saveSugerencia,
     sucursales, miRol, misPermisos, cambiarSucursal, crearSucursal, recargarSucursales,
