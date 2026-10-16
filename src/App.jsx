@@ -2752,7 +2752,7 @@ function DashboardPage({ ctx }) {
         {caja.abierta && <button style={G.btn("outline")} onClick={() => setShowCerrar(true)}><Lock size={14}/> Cerrar Caja</button>}
       </div>
       <CajaBanner caja={caja} onAbrir={() => setShowCaja(true)} />
-      <PendientesIntegraciones config={config} setPage={setPage} />
+      <PendientesIntegraciones config={config} setPage={setPage} esDueno={(ctx.miRol || "dueno") === "dueno"} />
       {stockBajoCount > 0 && (
         <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:10, padding:"10px 16px", marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:13 }}>
           <span style={{ display:"flex", alignItems:"center", gap:8, color:"#92400e" }}>
@@ -4255,7 +4255,7 @@ function HistorialPage({ ctx }) {
                 <td style={{ padding:"12px 16px", fontWeight:700, color:s.anulada?"#dc2626":"#16a34a" }}>{fmtMoney(s.total, config.moneda)}</td>
                 <td style={{ padding:"12px 16px" }}><span style={{ background:s.anulada?"#fee2e2":"#dcfce7", color:s.anulada?"#dc2626":"#16a34a", padding:"2px 9px", borderRadius:20, fontSize:11, fontWeight:600 }}>{s.anulada?"Anulada":"Completada"}</span></td>
                 <td style={{ padding:"10px 16px" }}>
-                  <CeldaFactura venta={s} config={config} onFacturar={() => setAFacturar(s)} onVer={() => s.factura?.nc?.estado === "emitida" ? setNcVer(s) : setComprobanteVer(s)} onNC={() => setNcVenta(s)} />
+                  <CeldaFactura venta={s} config={config} onActivar={(ctx.miRol || "dueno") === "dueno" && !s.importada && !s.anulada ? () => irAFacturacion(ctx.setPage) : null} onFacturar={() => setAFacturar(s)} onVer={() => s.factura?.nc?.estado === "emitida" ? setNcVer(s) : setComprobanteVer(s)} onNC={() => setNcVenta(s)} />
                 </td>
                 <td style={{ padding:"12px 16px" }}><button onClick={() => setDetalle(s)} style={{ background:"none", border:"none", cursor:"pointer", color:"#666", fontSize:12 }}>Ver <ChevronRight size={12}/></button></td>
               </tr>
@@ -5251,7 +5251,7 @@ function BadgePrueba() {
 }
 
 // Celda "Factura" del Historial de Ventas
-function CeldaFactura({ venta, config, onFacturar, onVer, onNC }) {
+function CeldaFactura({ venta, config, onFacturar, onVer, onNC, onActivar }) {
   if (venta.importada) return <span title="Venta importada de Tiendanube: no se factura desde MiLocal" style={{ fontSize:12, color:"#9ca3af" }}>—</span>;
   const f = venta.factura;
   if (f?.estado === "emitida" && f.nc?.estado === "emitida") {
@@ -5283,7 +5283,9 @@ function CeldaFactura({ venta, config, onFacturar, onVer, onNC }) {
     );
   }
   if (venta.anulada) return <span style={{ fontSize:11, color:"#9ca3af" }}>No se factura</span>;
-  if (!config.facturacionActiva) return <span style={{ fontSize:11, color:"#bbb" }}>Sin factura</span>;
+  if (!config.facturacionActiva) return onActivar
+    ? <button onClick={onActivar} title="Activá la factura electrónica ARCA" style={{ background:"#f4ecff", border:"none", color:"#7c3aed", borderRadius:20, padding:"3px 10px", fontSize:11, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>Activar factura</button>
+    : <span style={{ fontSize:11, color:"#bbb" }}>Sin factura</span>;
   if (f?.estado === "rechazada") {
     return (
       <div style={{ maxWidth:220 }}>
@@ -6563,24 +6565,32 @@ function OnboardingIntegraciones({ config, onTerminar }) {
 }
 
 // Recordatorio en el Inicio de lo que quedó "para después" en el registro
-function PendientesIntegraciones({ config, setPage }) {
+// Lleva a Configuración y baja hasta la tarjeta de facturación
+const irAFacturacion = (setPage) => {
+  setPage("config");
+  setTimeout(() => document.getElementById("card-facturacion")?.scrollIntoView({ behavior: "smooth", block: "start" }), 350);
+};
+
+function PendientesIntegraciones({ config, setPage, esDueno = true }) {
   const integ = config.onboardingIntegraciones || {};
   const [tnConectada, setTnConectada] = useState(null);
-  const [cerrado, setCerrado] = useState(() => { try { return localStorage.getItem("milocal_pend_cerrado_" + sb._negocioId) === "1"; } catch { return false; } });
+  const [cerrado, setCerrado] = useState(() => { try { return localStorage.getItem("milocal_pend_cerrado2_" + sb._negocioId) === "1"; } catch { return false; } });
   useEffect(() => {
     if (integ.tn !== "despues") return;
     _sb.from("tn_vinculos").select("id", { count: "exact", head: true }).eq("negocio_id", sb._negocioId)
       .then(({ count }) => setTnConectada((count || 0) > 0)).catch(() => {});
   }, [integ.tn]);
   const items = [];
-  if (integ.arca && integ.arca !== "activa" && !config.facturacionActiva) items.push({ t: "Activá la factura electrónica ARCA", d: "Facturá con CAE al cobrar, sin otro sistema.", b: "Activar", color: "#9238FF" });
+  // Factura electrónica: se la mostramos a todos los dueños que todavía no la activaron (también a los clientes de antes)
+  if (esDueno && !config.facturacionActiva) items.push({ t: "Nuevo: factura electrónica ARCA incluida", d: "Facturá con CAE al cobrar, sin pagar otro sistema. Se activa en unos 10 minutos.", b: "Activar", color: "#9238FF", ir: () => irAFacturacion(setPage) });
   if (integ.tn === "despues" && tnConectada === false) items.push({ t: "Conectá tu Tiendanube", d: "Stock sincronizado y ventas web en tu Historial.", b: "Conectar", color: "#2c3e91" });
   if (!items.length || cerrado) return null;
+  const titulo = items.length === 1 && items[0].ir ? "Novedad en MiLocal" : "Te quedó pendiente";
   return (
     <div style={{ ...G.card({ marginBottom: 20, padding: "16px 18px" }) }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <div style={{ fontWeight: 700, fontSize: 14 }}>Te quedó pendiente</div>
-        <button onClick={() => { setCerrado(true); try { localStorage.setItem("milocal_pend_cerrado_" + sb._negocioId, "1"); } catch { /* sin storage */ } }} aria-label="Ocultar" style={{ background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 16, minWidth: 32, minHeight: 32 }}>✕</button>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>{titulo}</div>
+        <button onClick={() => { setCerrado(true); try { localStorage.setItem("milocal_pend_cerrado2_" + sb._negocioId, "1"); } catch { /* sin storage */ } }} aria-label="Ocultar" style={{ background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 16, minWidth: 32, minHeight: 32 }}>✕</button>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
         {items.map(i => (
@@ -6589,7 +6599,7 @@ function PendientesIntegraciones({ config, setPage }) {
               <div style={{ fontWeight: 600, fontSize: 13.5 }}>{i.t}</div>
               <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{i.d}</div>
             </div>
-            <button onClick={() => setPage("config")} style={{ ...G.btn("dark"), background: i.color, whiteSpace: "nowrap" }}>{i.b}</button>
+            <button onClick={() => i.ir ? i.ir() : setPage("config")} style={{ ...G.btn("dark"), background: i.color, whiteSpace: "nowrap" }}>{i.b}</button>
           </div>
         ))}
       </div>
@@ -6723,6 +6733,7 @@ function ConfigPage({ ctx }) {
       </div>
 
       {/* Facturación Electrónica */}
+      <div id="card-facturacion" style={{ scrollMarginTop: 16 }} />
       {config.facturacionActiva ? (
         <div style={{ ...G.card({ marginBottom:24 }) }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, gap:12, flexWrap:"wrap" }}>
