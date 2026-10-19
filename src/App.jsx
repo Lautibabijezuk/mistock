@@ -222,6 +222,7 @@ const dbToConfig = n => ({
   paymentFailedAt: n.payment_failed_at || null,
   subscriptionStartedAt: n.subscription_started_at || null,
   accesoManualHasta: n.acceso_manual_hasta || null,
+  pagoManual: !!n.pago_manual,
   onboardingCompleto: n.onboarding_completo !== false,
   onboardingIntegraciones: n.onboarding_integraciones || null,
 });
@@ -9268,6 +9269,7 @@ function AdminPage({ onVolver }) {
                   <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
                     <span style={{ background:est.bg, color:est.color, fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>{est.label}</span>
                     {tieneCortesia(n) && <span style={{ background:"#f4ecff", color:"#7c3aed", fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>🎁 cortesía hasta {fmtFecha(n.acceso_manual_hasta)}</span>}
+                    {n.pago_manual && n.subscription_status === "active" && <span style={{ background:"#dcfce7", color:"#15803d", fontSize:11.5, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>💸 transferencia · vence {fmtFecha(n.next_billing_date)}</span>}
                     <span style={{ fontSize:12.5, color:"#999" }}>{n.rubro || "Sin rubro"}</span>
                   </div>
                 </div>
@@ -9403,7 +9405,7 @@ function AdminPage({ onVolver }) {
                   ["Se registró", fmtFecha(n.created_at)],
                   ["Fin de prueba", n.trial_ends_at ? fmtFecha(n.trial_ends_at) : "—"],
                   ["Empezó a pagar", n.subscription_started_at ? fmtFecha(n.subscription_started_at) : "—"],
-                  ["Próximo cobro", n.next_billing_date ? fmtFecha(n.next_billing_date) : "—"],
+                  [n.pago_manual ? "Pagado por transferencia hasta" : "Próximo cobro", n.next_billing_date ? fmtFecha(n.next_billing_date) : "—"],
                 ].map(([l,v],i) => (
                   <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", fontSize:13.5 }}>
                     <span style={{ color:"#888" }}>{l}</span><span style={{ fontWeight:600 }}>{v}</span>
@@ -9411,6 +9413,24 @@ function AdminPage({ onVolver }) {
                 ))}
               </div>
 
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8 }}>
+                <button
+                  onClick={() => ejecutarAccion(n.id, "pago_transferencia")}
+                  disabled={procesando === n.id + "pago_transferencia"}
+                  style={{ flex:"1 1 45%", background:"#dcfce7", color:"#15803d", border:"none", borderRadius:9, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+                >
+                  {procesando === n.id + "pago_transferencia" ? "..." : "💸 Pagó por transferencia (+1 mes)"}
+                </button>
+                {n.pago_manual && n.next_billing_date && (
+                  <button
+                    onClick={() => { if (window.confirm(`¿Quitar el último mes por transferencia de ${n.nombre}?`)) ejecutarAccion(n.id, "quitar_mes_transferencia"); }}
+                    disabled={procesando === n.id + "quitar_mes_transferencia"}
+                    style={{ flex:"1 1 45%", background:"#fff", color:"#6b7280", border:"1px solid #e5e7eb", borderRadius:9, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+                  >
+                    {procesando === n.id + "quitar_mes_transferencia" ? "..." : "Deshacer último mes"}
+                  </button>
+                )}
+              </div>
               {puedeAccionar && (
                 <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                   <button
@@ -9528,6 +9548,16 @@ function getSubscriptionState(config) {
   }
 
   // Los negocios activos "permanentes" (los pre-existentes) no tienen trialEndsAt
+  // Pago por transferencia: vale hasta el vencimiento (+3 días de margen); si no renovó, se bloquea
+  if (status === 'active' && config?.pagoManual) {
+    const vence = config?.nextBillingDate ? new Date(config.nextBillingDate) : null;
+    if (vence && now.getTime() > vence.getTime() + 3 * 24 * 60 * 60 * 1000) {
+      return { status: 'cancelled', isActive: false, isTrial: false, isBlocked: true, daysLeft: 0 };
+    }
+    const daysLeft = vence ? Math.max(0, Math.ceil((vence - now) / (1000 * 60 * 60 * 24))) : Infinity;
+    return { status: 'active', isActive: true, isTrial: false, isBlocked: false, daysLeft };
+  }
+
   if (status === 'active' && !trialEnd) {
     return { status: 'active', isActive: true, isTrial: false, isBlocked: false, daysLeft: Infinity };
   }
@@ -10154,7 +10184,7 @@ export default function App() {
       try {
         const { data, error } = await _sb
           .from("negocios")
-          .select("subscription_status, trial_ends_at, next_billing_date, mp_preapproval_id, payment_failed_at, subscription_started_at")
+          .select("subscription_status, trial_ends_at, next_billing_date, mp_preapproval_id, payment_failed_at, subscription_started_at, pago_manual, acceso_manual_hasta")
           .eq("id", sb._negocioId)
           .maybeSingle();
         if (error || !data) return;
@@ -10166,6 +10196,8 @@ export default function App() {
           mpPreapprovalId: data.mp_preapproval_id || null,
           paymentFailedAt: data.payment_failed_at || null,
           subscriptionStartedAt: data.subscription_started_at || null,
+          pagoManual: !!data.pago_manual,
+          accesoManualHasta: data.acceso_manual_hasta || null,
         }));
       } catch (e) { console.error("Error revisando suscripción:", e); }
     };
