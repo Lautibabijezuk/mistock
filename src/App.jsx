@@ -214,6 +214,7 @@ const dbToConfig = n => ({
   cuit: n.cuit||'', razonSocial: n.razon_social||'', tipoContrib: n.tipo_contrib||'monotributista',
   puntoVenta: n.punto_venta||'0001', condicionIVA: n.condicion_iva||'Monotributista',
   facturacionActiva: n.facturacion_activa||false,
+  categoriasOcultas: Array.isArray(n.categorias_ocultas) ? n.categorias_ocultas : [],
   // Suscripción
   subscriptionStatus: n.subscription_status || 'trial',
   trialEndsAt: n.trial_ends_at || null,
@@ -233,6 +234,7 @@ const configToDb = c => ({
   cuit: c.cuit, razon_social: c.razonSocial, tipo_contrib: c.tipoContrib,
   punto_venta: c.puntoVenta, condicion_iva: c.condicionIVA,
   facturacion_activa: c.facturacionActiva,
+  categorias_ocultas: Array.isArray(c.categoriasOcultas) ? c.categoriasOcultas : [],
 });
 
 
@@ -408,6 +410,14 @@ const CATS_POR_RUBRO = {
   ],
 };
 const CATS_PROD_FALLBACK = ["General","Producto","Servicio","Accesorios","Insumos","Otros"];
+// Categorías que ve cada cuenta: las de su rubro menos las que ocultó, más las que ya usan sus productos
+const catsDelNegocio = (config, products = []) => {
+  const ocultas = new Set(config?.categoriasOcultas || []);
+  const base = (CATS_POR_RUBRO[config?.rubro] || CATS_PROD_FALLBACK).filter(c => !ocultas.has(c));
+  const usadas = products.map(p => p.categoria).filter(c => c && c !== "General");
+  const lista = [...new Set([...base, ...usadas])];
+  return lista.length ? lista : ["General"];
+};
 const CATS_GASTO = ["Alquiler","Servicios","Sueldos","Mercadería","Marketing","Transporte","Mantenimiento","Impuestos","Otro"];
 const TALLES_PRESET = {
   "Ropa — XS al XXL": ["XS","S","M","L","XL","XXL"],
@@ -3961,7 +3971,7 @@ function InventarioPage({ ctx }) {
       ["Costo", p.costo ? fmtMoney(p.costo, config.moneda) : "No"],
     ];
   };
-  const cats = [...new Set([...(CATS_POR_RUBRO[config.rubro] || CATS_PROD_FALLBACK), ...products.map(p => p.categoria).filter(c => c && c !== "General")])];
+  const cats = catsDelNegocio(config, products);
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("Todas");
   const [filterStock, setFilterStock] = useState("Todos");
@@ -4036,7 +4046,7 @@ function InventarioPage({ ctx }) {
       )}
       {confirmDelete && (
         <Modal title="¿Eliminar producto?" onClose={() => setConfirmDelete(null)} width={360}>
-          <p style={{ fontSize:14, color:"#666", margin:"0 0 20px" }}>Esta acción no se puede deshacer. El producto será eliminado del inventario.</p>
+          <p style={{ fontSize:14, color:"#666", margin:"0 0 20px" }}>Esta acción no se puede deshacer. El producto será eliminado del inventario{tnVinculados && tnVinculados.has(confirmDelete) ? <> y <b>también de tu Tiendanube</b></> : null}.</p>
           <div style={{ display:"flex", gap:10 }}>
             <button style={{ ...G.btn("outline"), flex:1, justifyContent:"center" }} onClick={() => setConfirmDelete(null)}>Cancelar</button>
             <button style={{ ...G.btn("red"), flex:1, justifyContent:"center" }} onClick={() => { delProd(confirmDelete); setConfirmDelete(null); }}>Sí, eliminar</button>
@@ -6658,6 +6668,14 @@ function ConfigPage({ ctx }) {
   };
 
   const catsPreview = CATS_POR_RUBRO[f.rubro] || [];
+  const ocultas = f.categoriasOcultas || [];
+  const usoCat = {}; (products || []).forEach(p => { if (p.categoria) usoCat[p.categoria] = (usoCat[p.categoria] || 0) + 1; });
+  const propias = [...new Set((products || []).map(p => p.categoria).filter(c => c && c !== "General" && !catsPreview.includes(c)))];
+  const toggleCat = async (c) => {
+    const nuevas = ocultas.includes(c) ? ocultas.filter(x => x !== c) : [...ocultas, c];
+    setF(p => ({ ...p, categoriasOcultas: nuevas }));
+    await ctx.setConfig({ ...config, categoriasOcultas: nuevas });
+  };
 
   return (
     <div style={{ ...G.page, maxWidth:820 }}>
@@ -6706,13 +6724,32 @@ function ConfigPage({ ctx }) {
           <div style={{ background:"#f9fafb", borderRadius:10, padding:"16px 20px", border:"1px solid #f0f0f0" }}>
             <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
               <span style={{ fontSize:14, fontWeight:700, color:"#111" }}>Categorías para {f.rubro}</span>
-              <span style={{ background:"#e5e7eb", color:"#666", fontSize:11, fontWeight:600, padding:"2px 8px", borderRadius:20 }}>{catsPreview.length} categorías</span>
+              <span style={{ background:"#e5e7eb", color:"#666", fontSize:11, fontWeight:600, padding:"2px 8px", borderRadius:20 }}>{[...catsPreview, ...propias].filter(c => !ocultas.includes(c)).length} categorías</span>
             </div>
+            <p style={{ margin:"0 0 12px", fontSize:12.5, color:"#6b7280" }}>Tocá la ✕ para quitar las que no usás. Solo cambia en tu cuenta y se guarda al instante.</p>
             <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-              {catsPreview.map(c => (
-                <span key={c} style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:20, padding:"4px 12px", fontSize:12, color:"#555", fontWeight:500 }}>{c}</span>
+              {[...catsPreview, ...propias].filter(c => !ocultas.includes(c)).map(c => (
+                <span key={c} style={{ display:"inline-flex", alignItems:"center", gap:6, background:"#fff", border:"1px solid #e5e7eb", borderRadius:20, padding:"4px 6px 4px 12px", fontSize:12, color:"#555", fontWeight:500 }}>
+                  {c}{usoCat[c] ? <span style={{ color:"#9ca3af", fontWeight:400 }}>· {usoCat[c]}</span> : null}
+                  <button onClick={() => toggleCat(c)} title="Quitar esta categoría" style={{ border:"none", background:"#f3f4f6", color:"#6b7280", width:18, height:18, borderRadius:"50%", cursor:"pointer", fontSize:11, lineHeight:"18px", padding:0 }}>✕</button>
+                </span>
               ))}
             </div>
+            {ocultas.length > 0 && (
+              <div style={{ marginTop:14 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:"#9ca3af", marginBottom:8 }}>Quitadas ({ocultas.length}) · tocá una para volver a usarla</div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                  {ocultas.map(c => (
+                    <button key={c} onClick={() => toggleCat(c)} style={{ background:"transparent", border:"1px dashed #d1d5db", borderRadius:20, padding:"4px 12px", fontSize:12, color:"#9ca3af", cursor:"pointer", textDecoration:"line-through" }}>+ {c}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {ocultas.some(c => usoCat[c]) && (
+              <div style={{ marginTop:12, fontSize:12, color:"#92400e", background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"8px 12px" }}>
+                Algunas categorías que quitaste todavía tienen productos: van a seguir apareciendo en el filtro hasta que les cambies la categoría a esos productos.
+              </div>
+            )}
           </div>
         )}
         {!f.rubro && (
@@ -10319,7 +10356,9 @@ export default function App() {
     tnProgramarSync();
   };
   const deleteProduct = async (id) => {
-    if (sb._negocioId) await sb.del("productos", id);
+    if (!sb._negocioId) return;
+    await sb.del("productos", id);
+    tnProgramarSync(); // si estaba en Tiendanube, también se borra allá
   };
 
   // ── Ajuste relativo de stock (ventas y anulaciones) ─────
