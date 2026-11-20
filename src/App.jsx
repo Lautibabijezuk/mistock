@@ -297,10 +297,12 @@ const SECCION_LABELS = {
   config: "Configuración",
 };
 
-const todayStr = () => new Date().toISOString().split("T")[0];
+// Fecha "AAAA-MM-DD" según el reloj del usuario (no UTC: después de las 21 hs en Argentina, UTC ya es el día siguiente)
+const ymdLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const todayStr = () => ymdLocal(new Date());
 const fmtMoney = (n, m = "$") => `${m}${Math.round(Number(n) || 0).toLocaleString("es-AR")}`;
 const fmtDate = (s) => s ? new Date(s + "T12:00:00").toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" }) : "";
-const addDays = (d, n) => { const dt = new Date(d + "T12:00:00"); dt.setDate(dt.getDate() + n); return dt.toISOString().split("T")[0]; };
+const addDays = (d, n) => { const dt = new Date(d + "T12:00:00"); dt.setDate(dt.getDate() + n); return ymdLocal(dt); };
 const subDays = (d, n) => addDays(d, -n);
 const monthLabel = (ym) => { const [y, m] = ym.split("-"); return new Date(+y, +m - 1, 1).toLocaleDateString("es-AR", { month: "long", year: "numeric" }); };
 
@@ -4297,7 +4299,7 @@ function ProyeccionPage({ ctx }) {
 
   // Ticket promedio: sobre los últimos 90 días (más representativo que "todo el historial")
   const hace90 = new Date(hoy); hace90.setDate(hace90.getDate() - 90);
-  const hace90Str = hace90.toISOString().slice(0, 10);
+  const hace90Str = ymdLocal(hace90);
   const ventasRecientes = ventasValidas.filter(s => s.fecha >= hace90Str);
   const ticketPromedio = ventasRecientes.length > 0
     ? ventasRecientes.reduce((a, s) => a + s.total, 0) / ventasRecientes.length
@@ -8428,7 +8430,7 @@ function AdminPage({ onVolver }) {
   const cuentasSinActividad = negocios.filter(n => n.subscription_status === "trial" && (n.productos || 0) === 0);
 
   // ── Engagement / retención (calculado con ventas reales de todos los negocios) ──
-  const toYMD = (d) => d.toISOString().split("T")[0];
+  const toYMD = (d) => ymdLocal(d);
   const hoyYMD = toYMD(new Date());
   const hace7dias = new Date(); hace7dias.setDate(hace7dias.getDate() - 7);
   const hace14dias = new Date(); hace14dias.setDate(hace14dias.getDate() - 14);
