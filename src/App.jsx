@@ -10871,14 +10871,16 @@ export default function App() {
           <nav style={{ flex:1, padding:"14px 12px", display:"flex", flexDirection:"column", gap:3, overflowY:"auto" }}>
             {NAV.map(n => {
               const isActive = page === n.id;
+              const destacado = n.id === "referidos"; // "Recomendá y ganá" siempre en violeta clarito para que se vea
               return (
                 <button key={n.id} onClick={() => { setPage(n.id); setSidebarOpen(false); }} style={{
                   display:"flex", alignItems:"center", gap:12,
                   padding:"12px 14px", borderRadius:8, border:"none", cursor:"pointer",
                   fontSize:15, textAlign:"left", width:"100%",
-                  background: isActive ? "var(--accent-soft)" : "transparent",
-                  color: isActive ? "var(--accent)" : "var(--text2)",
-                  fontWeight: isActive ? 600 : 500,
+                  background: isActive || destacado ? "var(--accent-soft)" : "transparent",
+                  color: isActive || destacado ? "var(--accent)" : "var(--text2)",
+                  fontWeight: isActive || destacado ? 600 : 500,
+                  boxShadow: destacado && isActive ? "inset 0 0 0 1.5px var(--accent)" : "none",
                   fontFamily:"inherit",
                   position:"relative",
                   transition:"background .15s, color .15s"
