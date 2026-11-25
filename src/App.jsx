@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, Component } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
-import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu, MoreVertical, Calculator, Target } from "lucide-react";
+import { ShoppingCart, LayoutDashboard, Package, Clock, TrendingUp, DollarSign, FileText, Settings, BarChart2, Pencil, Trash2, Search, Plus, X, AlertTriangle, RefreshCw, User, Tag, Receipt, Truck, Store, CheckCircle2, AlertCircle, Download, Upload, ChevronRight, Lock, Unlock, ShoppingBag, ClipboardList, Flame, Snowflake, Timer, LogOut, Mail, Eye, EyeOff, ScanLine, Camera, Menu, MoreVertical, Calculator, Target, Gift, Copy, Share2 } from "lucide-react";
 import * as XLSX from "xlsx";
 import QRCode from "qrcode";
 
@@ -13,6 +13,14 @@ import { createClient } from '@supabase/supabase-js';
 const SB_URL = import.meta.env.VITE_SUPABASE_URL || "https://sdizrjbeasubjkpixmro.supabase.co";
 const SB_KEY = import.meta.env.VITE_SUPABASE_KEY || "sb_publishable_h7mDzmzfLVnwyJ21ZuweQQ_AyIYmB4u";
 const _sb = createClient(SB_URL, SB_KEY);
+
+// Programa "Recomendá y ganá": si entran con ?ref=CODIGO, lo guardamos para aplicarlo al crear la cuenta
+const PREMIO_REFERIDO = 15000;
+try {
+  const _ref = new URLSearchParams(window.location.search).get("ref");
+  if (_ref && /^[A-Za-z0-9]{2,20}$/.test(_ref)) localStorage.setItem("milocal_ref", _ref.toUpperCase());
+} catch (_) { /* sin localStorage */ }
+const leerRefGuardado = () => { try { return localStorage.getItem("milocal_ref") || ""; } catch (_) { return ""; } };
 
 const sb = {
   _negocioId: null,
@@ -294,6 +302,7 @@ const SECCION_LABELS = {
   calculadora: "Calculadora de precios",
   remitos: "Remitos",
   suscripcion: "Suscripción",
+  referidos: "Recomendá y ganá",
   config: "Configuración",
 };
 
@@ -7705,7 +7714,13 @@ function LandingPage({ onIngresar }) {
 // LOGIN / REGISTER SCREEN
 // ══════════════════════════════════════════════════════════
 function LoginScreen({ onLogin, onVolver }) {
-  const [modo, setModo] = useState("login"); // login | register | confirmar | recuperar | recuperar_enviado
+  const [modo, setModo] = useState(() => leerRefGuardado() ? "register" : "login"); // login | register | confirmar | recuperar | recuperar_enviado
+  const [invitador, setInvitador] = useState("");
+  useEffect(() => {
+    const cod = leerRefGuardado();
+    if (!cod) return;
+    _sb.rpc("ref_quien_invita", { p_codigo: cod }).then(({ data }) => { if (data) setInvitador(data); }).catch(() => {});
+  }, []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [nombreNegocio, setNombreNegocio] = useState("");
@@ -7963,6 +7978,16 @@ function LoginScreen({ onLogin, onVolver }) {
             {error && (
               <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 6, padding: "11px 14px", marginBottom: 18, fontSize: 13, color: "#dc2626", display: "flex", alignItems: "center", gap: 8 }}>
                 <AlertCircle size={15}/> {error}
+              </div>
+            )}
+
+            {modo === "register" && invitador && (
+              <div style={{ background: C.purpleSoft, border: "1px solid #e9d5ff", borderRadius: 10, padding: "12px 14px", marginBottom: 18, display: "flex", gap: 12, alignItems: "flex-start" }}>
+                <div style={{ width: 34, height: 34, borderRadius: "50%", background: C.purple, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Gift size={18} color="#fff"/></div>
+                <div style={{ fontSize: 13.5, color: C.body, lineHeight: 1.45 }}>
+                  <div style={{ fontWeight: 700, color: C.ink }}>Te invitó {invitador}</div>
+                  Tenés <b style={{ color: C.purpleDark }}>7 días gratis extra</b>: probás MiLocal 14 días sin pagar nada.
+                </div>
               </div>
             )}
 
@@ -9829,6 +9854,135 @@ function AccesoBloqueadoScreen({ config, onSuscribir, onLogout, sucursales = [],
 }
 
 // ─── Página de gestión de suscripción ───────────────────────
+// ══════════════════════════════════════════════════════════
+// RECOMENDÁ Y GANÁ (programa de referidos)
+// ══════════════════════════════════════════════════════════
+function ReferidosPage({ ctx }) {
+  const [codigo, setCodigo] = useState("");
+  const [saldo, setSaldo] = useState(0);
+  const [invitados, setInvitados] = useState(null);
+  const [error, setError] = useState("");
+  const [copiado, setCopiado] = useState(false);
+  const negId = sb._negocioId;
+
+  useEffect(() => {
+    if (!negId) return;
+    let vivo = true;
+    (async () => {
+      try {
+        const [{ data: cod, error: e1 }, { data: inv, error: e2 }, { data: neg }] = await Promise.all([
+          _sb.rpc("ref_mi_codigo", { p_negocio: negId }),
+          _sb.rpc("ref_mis_invitados", { p_negocio: negId }),
+          _sb.from("negocios").select("saldo_ref").eq("id", negId).maybeSingle(),
+        ]);
+        if (!vivo) return;
+        if (e1 || e2) throw (e1 || e2);
+        setCodigo(cod || "");
+        setInvitados(inv || []);
+        setSaldo(Number(neg?.saldo_ref || 0));
+      } catch (e) {
+        if (vivo) setError("No pudimos cargar tus invitaciones. Recargá la página para intentar de nuevo.");
+      }
+    })();
+    return () => { vivo = false; };
+  }, [negId]);
+
+  const link = codigo ? `https://milocal.com.ar/?ref=${codigo}` : "";
+  const linkCorto = codigo ? `milocal.com.ar/?ref=${codigo}` : "Generando tu link…";
+  const textoWa = `Te recomiendo MiLocal para manejar las ventas, el stock y la caja de tu negocio. Con mi link tenés 7 días gratis extra: ${link}`;
+  const copiar = async () => {
+    if (!link) return;
+    try { await navigator.clipboard.writeText(link); } catch (_) {}
+    setCopiado(true); setTimeout(() => setCopiado(false), 1800);
+  };
+  const lista = invitados || [];
+  const pagaron = lista.filter(i => i.estado === "pago").length;
+  const fmtCorta = (d) => { try { return new Date(d).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }); } catch (_) { return ""; } };
+  const diasRestantes = (d) => Math.max(0, Math.ceil((new Date(d) - new Date()) / 86400000));
+  const chip = (estado, i) => {
+    if (estado === "pago") return <span style={{ fontSize: 12, fontWeight: 700, color: "#15803d", background: "#dcfce7", borderRadius: 999, padding: "4px 10px" }}>Pagó</span>;
+    if (estado === "prueba") return <span style={{ fontSize: 12, fontWeight: 700, color: "#92400e", background: "#fef3c7", borderRadius: 999, padding: "4px 10px" }}>En prueba{i.trial_ends_at ? ` · ${diasRestantes(i.trial_ends_at)} días` : ""}</span>;
+    return <span style={{ fontSize: 12, fontWeight: 700, color: "#4b5563", background: "#f3f4f6", borderRadius: 999, padding: "4px 10px" }}>No continuó</span>;
+  };
+
+  return (
+    <div style={{ maxWidth: 980, display: "flex", flexDirection: "column", gap: 20 }}>
+      <div>
+        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, letterSpacing: -0.5 }}>Recomendá y ganá</h1>
+        <p style={{ margin: "4px 0 0", fontSize: 14.5, color: "#6b7280" }}>Invitá a otros comercios a usar MiLocal y bajá lo que pagás por mes.</p>
+      </div>
+
+      {error && <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 10, padding: "12px 16px", fontSize: 14, color: "#991b1b" }}>{error}</div>}
+
+      <section style={{ background: "linear-gradient(135deg, #8A2BF7 0%, #A964FF 100%)", color: "#fff", borderRadius: 16, padding: 24, display: "flex", flexDirection: "column", gap: 18 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 600 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: "#f3e8ff" }}>Por cada comercio que se sume</span>
+          <span style={{ fontSize: 34, fontWeight: 800, letterSpacing: -1, lineHeight: 1.05 }}>Ganás ${PREMIO_REFERIDO.toLocaleString("es-AR")} de saldo</span>
+          <span style={{ fontSize: 14.5, color: "#f3e8ff", lineHeight: 1.45 }}>Se acredita cuando tu invitado paga su primera cuota. Tu invitado además suma 7 días gratis extra para probar.</span>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+          <input aria-label="Tu link de invitación" readOnly value={linkCorto} onFocus={e => e.target.select()}
+            style={{ flex: "1 1 240px", minWidth: 0, fontFamily: "inherit", fontSize: 15.5, fontWeight: 600, color: "#111827", background: "#fff", border: "none", borderRadius: 10, padding: "0 14px", height: 46 }}/>
+          <button type="button" onClick={copiar} disabled={!link}
+            style={{ fontFamily: "inherit", fontSize: 14.5, fontWeight: 700, color: "#fff", background: "#111827", border: "none", borderRadius: 10, padding: "0 18px", height: 46, cursor: link ? "pointer" : "default", display: "flex", alignItems: "center", gap: 8 }}>
+            <Copy size={16}/> {copiado ? "¡Copiado!" : "Copiar link"}
+          </button>
+          <a href={link ? `https://wa.me/?text=${encodeURIComponent(textoWa)}` : undefined} target="_blank" rel="noopener noreferrer"
+            style={{ fontSize: 14.5, fontWeight: 700, color: "#14532d", background: "#dcfce7", borderRadius: 10, padding: "0 18px", height: 46, textDecoration: "none", display: "flex", alignItems: "center", gap: 8, opacity: link ? 1 : 0.6 }}>
+            <Share2 size={16}/> Compartir por WhatsApp
+          </a>
+        </div>
+      </section>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 18 }}><div style={{ fontSize: 13, color: "#6b7280", fontWeight: 600 }}>Se registraron</div><div style={{ fontSize: 28, fontWeight: 800 }}>{invitados ? lista.length : "—"}</div></div>
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 18 }}><div style={{ fontSize: 13, color: "#6b7280", fontWeight: 600 }}>Ya pagaron</div><div style={{ fontSize: 28, fontWeight: 800 }}>{invitados ? pagaron : "—"}</div></div>
+        <div style={{ border: "1px solid #e9d5ff", background: "#faf5ff", borderRadius: 12, padding: 18 }}><div style={{ fontSize: 13, color: "#6b21d9", fontWeight: 700 }}>Tu saldo a favor</div><div style={{ fontSize: 28, fontWeight: 800, color: "#6b21d9" }}>${saldo.toLocaleString("es-AR")}</div><div style={{ fontSize: 12, color: "#6b7280" }}>Se descuenta solo de tu próxima cuota</div></div>
+      </div>
+
+      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: "18px 22px" }}>
+        <h2 style={{ margin: "0 0 14px", fontSize: 16, fontWeight: 700 }}>Cómo funciona</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
+          {["Compartí tu link con otro comercio.", "Se registra y tiene 7 días gratis extra para probar.", `Cuando paga su primera cuota, vos sumás $${PREMIO_REFERIDO.toLocaleString("es-AR")}.`].map((t, i) => (
+            <div key={i} style={{ display: "flex", gap: 12 }}>
+              <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: "50%", background: "#f3e8ff", color: "#6b21d9", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
+              <span style={{ fontSize: 14, color: "#374151", lineHeight: 1.45 }}>{t}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden" }}>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, padding: "16px 22px", borderBottom: "1px solid #e5e7eb" }}>Tus invitados</h2>
+        {invitados === null ? (
+          <div style={{ padding: 22, fontSize: 14, color: "#6b7280" }}>Cargando…</div>
+        ) : lista.length === 0 ? (
+          <div style={{ padding: 22, fontSize: 14, color: "#6b7280" }}>Todavía no se registró nadie con tu link. Compartilo con otros comercios que conozcas.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14, minWidth: 480 }}>
+              <thead><tr style={{ background: "#f9fafb", textAlign: "left", color: "#6b7280" }}>
+                <th style={{ padding: "11px 22px", fontWeight: 600 }}>Comercio</th><th style={{ padding: "11px 22px", fontWeight: 600 }}>Se registró</th><th style={{ padding: "11px 22px", fontWeight: 600 }}>Estado</th><th style={{ padding: "11px 22px", fontWeight: 600, textAlign: "right" }}>Para vos</th>
+              </tr></thead>
+              <tbody>
+                {lista.map((i, k) => (
+                  <tr key={k} style={{ borderTop: "1px solid #f3f4f6" }}>
+                    <td style={{ padding: "13px 22px", fontWeight: 600 }}>{i.nombre}</td>
+                    <td style={{ padding: "13px 22px", color: "#6b7280" }}>{fmtCorta(i.creado)}</td>
+                    <td style={{ padding: "13px 22px" }}>{chip(i.estado, i)}</td>
+                    <td style={{ padding: "13px 22px", textAlign: "right", fontWeight: i.estado === "pago" ? 700 : 400, color: i.estado === "pago" ? "#15803d" : "#6b7280" }}>{i.estado === "pago" ? `+ $${PREMIO_REFERIDO.toLocaleString("es-AR")}` : i.estado === "prueba" ? "Pendiente" : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+      <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.5 }}>El saldo no se canjea por dinero. No cuentan las cuentas propias. Si pagás por Mercado Pago, el saldo se te devuelve automáticamente de la cuota cuando se cobra.</p>
+    </div>
+  );
+}
+
 function SuscripcionPage({ config, onSuscribir, onCancelar, sucursales = [] }) {
   const state = getSubscriptionState(config);
   const [loading, setLoading] = useState(false);
@@ -10121,6 +10275,13 @@ export default function App() {
         sb._negocioId = negocio.id;
         setSucursales(negocios.length ? negocios : [negocio]);
 
+        // Vino con link de invitación: lo asociamos al que lo invitó (+7 días de prueba). Solo cuentas nuevas.
+        const refCod = leerRefGuardado();
+        if (refCod && negocio.user_id === userId) {
+          try { localStorage.removeItem("milocal_ref"); } catch (_) {}
+          try { await _sb.rpc("ref_aplicar", { p_negocio: negocio.id, p_codigo: refCod }); } catch (_) {}
+        }
+
         // Rol y permisos del usuario en ESTA sucursal
         const membresia = await sb.getMembresia(negocio.id, userId);
         const esDuenoReal = negocio.user_id === userId;
@@ -10275,7 +10436,7 @@ export default function App() {
     const esDueno = miRol === "dueno";
     const permitido = (id) => {
       if (id === "consolidado") return esDueno && sucursales.length >= 2;
-      if (["equipo","suscripcion","config"].includes(id)) return esDueno;
+      if (["equipo","suscripcion","referidos","config"].includes(id)) return esDueno;
       if (esDueno || misPermisos.includes("*")) return true;
       return misPermisos.includes(id);
     };
@@ -10511,6 +10672,7 @@ export default function App() {
     { id:"remitos", label:"Remitos", icon:<FileText size={16}/> },
     { id:"equipo", label:"Equipo", icon:<User size={16}/>, soloDueno:true },
     { id:"suscripcion", label:"Suscripción", icon:<DollarSign size={16}/>, soloDueno:true },
+    { id:"referidos", label:"Recomendá y ganá", icon:<Gift size={16}/>, soloDueno:true },
     { id:"config", label:"Configuración", icon:<Settings size={16}/>, soloDueno:true },
   ];
 
@@ -10549,6 +10711,7 @@ export default function App() {
     consolidado:<ConsolidadoPage ctx={ctx}/>,
     remitos:<RemitosPage ctx={ctx}/>,
     suscripcion:<SuscripcionPage config={config} onSuscribir={handleSuscribir} onCancelar={handleCancelar} sucursales={sucursales}/>,
+    referidos:<ReferidosPage ctx={ctx}/>,
     config:<ConfigPage ctx={ctx}/>
   };
   const stockAlert = products.filter(p => p.stock <= (p.stockMinimo||3)).length;
